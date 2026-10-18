@@ -152,5 +152,28 @@ def backtest(
         console.print(f"[yellow]unsettled:[/yellow] {ticker}: {reason}")
 
 
+@app.command()
+def scorecard(
+    ticker: str = typer.Option(None, "--ticker", help="Also list this ticker's settled decisions"),
+    as_of: str = typer.Option(None, "--as-of", help="Only outcomes known by this date, YYYY-MM-DD"),
+):
+    """Show the feedback loop's track record: each agent's hit rate and settled decisions."""
+    from tradingagents.feedback import FeedbackStore
+
+    store = FeedbackStore(DEFAULT_CONFIG)
+    if not store.enabled:
+        console.print("[yellow]No feedback store is configured (TRADINGAGENTS_FEEDBACK_DB_URL).[/yellow]")
+        raise typer.Exit(code=1)
+    pending = store.pending()
+    text = store.render_context(ticker or "", as_of=as_of)
+    if text:
+        console.print(text)
+    else:
+        console.print("No settled decisions yet.")
+    if pending:
+        console.print(f"\n{len(pending)} decision(s) pending settlement: "
+                      + ", ".join(f"{p['ticker']} {p['trade_date']}" for p in pending))
+
+
 if __name__ == "__main__":
     app()

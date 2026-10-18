@@ -36,8 +36,11 @@ STRUCTURED = {
     schemas.TraderProposal: schemas.TraderProposal(action=schemas.TraderAction.BUY, reasoning="r"),
     # The thesis quotes another party's rating; the decision is still the PM's own.
     schemas.PortfolioDecision: schemas.PortfolioDecision(
-        rating=schemas.PortfolioRating.OVERWEIGHT, executive_summary="s",
+        rating=schemas.PortfolioRating.OVERWEIGHT, executive_summary="s", position_size_pct=4.5,
+        risk_level=schemas.RiskLevel.NEUTRAL,
         investment_thesis="Street consensus rating: Buy (28 of 35 analysts)."),
+    schemas.RiskAssessment: schemas.RiskAssessment(
+        risk_level=schemas.RiskLevel.NEUTRAL, max_position_pct=5, stop_loss=180.0, rationale="r"),
 }
 
 ARGS = {"symbol": "NVDA", "ticker": "NVDA", "curr_date": TRADE_DATE, "start_date": "2026-01-02",
@@ -131,8 +134,13 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
 
     assert signal == state["final_rating"] == "Overweight"
     for key in ("market_report", "news_report", "fundamentals_report",
-                "investment_plan", "trader_investment_plan", "final_trade_decision"):
+                "investment_plan", "trader_investment_plan", "risk_assessment", "final_trade_decision"):
         assert state[key].strip(), key
+    if structured:
+        assert (state["risk_level"], state["final_risk_level"], state["final_position_size_pct"]) == \
+            ("Neutral", "Neutral", 4.5)
+    else:   # the scripted text names no stance or size
+        assert state["risk_level"] == "REVIEW" and state["final_position_size_pct"] is None
     tool_methods = {"get_stock_data", "get_indicators", "get_market_snapshot", "get_news",
                     "get_global_news", "get_macro_indicators",
                     "get_balance_sheet", "get_cashflow", "get_income_statement"}

@@ -325,6 +325,13 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         message_buffer.update_report_section(
                             "final_trade_decision", f"### Neutral Analyst Analysis\n{neu_hist}"
                         )
+                    if chunk.get("risk_assessment") and message_buffer.agent_status.get("Risk Manager") != "completed":
+                        message_buffer.update_report_section("risk_assessment", chunk["risk_assessment"])
+                        message_buffer.update_agent_status("Aggressive Analyst", "completed")
+                        message_buffer.update_agent_status("Conservative Analyst", "completed")
+                        message_buffer.update_agent_status("Neutral Analyst", "completed")
+                        message_buffer.update_agent_status("Risk Manager", "completed")
+                        message_buffer.update_agent_status("Portfolio Manager", "in_progress")
                     if judge and message_buffer.agent_status.get("Portfolio Manager") != "completed":
                         message_buffer.update_agent_status("Portfolio Manager", "in_progress")
                         message_buffer.update_report_section(
@@ -333,6 +340,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         message_buffer.update_agent_status("Aggressive Analyst", "completed")
                         message_buffer.update_agent_status("Conservative Analyst", "completed")
                         message_buffer.update_agent_status("Neutral Analyst", "completed")
+                        message_buffer.update_agent_status("Risk Manager", "completed")
                         message_buffer.update_agent_status("Portfolio Manager", "completed")
 
                 update_display(layout, stats_handler=stats_handler, start_time=start_time)

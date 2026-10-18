@@ -23,6 +23,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_ALPACA_FEED":          "alpaca_feed",
     "TRADINGAGENTS_ALPACA_PAPER":         "alpaca_paper",
+    "TRADINGAGENTS_FEEDBACK_HOLD_BAND_PCT": "feedback_hold_band_pct",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
     "TRADINGAGENTS_MAX_TOKENS":           "max_tokens",
@@ -89,6 +90,17 @@ def build_default_config() -> dict:
         # the oldest resolved entries are pruned once this limit is exceeded.
         # Pending entries are never pruned. None disables rotation entirely.
         "memory_log_max_entries": None,
+        # The feedback loop's database: decisions, settled outcomes and per-agent
+        # scores, shown back to the deciding agents as a track record. A SQLAlchemy
+        # URL; SQLite by default, Postgres when it lands
+        # (postgresql+psycopg://user:pass@host/db). Empty disables the store.
+        "feedback_db_url": os.getenv("TRADINGAGENTS_FEEDBACK_DB_URL") or "sqlite:///" + os.path.join(_TRADINGAGENTS_HOME, "memory", "feedback.db"),
+        # A Hold, or a Neutral stance, is right when the price stays within this
+        # band (percent) over the holding window; an Aggressive stance needs a
+        # move beyond it.
+        "feedback_hold_band_pct": 2.0,
+        # How many settled decisions the track record summarises.
+        "feedback_context_decisions": 30,
         # LLM settings
         "llm_provider": "openai",
         "deep_think_llm": "gpt-6-sol",

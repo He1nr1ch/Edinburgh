@@ -115,3 +115,34 @@ def run_rating(final_state: dict) -> str:
 def is_review(signal: str) -> bool:
     """Whether a signal is the non-tradeable REVIEW sentinel (#1170)."""
     return signal == RATING_REVIEW
+
+
+# ---------------------------------------------------------------------------
+# Risk level: the three-stance vocabulary of Risk Management
+# ---------------------------------------------------------------------------
+
+RISK_LEVELS: tuple[str, ...] = ("Aggressive", "Neutral", "Conservative")
+
+_RISK_LEVEL_SET = {r.lower() for r in RISK_LEVELS}
+_RISK_LEVEL_RE = re.compile(
+    r"(?<![a-z])risk\s+level\b[^:\-\u2010-\u2015]*[:\-\u2010-\u2015][\s*]*(\w+)", re.IGNORECASE
+)
+
+
+def extract_risk_level(text: str) -> str | None:
+    """Extract a risk level from its label ("Risk Level: Neutral"), or None.
+
+    Labels must agree: differing labelled stances with nothing marking the
+    decision are no stance, as for ratings.
+    """
+    if not text:
+        return None
+    norm = unicodedata.normalize("NFKC", text)
+    found = [v.capitalize() for v in _RISK_LEVEL_RE.findall(norm) if v.lower() in _RISK_LEVEL_SET]
+    return found[0] if found and len(set(found)) == 1 else None
+
+
+def parse_risk_level(text: str, default: str = RATING_REVIEW) -> str:
+    """Extract a risk level, or ``REVIEW`` when the text names none."""
+    level = extract_risk_level(text)
+    return level if level is not None else default

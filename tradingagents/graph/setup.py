@@ -17,6 +17,7 @@ from tradingagents.agents import (
     create_news_analyst,
     create_portfolio_manager,
     create_research_manager,
+    create_risk_manager,
     create_trader,
 )
 from tradingagents.agents.analysts.turn import WRAP_UP
@@ -40,6 +41,8 @@ RISK_ANALYSIS_PATH_MAP = {
     "Aggressive Analyst": "Aggressive Analyst",
     "Conservative Analyst": "Conservative Analyst",
     "Neutral Analyst": "Neutral Analyst",
+    "Risk Manager": "Risk Manager",
+    # Kept so a router that still names the manager directly stays routable.
     "Portfolio Manager": "Portfolio Manager",
 }
 
@@ -134,6 +137,7 @@ class GraphSetup:
         aggressive_analyst = create_aggressive_debator(self.quick_thinking_llm)
         neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
         conservative_analyst = create_conservative_debator(self.quick_thinking_llm)
+        risk_manager_node = create_risk_manager(self.deep_thinking_llm)
         portfolio_manager_node = create_portfolio_manager(self.deep_thinking_llm)
 
         workflow = StateGraph(AgentState)
@@ -149,6 +153,7 @@ class GraphSetup:
         workflow.add_node("Aggressive Analyst", aggressive_analyst)
         workflow.add_node("Neutral Analyst", neutral_analyst)
         workflow.add_node("Conservative Analyst", conservative_analyst)
+        workflow.add_node("Risk Manager", risk_manager_node)
         workflow.add_node("Portfolio Manager", portfolio_manager_node)
 
         # The analysts work at the same time; the research debate starts once
@@ -179,6 +184,7 @@ class GraphSetup:
                 RISK_ANALYSIS_PATH_MAP,
             )
 
+        workflow.add_edge("Risk Manager", "Portfolio Manager")
         workflow.add_edge("Portfolio Manager", END)
 
         return workflow

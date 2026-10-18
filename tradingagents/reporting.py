@@ -24,6 +24,11 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
         lines.append(f"- Analysis date: {final_state['trade_date']}")
     if final_state.get("final_trade_decision"):
         lines.append(f"- Rating: {run_rating(final_state)}")
+        size = final_state.get("final_position_size_pct")
+        if size is not None:
+            lines.append(f"- Position size: {size:g}% of portfolio equity")
+        if final_state.get("final_risk_level"):
+            lines.append(f"- Risk level: {final_state['final_risk_level']}")
     lines.append(f"- Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     if settings:
         s = settings.get
@@ -65,6 +70,7 @@ _SECTIONS = (
         ("Aggressive Analyst", "aggressive.md", ("risk_debate_state", "aggressive_history")),
         ("Conservative Analyst", "conservative.md", ("risk_debate_state", "conservative_history")),
         ("Neutral Analyst", "neutral.md", ("risk_debate_state", "neutral_history")),
+        ("Risk Manager", "manager.md", ("risk_assessment",)),
     )),
     ("V. Portfolio Manager Decision", "5_portfolio", (
         ("Portfolio Manager", "decision.md", ("final_trade_decision",)),

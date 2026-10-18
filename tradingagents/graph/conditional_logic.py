@@ -25,7 +25,7 @@ class ConditionalLogic:
         if (
             state["risk_debate_state"]["count"] >= 3 * self.max_risk_discuss_rounds
         ):  # max_risk_discuss_rounds turns each for the three risk analysts
-            return "Portfolio Manager"
+            return "Risk Manager"
         if state["risk_debate_state"]["latest_speaker"].startswith("Aggressive"):
             return "Conservative Analyst"
         if state["risk_debate_state"]["latest_speaker"].startswith("Conservative"):

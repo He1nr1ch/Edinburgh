@@ -28,7 +28,7 @@ class MessageBuffer:
     FIXED_AGENTS = {
         "Research Team": ["Bull Researcher", "Bear Researcher", "Research Manager"],
         "Trading Team": ["Trader"],
-        "Risk Management": ["Aggressive Analyst", "Neutral Analyst", "Conservative Analyst"],
+        "Risk Management": ["Aggressive Analyst", "Neutral Analyst", "Conservative Analyst", "Risk Manager"],
         "Portfolio Management": ["Portfolio Manager"],
     }
 
@@ -48,6 +48,7 @@ class MessageBuffer:
         "fundamentals_report": ("fundamentals", "Fundamentals Analyst"),
         "investment_plan": (None, "Research Manager"),
         "trader_investment_plan": (None, "Trader"),
+        "risk_assessment": (None, "Risk Manager"),
         "final_trade_decision": (None, "Portfolio Manager"),
     }
 
@@ -144,6 +145,7 @@ class MessageBuffer:
                 "fundamentals_report": "Fundamentals Analysis",
                 "investment_plan": "Research Team Decision",
                 "trader_investment_plan": "Trading Team Plan",
+                "risk_assessment": "Risk Management Verdict",
                 "final_trade_decision": "Portfolio Management Decision",
             }
             self.current_report = (
@@ -213,7 +215,7 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
         ],
         "Research Team": ["Bull Researcher", "Bear Researcher", "Research Manager"],
         "Trading Team": ["Trader"],
-        "Risk Management": ["Aggressive Analyst", "Neutral Analyst", "Conservative Analyst"],
+        "Risk Management": ["Aggressive Analyst", "Neutral Analyst", "Conservative Analyst", "Risk Manager"],
         "Portfolio Management": ["Portfolio Manager"],
     }
 
@@ -420,6 +422,8 @@ def display_complete_report(final_state):
             risk_reports.append(("Conservative Analyst", risk["conservative_history"]))
         if risk.get("neutral_history"):
             risk_reports.append(("Neutral Analyst", risk["neutral_history"]))
+        if final_state.get("risk_assessment"):
+            risk_reports.append(("Risk Manager", final_state["risk_assessment"]))
         if risk_reports:
             console.print(Panel("[bold]IV. Risk Management Team Decision[/bold]", border_style="red"))
             for title, content in risk_reports:

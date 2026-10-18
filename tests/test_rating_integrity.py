@@ -174,6 +174,7 @@ def test_the_cli_says_when_a_run_produced_no_usable_rating(monkeypatch, tmp_path
 @pytest.mark.parametrize("module, factory, must_name", [
     ("tradingagents.agents.managers.portfolio_manager", "create_portfolio_manager", "Rating"),
     ("tradingagents.agents.managers.research_manager", "create_research_manager", "Recommendation"),
+    ("tradingagents.agents.managers.risk_manager", "create_risk_manager", "Risk Level"),
     ("tradingagents.agents.trader.trader", "create_trader", "Action"),
 ])
 def test_a_decision_prompt_states_the_shape_of_its_answer(module, factory, must_name):

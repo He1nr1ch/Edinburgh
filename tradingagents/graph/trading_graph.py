@@ -14,6 +14,7 @@ from tradingagents.dataflows.config import run_config, run_config_context, set_c
 from tradingagents.dataflows.date_window import get_current_date, is_historical
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.feedback import FeedbackStore
 from tradingagents.llm_clients import create_tier_client, tier_provider
 from tradingagents.memory import TradingMemoryLog, settlement
 from tradingagents.memory.reflection import Reflector
@@ -80,6 +81,7 @@ class TradingAgentsGraph:
         self.quick_thinking_llm = create_tier_client(self.config, "quick", **extra).get_llm()
 
         self.memory_log = TradingMemoryLog(self.config)
+        self.feedback = FeedbackStore(self.config)
 
         self.conditional_logic = ConditionalLogic(
             max_debate_rounds=self.config["max_debate_rounds"],
@@ -330,6 +332,15 @@ class TradingAgentsGraph:
             logger.warning("Reading the memory log failed: %s", exc)
             past_context = ""
             note = note or f"The memory log could not be read this run ({type(exc).__name__})."
+        try:
+            track_record = self.feedback.render_context(
+                state["company_of_interest"], as_of=self._memory_as_of(state["trade_date"]))
+        except Exception as exc:
+            logger.warning("Reading the feedback store failed: %s", exc)
+            track_record = ""
+            note = note or f"The track record could not be read this run ({type(exc).__name__})."
+        if track_record:
+            past_context = f"{track_record}\n\n{past_context}".strip()
         return {"past_context": past_context, "memory_note": note}
 
     def settle_pending(self, company_name) -> settlement.Settlement:
@@ -351,7 +362,24 @@ class TradingAgentsGraph:
         With ``wait=False`` a pass already running on the same log is not waited for.
         """
         with run_config(self.config):
-            return settlement.settle_all_pending(self.memory_log, self.reflector, self.config, wait=wait)
+            done = settlement.settle_all_pending(self.memory_log, self.reflector, self.config, wait=wait)
+            self._score_settled()
+            return done
+
+    def _score_settled(self) -> None:
+        """Score the feedback store's pending decisions whose window has traded.
+
+        The memory log settled first and holds the reflection for each; the
+        store keeps that lesson with the outcome so the track record can quote it.
+        """
+        feedback = getattr(self, "feedback", None)
+        if feedback is None or not feedback.enabled:
+            return
+        lessons = {(e["ticker"], e["date"]): e.get("reflection") for e in self.memory_log.load_entries()
+                   if not e.get("pending")}
+        done = feedback.settle_due(settlement.fetch_window, lambda t, d: lessons.get((t, d)))
+        for ticker, date, reason in done.failed:
+            logger.warning("Could not score %s on %s: %s", ticker, date, reason)
 
     def record_decision(self, company_name, trade_date, final_state):
         """Record a finished run: its state log, and its decision in the memory log
@@ -366,6 +394,14 @@ class TradingAgentsGraph:
             ticker=company_name, trade_date=trade_date, final_trade_decision=decision,
             rating=run_rating(final_state),
         )
+        try:
+            self.feedback.record(
+                company_name, trade_date, final_state, settings=self.run_settings(),
+                holding_days=int(self.config.get("holding_period_days", 5)),
+                benchmark=settlement.resolve_benchmark(company_name, self.config),
+            )
+        except Exception as exc:   # the run is done; a store failure must not lose it
+            logger.warning("Recording %s on %s in the feedback store failed: %s", company_name, trade_date, exc)
 
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock",
                    checkpoint_thread_id: str | None = None, portfolio=None):
@@ -456,7 +492,11 @@ class TradingAgentsGraph:
                 "history": final_state["risk_debate_state"]["history"],
             },
             "investment_plan": final_state["investment_plan"],
+            "risk_assessment": final_state.get("risk_assessment", ""),
+            "risk_level": final_state.get("risk_level", ""),
             "final_trade_decision": final_state["final_trade_decision"],
+            "final_position_size_pct": final_state.get("final_position_size_pct"),
+            "final_risk_level": final_state.get("final_risk_level", ""),
             "final_rating": run_rating(final_state),
             "run_settings": self.run_settings(),
         }

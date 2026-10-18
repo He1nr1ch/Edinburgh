@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # LLMs sometimes write a placeholder string ("None", "N/A", ...) into an optional
 # numeric field instead of omitting it. Coerce those to None so the structured
@@ -70,6 +70,49 @@ class PortfolioRating(StrEnum):
     HOLD = "Hold"
     UNDERWEIGHT = "Underweight"
     SELL = "Sell"
+
+
+def _always_asked(*names):
+    """Mark nullable fields as required in the JSON schema the model is bound to.
+
+    A field with a default is optional in the schema, and a model served a
+    schema-constrained grammar (Ollama's structured output) then leaves the key
+    out and writes the value into the prose instead. Requiring the key makes the
+    model answer it, as a number or an explicit null, while the Python side keeps
+    treating an unparseable value as None rather than failing the decision.
+    """
+    def extend(schema: dict) -> None:
+        required = schema.setdefault("required", [])
+        for name in names:
+            if name not in required:
+                required.append(name)
+    return extend
+
+
+class RiskLevel(StrEnum):
+    """The stance Risk Management settles on for a trade."""
+
+    AGGRESSIVE = "Aggressive"
+    NEUTRAL = "Neutral"
+    CONSERVATIVE = "Conservative"
+
+
+def _coerce_optional_percent(value):
+    """A percentage of portfolio equity as a number in [0, 100], or None.
+
+    Models write "4.5%", "4.5", "4–5%" or a placeholder. A range or anything
+    else that is not one number is dropped, like a price, rather than failing
+    the whole decision; a number outside [0, 100] is not a weight and is dropped too.
+    """
+    if isinstance(value, str):
+        value = _coerce_optional_float(value.rstrip("%").strip() if value.strip().endswith("%") else value)
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if 0.0 <= number <= 100.0 else None
 
 
 class TraderAction(StrEnum):
@@ -213,6 +256,80 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Risk Manager
+# ---------------------------------------------------------------------------
+
+
+class RiskAssessment(BaseModel):
+    """Structured verdict of Risk Management on the trader's proposal.
+
+    The three risk analysts argue; this is where the desk settles on a stance
+    and a ceiling. The Portfolio Manager sizes within the ceiling, and the
+    feedback loop scores the stance against the outcome.
+    """
+
+    model_config = ConfigDict(json_schema_extra=_always_asked("stop_loss"))
+
+    risk_level: RiskLevel = Field(
+        description=(
+            "The risk stance the desk adopts for this trade. Exactly one of "
+            "Aggressive / Neutral / Conservative. Aggressive: the upside case is "
+            "strong enough to carry a full-size position; Conservative: the "
+            "downside case warrants a small position or none; Neutral: a standard "
+            "position with ordinary stops."
+        ),
+    )
+    max_position_pct: float = Field(
+        ge=0.0, le=100.0,
+        description=(
+            "The ceiling on this position as a percentage of total portfolio "
+            "equity, a number from 0 to 100 (e.g. 5 for five percent). 0 means "
+            "no position should be held."
+        ),
+    )
+    stop_loss: float | None = Field(
+        default=None,
+        description=(
+            "Recommended stop-loss as an absolute price in the instrument's quote "
+            "currency (e.g. 172.0), never a percentage. The stop belongs here, not "
+            "in the rationale; null only when no stop applies."
+        ),
+    )
+    rationale: str = Field(
+        description=(
+            "Which risk arguments decided the stance and the ceiling, in two to "
+            "four sentences, naming the specific risks that bound the size. The "
+            "level, ceiling and stop are given in their own fields, not repeated here."
+        ),
+    )
+
+    @field_validator("max_position_pct", mode="before")
+    @classmethod
+    def _percent(cls, v):
+        coerced = _coerce_optional_percent(v)
+        return v if coerced is None else coerced
+
+    @field_validator("stop_loss", mode="before")
+    @classmethod
+    def _nullish_float_to_none(cls, v):
+        return _coerce_optional_float(v)
+
+
+def render_risk_assessment(assessment: RiskAssessment) -> str:
+    """Render a RiskAssessment to markdown, the risk level on its own first line."""
+    stop = assessment.stop_loss if assessment.stop_loss is not None else "not provided"
+    return "\n".join([
+        f"**Risk Level**: {assessment.risk_level.value}",
+        "",
+        f"**Maximum Position**: {assessment.max_position_pct:g}% of portfolio equity",
+        "",
+        f"**Stop Loss**: {stop}",
+        "",
+        f"**Rationale**: {assessment.rationale}",
+    ])
+
+
+# ---------------------------------------------------------------------------
 # Portfolio Manager
 # ---------------------------------------------------------------------------
 
@@ -226,6 +343,8 @@ class PortfolioDecision(BaseModel):
     the rating-scale guidance.
     """
 
+    model_config = ConfigDict(json_schema_extra=_always_asked("position_size_pct", "risk_level"))
+
     rating: PortfolioRating = Field(
         description=(
             "The final position rating. Exactly one of Buy / Overweight / Hold / "
@@ -234,6 +353,24 @@ class PortfolioDecision(BaseModel):
             "stronger side, sized by how decisively it wins. Choose Hold only "
             "when the evidence is still balanced after weighing, or too thin to "
             "support a call."
+        ),
+    )
+    position_size_pct: float | None = Field(
+        default=None,
+        description=(
+            "The target position after this decision, as a percentage of total "
+            "portfolio equity: a number from 0 to 100 (e.g. 4.5), never a range. "
+            "0 means hold no position (a Sell exits; a Hold with no position "
+            "stays out). Stay within Risk Management's maximum unless the thesis "
+            "says why not."
+        ),
+    )
+    risk_level: RiskLevel | None = Field(
+        default=None,
+        description=(
+            "The risk stance this decision adopts. Exactly one of Aggressive / "
+            "Neutral / Conservative, normally Risk Management's; say so in the "
+            "thesis if you depart from it."
         ),
     )
     executive_summary: str = Field(
@@ -263,6 +400,11 @@ class PortfolioDecision(BaseModel):
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
 
+    @field_validator("position_size_pct", mode="before")
+    @classmethod
+    def _percent_or_none(cls, v):
+        return _coerce_optional_percent(v)
+
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
@@ -272,8 +414,14 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     ``**Executive Summary**``, ``**Investment Thesis**``) that downstream
     parsers and the report writers already handle.
     """
+    size = (f"{decision.position_size_pct:g}% of portfolio equity"
+            if decision.position_size_pct is not None else "not provided")
     parts = [
         f"**Rating**: {decision.rating.value}",
+        "",
+        f"**Position Size**: {size}",
+        "",
+        f"**Risk Level**: {decision.risk_level.value if decision.risk_level else 'not provided'}",
         "",
         f"**Executive Summary**: {decision.executive_summary}",
         "",

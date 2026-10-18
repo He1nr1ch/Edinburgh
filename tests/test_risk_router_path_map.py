@@ -39,8 +39,8 @@ def test_router_return_always_routable(latest_speaker):
 @pytest.mark.unit
 def test_router_terminates_at_round_limit():
     logic = ConditionalLogic(max_risk_discuss_rounds=1)
-    # count >= 3 * rounds routes to the Portfolio Manager (debate ends)
-    assert logic.should_continue_risk_analysis(_state("Neutral", count=3)) == "Portfolio Manager"
+    # count >= 3 * rounds routes to the Risk Manager (debate ends)
+    assert logic.should_continue_risk_analysis(_state("Neutral", count=3)) == "Risk Manager"
 
 
 @pytest.mark.unit
@@ -54,7 +54,7 @@ def test_path_map_covers_full_router_range():
     # Every value the router can emit is a key in the shared map...
     assert returns <= set(RISK_ANALYSIS_PATH_MAP)
     # ...and the terminal target is reachable.
-    assert "Portfolio Manager" in returns
+    assert "Risk Manager" in returns
 
 
 @pytest.mark.unit

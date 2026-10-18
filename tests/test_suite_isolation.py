@@ -19,7 +19,7 @@ def test_a_test_cannot_reach_the_network(connect):
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("key", ["results_dir", "data_cache_dir", "memory_log_path"])
+@pytest.mark.parametrize("key", ["results_dir", "data_cache_dir", "memory_log_path", "feedback_db_url"])
 def test_the_suite_keeps_its_files_out_of_the_users_home(key):
     """A test that reads the user's cache sees what their runs fetched, and passes
     or fails with it; one that writes there changes their data."""
@@ -27,4 +27,5 @@ def test_the_suite_keeps_its_files_out_of_the_users_home(key):
 
     from tradingagents.default_config import DEFAULT_CONFIG
 
-    assert not Path(DEFAULT_CONFIG[key]).is_relative_to(Path.home() / ".tradingagents")
+    value = DEFAULT_CONFIG[key].removeprefix("sqlite:///")
+    assert not Path(value).is_relative_to(Path.home() / ".tradingagents")

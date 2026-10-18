@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+import pandas as pd
+
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.alpaca import get_closes
 
@@ -35,6 +37,68 @@ def _by_day(closes):
     return closes
 
 
+@dataclass(frozen=True)
+class Window:
+    """A decision's holding window as it traded: entry at the first close after the
+    analysis date, exit ``holding_days`` sessions later, the closes between."""
+
+    entry_date: str
+    exit_date: str
+    entry: float
+    exit: float
+    benchmark_entry: float
+    benchmark_exit: float
+    closes: pd.Series          # the instrument's closes from entry through exit, by date
+
+    @property
+    def raw_return(self) -> float:
+        return (self.exit - self.entry) / self.entry
+
+    @property
+    def benchmark_return(self) -> float:
+        return (self.benchmark_exit - self.benchmark_entry) / self.benchmark_entry
+
+    @property
+    def alpha(self) -> float:
+        return self.raw_return - self.benchmark_return
+
+
+def fetch_window(ticker: str, trade_date: str, holding_days: int = 5, benchmark: str = "SPY") -> Window | None:
+    """The holding window after ``trade_date``, or None while it has not fully traded.
+
+    The position is entered at the first close after ``trade_date``: a run dated
+    ``trade_date`` reads news published after that day's close. Both series must
+    have traded through the exit, or a close there may yet move. A failure to get
+    or read the prices is raised, for the caller to report.
+    """
+    start = datetime.strptime(trade_date, "%Y-%m-%d")
+    # holding_days counts trading days after the entry session, so ask for the
+    # calendar span they occupy (about 7 for every 5) plus a week for holidays.
+    end = start + timedelta(days=round((holding_days + 1) * 7 / 5) + 7)
+    end_str = end.strftime("%Y-%m-%d")
+
+    stock = _by_day(get_closes(ticker, trade_date, end_str))
+    stock = stock[stock.index > start]
+    # From a week earlier, so the benchmark has a close on or before entry.
+    bench_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
+    bench = _by_day(get_closes(benchmark, bench_start, end_str))
+
+    if len(stock) <= holding_days:
+        return None
+    entry, exit_ = stock.index[0], stock.index[holding_days]
+    # The window is the stock's own sessions; the benchmark is valued at its
+    # last close by each end, so both returns span the same dates even when
+    # the calendars differ (a coin trades at weekends, an index does not).
+    if bench.empty or bench.index[0] > entry or bench.index[-1] < exit_:
+        return None
+    return Window(
+        entry_date=entry.strftime("%Y-%m-%d"), exit_date=exit_.strftime("%Y-%m-%d"),
+        entry=float(stock.iloc[0]), exit=float(stock.iloc[holding_days]),
+        benchmark_entry=float(bench.asof(entry)), benchmark_exit=float(bench.asof(exit_)),
+        closes=stock.iloc[: holding_days + 1].astype(float),
+    )
+
+
 def fetch_returns(
     ticker: str, trade_date: str, holding_days: int = 5,
     benchmark: str = "SPY",
@@ -52,41 +116,12 @@ def fetch_returns(
     yet (#1169). A failure to get or read the prices is raised, for the caller
     to report.
     """
-    start = datetime.strptime(trade_date, "%Y-%m-%d")
-    # holding_days counts trading days after the entry session, so ask for the
-    # calendar span they occupy (about 7 for every 5) plus a week for holidays.
-    end = start + timedelta(days=round((holding_days + 1) * 7 / 5) + 7)
-    end_str = end.strftime("%Y-%m-%d")
-
-    # Closes for the instrument the analysis priced (XAUUSD -> GC=F, #984),
-    # from the first session after the decision date.
-    stock = _by_day(get_closes(ticker, trade_date, end_str))
-    stock = stock[stock.index > start]
-    # From a week earlier, so the benchmark has a close on or before entry.
-    bench_start = (start - timedelta(days=7)).strftime("%Y-%m-%d")
-    bench = _by_day(get_closes(benchmark, bench_start, end_str))
-
-    # Require the full holding window to have traded. A rerun before it has
-    # leaves the entry pending to retry next run, rather than settling on a
-    # premature partial return (#1169).
-    if len(stock) <= holding_days:
+    window = fetch_window(ticker, trade_date, holding_days, benchmark)
+    if window is None:
         return None, None, None, None
-    entry, exit_ = stock.index[0], stock.index[holding_days]
-    # The window is the stock's own sessions; the benchmark is valued at its
-    # last close by each end, so both returns span the same dates even when
-    # the calendars differ (a coin trades at weekends, an index does not).
-    # It must have traded through the exit, or its close there may yet move.
-    if bench.empty or bench.index[0] > entry or bench.index[-1] < exit_:
-        return None, None, None, None
-
-    raw = float((stock.iloc[holding_days] - stock.iloc[0]) / stock.iloc[0])
-    bench_entry, bench_exit = bench.asof(entry), bench.asof(exit_)
-    bench_ret = float((bench_exit - bench_entry) / bench_entry)
-    alpha = raw - bench_ret
     # Every close used is known by the exit: the point-in-time cutoff for
-    # injecting the lesson (#1251).
-    resolution_date = exit_.strftime("%Y-%m-%d")
-    return raw, alpha, holding_days, resolution_date
+    # injecting the lesson.
+    return window.raw_return, window.alpha, holding_days, window.exit_date
 
 
 @dataclass
