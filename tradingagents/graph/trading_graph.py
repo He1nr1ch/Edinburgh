@@ -100,6 +100,8 @@ class TradingAgentsGraph:
             self.deep_thinking_llm,
             self.conditional_logic,
             max_tool_rounds,
+            int(self.config.get("max_tool_output_chars", 16_000)),
+            int(self.config.get("max_tool_history_chars", 160_000)),
         )
 
         self.propagator = Propagator(

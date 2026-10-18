@@ -2,7 +2,7 @@ import logging
 from collections import Counter
 from typing import Any, TypedDict
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -52,14 +52,42 @@ def _tools_or_done(state) -> str:
     return "tools" if state["messages"][-1].tool_calls else END
 
 
-def _analyst_graph(spec, agent, max_tool_rounds: int):
+TRUNCATED_NOTE = (
+    "\n\n[... {more:,} more characters withheld: this result is longer than one call may return. "
+    "Ask for a narrower window or fewer items if you need the rest.]"
+)
+
+
+def clamp_tool_output(messages, limit: int):
+    """Tool results longer than ``limit`` characters, cut and marked as cut.
+
+    A model asked for years of daily prices, or many indicators over long
+    windows, fills the context window with tool results and the call fails
+    past the user message. A result is cut where it stands, and told so.
+    """
+    for message in messages:
+        if isinstance(message, ToolMessage) and isinstance(message.content, str) and len(message.content) > limit:
+            more = len(message.content) - limit
+            message.content = message.content[:limit] + TRUNCATED_NOTE.format(more=more)
+    return messages
+
+
+def tool_history_chars(messages) -> int:
+    """How much of the history is tool results, in characters."""
+    return sum(len(m.content) for m in messages if isinstance(m, ToolMessage) and isinstance(m.content, str))
+
+
+def _analyst_graph(spec, agent, max_tool_rounds: int, max_tool_output_chars: int = 16_000,
+                   max_tool_history_chars: int = 160_000):
     """One analyst as a graph of its own: the model and its tools, on a private message history.
 
     It returns only its report, so analysts running side by side never write the
     same key, and its tool calls never reach the other analysts' messages. After
-    ``max_tool_rounds`` rounds of tool calls it is told to write its report, and
-    that turn ends it whatever it answers, so a model that keeps calling tools
-    cannot run the graph into its recursion limit (#1420).
+    ``max_tool_rounds`` rounds of tool calls, or once its tool results hold more
+    than ``max_tool_history_chars``, it is told to write its report, and that
+    turn ends it whatever it answers, so a model that keeps calling tools cannot
+    run the graph into its recursion limit or the model's context window. Each
+    result is capped at ``max_tool_output_chars``.
     """
     output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str})
     graph = StateGraph(AgentState, output_schema=output)
@@ -76,15 +104,29 @@ def _analyst_graph(spec, agent, max_tool_rounds: int):
         return sum(1 for m in messages if getattr(m, "tool_calls", None))
 
     def more_or_wrap_up(state) -> str:
-        return "wrap_up" if rounds(state["messages"]) >= max_tool_rounds else "agent"
+        messages = state["messages"]
+        if rounds(messages) >= max_tool_rounds:
+            return "wrap_up"
+        if tool_history_chars(messages) > max_tool_history_chars:
+            logger.warning("%s has %d characters of tool results, past its budget of %d; asking for its report",
+                           spec.agent_node, tool_history_chars(messages), max_tool_history_chars)
+            return "wrap_up"
+        return "agent"
 
     def wrap_up(state):
         repeated = ", ".join(f"{name} x{n}" for name, n in Counter(calls(state["messages"])).most_common())
-        logger.warning("%s used its %d tool rounds (%s); asking for its report",
-                       spec.agent_node, max_tool_rounds, repeated)
+        logger.warning("%s is done with its tools after %d rounds (%s); asking for its report",
+                       spec.agent_node, rounds(state["messages"]), repeated)
         return agent({**state, "messages": [*state["messages"], HumanMessage(WRAP_UP)]})
 
-    graph.add_node("tools", ToolNode(list(spec.tools)))
+    tool_node = ToolNode(list(spec.tools))
+
+    def run_tools(state):
+        result = tool_node.invoke(state)
+        clamp_tool_output(result["messages"], max_tool_output_chars)
+        return result
+
+    graph.add_node("tools", run_tools)
     graph.add_node("wrap_up", wrap_up)
     graph.add_conditional_edges("agent", _tools_or_done, ["tools", END])
     graph.add_conditional_edges("tools", more_or_wrap_up, ["agent", "wrap_up"])
@@ -101,12 +143,16 @@ class GraphSetup:
         deep_thinking_llm: Any,
         conditional_logic: ConditionalLogic,
         max_tool_rounds: int,
+        max_tool_output_chars: int = 16_000,
+        max_tool_history_chars: int = 160_000,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
         self.deep_thinking_llm = deep_thinking_llm
         self.conditional_logic = conditional_logic
         self.max_tool_rounds = max_tool_rounds
+        self.max_tool_output_chars = max_tool_output_chars
+        self.max_tool_history_chars = max_tool_history_chars
 
     def setup_graph(
         self, selected_analysts=("market", "news", "fundamentals"), memory_node=None
@@ -144,7 +190,8 @@ class GraphSetup:
 
         for spec in plan.specs:
             workflow.add_node(spec.agent_node,
-                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds))
+                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds,
+                                             self.max_tool_output_chars, self.max_tool_history_chars))
 
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)

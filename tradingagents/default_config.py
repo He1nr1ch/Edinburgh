@@ -19,6 +19,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_MAX_TOOL_ROUNDS":      "max_tool_rounds",
+    "TRADINGAGENTS_MAX_TOOL_OUTPUT_CHARS": "max_tool_output_chars",
+    "TRADINGAGENTS_MAX_TOOL_HISTORY_CHARS": "max_tool_history_chars",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
     "TRADINGAGENTS_ALPACA_FEED":          "alpaca_feed",
@@ -155,6 +157,12 @@ def build_default_config() -> dict:
         "max_recur_limit": 100,
         # Rounds of tool calls an analyst may make before it is asked for its report.
         "max_tool_rounds": 20,
+        # Each tool result is cut at this many characters (about 4,000 tokens), and
+        # an analyst whose tool results together pass the history budget (about
+        # 40,000 tokens) is asked for its report: tool results are what fills a
+        # model's context window, and a call past it fails.
+        "max_tool_output_chars": 16_000,
+        "max_tool_history_chars": 160_000,
         # News / data fetching parameters
         # Increase for longer lookback strategies or to broaden macro coverage;
         # decrease to reduce token usage in agent prompts.
