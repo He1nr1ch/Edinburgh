@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 # Rich colorizes console output and highlights numbers and URLs, which splits
 # asserted substrings with escape codes ("port \x1b[1;33m11434"). Whether it
 # does so depends on the ambient terminal, so strip the codes to keep these
@@ -152,3 +154,33 @@ def test_ollama_offers_custom_model_id():
         assert "custom" in values, f"Ollama {mode!r} missing 'custom' option: {entries}"
         # Custom option is last so it doesn't push the curated defaults off-screen
         assert values[-1] == "custom", f"'custom' should be last entry: {values}"
+
+
+def test_an_overflowed_prompt_is_reported_as_a_context_window_problem(monkeypatch):
+    from langchain_ollama import ChatOllama
+
+    from tradingagents.llm_clients.ollama_client import ContextWindowExceeded, NormalizedChatOllama
+
+    def fail(self, *a, **k):
+        raise RuntimeError("no user query found in messages (status code: 500)")
+
+    monkeypatch.setattr(ChatOllama, "invoke", fail)
+    llm = NormalizedChatOllama(model="qwen3.8:27b", base_url="http://192.168.0.62:11434", num_ctx=32768)
+    with pytest.raises(ContextWindowExceeded, match="32768"):
+        llm.invoke("hello")
+
+
+def test_a_prompt_near_the_window_is_logged(monkeypatch, caplog):
+    import logging
+
+    from langchain_core.messages import AIMessage
+    from langchain_ollama import ChatOllama
+
+    from tradingagents.llm_clients.ollama_client import NormalizedChatOllama
+
+    monkeypatch.setattr(ChatOllama, "invoke", lambda self, *a, **k: AIMessage("ok", usage_metadata={
+        "input_tokens": 30000, "output_tokens": 10, "total_tokens": 30010}))
+    llm = NormalizedChatOllama(model="qwen3.8:27b", base_url="http://192.168.0.62:11434", num_ctx=32768)
+    with caplog.at_level(logging.WARNING):
+        assert llm.invoke("hello").content == "ok"
+    assert "30000 of the 32768-token context window" in caplog.text

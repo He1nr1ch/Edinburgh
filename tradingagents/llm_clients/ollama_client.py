@@ -9,6 +9,7 @@ every call, so the window is a config setting rather than a server setting.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
@@ -16,6 +17,8 @@ from langchain_ollama import ChatOllama
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "http://localhost:11434"
 BASE_URL_ENV = "OLLAMA_BASE_URL"
@@ -34,11 +37,38 @@ def host_url(url: str | None) -> str:
     return url or DEFAULT_BASE_URL
 
 
+# Ollama answers a prompt longer than the context window by truncating it; once
+# the user message is gone it fails with this message, which says nothing about
+# the cause.
+_TRUNCATED = "no user query found in messages"
+
+
+class ContextWindowExceeded(RuntimeError):
+    """The prompt did not fit the context window asked of Ollama."""
+
+
 class NormalizedChatOllama(ChatOllama):
-    """ChatOllama with content normalized to a string."""
+    """ChatOllama with content normalized to a string, and the context window watched.
+
+    A prompt that fills most of the window is logged, and one that overflows it
+    is reported as what it is, so the fix (a larger ``ollama_num_ctx``, or
+    shorter reports) is named instead of an opaque server error.
+    """
 
     def invoke(self, input, config=None, **kwargs):
-        return normalize_content(super().invoke(input, config, **kwargs))
+        try:
+            response = super().invoke(input, config, **kwargs)
+        except Exception as exc:
+            if _TRUNCATED in str(exc):
+                raise ContextWindowExceeded(
+                    f"The prompt did not fit Ollama's context window of {self.num_ctx} tokens on "
+                    f"{self.model}; raise ollama_num_ctx (TRADINGAGENTS_OLLAMA_NUM_CTX) or shorten the reports."
+                ) from exc
+            raise
+        used = (getattr(response, "usage_metadata", None) or {}).get("input_tokens")
+        if used and self.num_ctx and used > 0.8 * self.num_ctx:
+            logger.warning("Prompt used %d of the %d-token context window on %s", used, self.num_ctx, self.model)
+        return normalize_content(response)
 
 
 class OllamaClient(BaseLLMClient):
