@@ -132,12 +132,24 @@ def _cached_json(url: str, name: str) -> dict:
     return data
 
 
+# Filers SEC's ticker file leaves out, by the exchange ticker Alpaca uses.
+# Verify any entry against data.sec.gov/submissions before adding it.
+_CIK_OVERRIDES: dict[str, str] = {}
+
+
 def cik_for(ticker: str) -> str | None:
-    """The filer's CIK, or None when the ticker is not a US filer."""
-    table = _cached_json(_TICKERS_URL, "company_tickers.json")
+    """The filer's CIK, or None when the ticker is not a US filer.
+
+    SEC spells a share class with a dash (``BRK-B``) where the exchanges and
+    Alpaca use a dot (``BRK.B``), so both spellings are looked up.
+    """
     wanted = ticker.strip().upper()
+    if wanted in _CIK_OVERRIDES:
+        return _CIK_OVERRIDES[wanted]
+    spellings = {wanted, wanted.replace(".", "-")}
+    table = _cached_json(_TICKERS_URL, "company_tickers.json")
     for entry in table.values():
-        if entry.get("ticker", "").upper() == wanted:
+        if entry.get("ticker", "").upper() in spellings:
             return f"{int(entry['cik_str']):010d}"
     return None
 

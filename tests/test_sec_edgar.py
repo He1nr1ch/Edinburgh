@@ -321,3 +321,20 @@ def test_a_row_filed_only_year_to_date_keeps_its_figure_beside_a_row_filed_by_qu
     rows = {r.split(",")[0]: r.split(",")[1:] for r in out.splitlines()[3:]}
     assert rows["Operating Cash Flow"] == ["", "120"]
     assert rows["Capital Expenditure"] == ["10", ""]
+
+
+@pytest.mark.unit
+def test_a_share_class_is_found_under_secs_dashed_spelling(monkeypatch):
+    """Alpaca and the exchanges write BRK.B; SEC's ticker file writes BRK-B."""
+    table = {"0": {"cik_str": 1067983, "ticker": "BRK-B", "title": "BERKSHIRE HATHAWAY INC"}}
+    monkeypatch.setattr(sec_edgar, "_fetch_json", lambda url: table)
+    assert sec_edgar.cik_for("BRK.B") == "0001067983"
+    assert sec_edgar.cik_for("brk-b") == "0001067983"
+
+
+@pytest.mark.unit
+def test_a_filer_missing_from_secs_ticker_file_is_known_by_override(monkeypatch):
+    monkeypatch.setattr(sec_edgar, "_fetch_json", lambda url: {})
+    monkeypatch.setitem(sec_edgar._CIK_OVERRIDES, "ZZZ", "0000000001")
+    assert sec_edgar.cik_for("zzz") == "0000000001"
+    assert sec_edgar.cik_for("ZZZZ") is None
