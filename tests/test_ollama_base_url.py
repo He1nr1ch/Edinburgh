@@ -64,10 +64,19 @@ def test_the_context_window_and_token_cap_reach_the_model():
     from tradingagents.llm_clients import build_llm_kwargs, create_llm_client
 
     kwargs = build_llm_kwargs({"llm_provider": "ollama", "ollama_num_ctx": "32768", "max_tokens": 4096,
-                               "temperature": 0.1})
+                               "temperature": 0.1, "ollama_thinking": False})
     llm = create_llm_client("ollama", "qwen3.8:27b", **kwargs).get_llm()
 
-    assert (llm.num_ctx, llm.num_predict, llm.temperature) == (32768, 4096, 0.1)
+    assert (llm.num_ctx, llm.num_predict, llm.temperature, llm.reasoning) == (32768, 4096, 0.1, False)
+
+
+def test_thinking_is_off_by_default_and_switchable():
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.llm_clients import build_llm_kwargs
+
+    assert DEFAULT_CONFIG["ollama_thinking"] is False
+    assert build_llm_kwargs({"llm_provider": "ollama", "ollama_thinking": True})["reasoning"] is True
+    assert "reasoning" not in build_llm_kwargs({"llm_provider": "ollama", "ollama_thinking": None})
 
 
 def test_the_default_config_asks_for_a_large_window():

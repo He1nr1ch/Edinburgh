@@ -101,6 +101,9 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         num_ctx = config.get("ollama_num_ctx")
         if num_ctx:
             kwargs["num_ctx"] = int(num_ctx)
+        thinking = config.get("ollama_thinking")
+        if thinking is not None and thinking != "":
+            kwargs["reasoning"] = bool(thinking)
 
     # Sampling temperature is cross-provider: forward it whenever set.
     # float() here so a value coming from a TRADINGAGENTS_TEMPERATURE env

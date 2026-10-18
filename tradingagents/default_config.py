@@ -33,6 +33,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
     "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
+    "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
 }
 
 
@@ -126,6 +127,11 @@ def build_default_config() -> dict:
         # which drops the user message and fails the call; the analysts need
         # tens of thousands of tokens. Lower it if the model does not fit.
         "ollama_num_ctx": 32768,
+        # Whether an Ollama model that can think (qwen3.x) does so. Off by default:
+        # the agents' work is reading reports and writing them, where hidden
+        # reasoning adds minutes per call for little gain. Turn it on for the
+        # deep tier by running that tier on its own provider settings.
+        "ollama_thinking": False,
         # Sampling temperature, forwarded to every provider when set. None leaves
         # each provider at its own default. Lower values reduce run-to-run
         # variation on models that honor it; reasoning models largely ignore it
