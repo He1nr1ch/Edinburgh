@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import re
 
-import pytest
-
 # Rich colorizes console output and highlights numbers and URLs, which splits
 # asserted substrings with escape codes ("port \x1b[1;33m11434"). Whether it
 # does so depends on the ambient terminal, so strip the codes to keep these
@@ -17,59 +15,65 @@ def _console_out(capsys) -> str:
     return _ANSI.sub("", capsys.readouterr().out)
 
 
-# ---- openai_client side: registry-driven base_url resolution --------------
+# ---- ollama_client: base_url resolution ------------------------------------
 
 
-def _client_module():
-    import tradingagents.llm_clients.openai_client as mod
-    return mod
-
-
-def _base_url(mod, provider, **kwargs):
-    return str(mod.OpenAIClient(model="m", provider=provider, **kwargs).get_llm().openai_api_base)
+def _base_url(**kwargs) -> str:
+    from tradingagents.llm_clients.ollama_client import OllamaClient
+    return str(OllamaClient(model="m", **kwargs).get_llm().base_url)
 
 
 def test_resolver_returns_default_when_env_unset(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
-    mod = _client_module()
-    assert _base_url(mod, "ollama") == "http://localhost:11434/v1"
+    assert _base_url() == "http://localhost:11434"
 
 
 def test_resolver_returns_env_when_set(monkeypatch):
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://remote-ollama:11434")
+    assert _base_url() == "http://remote-ollama:11434"
+
+
+def test_an_openai_style_v1_suffix_is_dropped(monkeypatch):
+    """Earlier releases took the OpenAI-compatible URL; the native API wants the host root."""
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://remote-ollama:11434/v1")
-    mod = _client_module()
-    assert _base_url(mod, "ollama") == "http://remote-ollama:11434/v1"
+    assert _base_url() == "http://remote-ollama:11434"
 
 
 def test_resolver_evaluation_is_call_time(monkeypatch):
     """Setting the env AFTER module import must still take effect."""
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
-    mod = _client_module()
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://late-set:11434/v1")
-    assert _base_url(mod, "ollama") == "http://late-set:11434/v1"
-
-
-def test_client_get_llm_picks_up_env(monkeypatch):
-    """End-to-end: OllamaClient.get_llm() respects OLLAMA_BASE_URL."""
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://my-ollama:11434/v1")
-    mod = _client_module()
-    client = mod.OpenAIClient(model="llama3.1", provider="ollama")
-    llm = client.get_llm()
-    assert "my-ollama" in str(llm.openai_api_base)
+    import tradingagents.llm_clients.ollama_client  # noqa: F401
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://late-set:11434")
+    assert _base_url() == "http://late-set:11434"
 
 
 def test_explicit_base_url_overrides_env(monkeypatch):
     """An explicit base_url passed to the client wins over the env var."""
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://env-set:11434/v1")
-    mod = _client_module()
-    client = mod.OpenAIClient(
-        model="llama3.1",
-        provider="ollama",
-        base_url="http://explicit:11434/v1",
-    )
-    llm = client.get_llm()
-    assert "explicit" in str(llm.openai_api_base)
-    assert "env-set" not in str(llm.openai_api_base)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://env-set:11434")
+    assert _base_url(base_url="http://explicit:11434/v1") == "http://explicit:11434"
+
+
+def test_the_factory_routes_ollama_to_the_native_client():
+    from tradingagents.llm_clients import create_llm_client
+    from tradingagents.llm_clients.ollama_client import OllamaClient
+
+    assert isinstance(create_llm_client("ollama", "qwen3.8:27b"), OllamaClient)
+
+
+def test_the_context_window_and_token_cap_reach_the_model():
+    from tradingagents.llm_clients import build_llm_kwargs, create_llm_client
+
+    kwargs = build_llm_kwargs({"llm_provider": "ollama", "ollama_num_ctx": "32768", "max_tokens": 4096,
+                               "temperature": 0.1})
+    llm = create_llm_client("ollama", "qwen3.8:27b", **kwargs).get_llm()
+
+    assert (llm.num_ctx, llm.num_predict, llm.temperature) == (32768, 4096, 0.1)
+
+
+def test_the_default_config_asks_for_a_large_window():
+    from tradingagents.default_config import DEFAULT_CONFIG
+
+    assert DEFAULT_CONFIG["ollama_num_ctx"] >= 16384
 
 
 # ---- confirm_ollama_endpoint UX -------------------------------------------
@@ -78,9 +82,9 @@ def test_explicit_base_url_overrides_env(monkeypatch):
 def test_confirm_endpoint_shows_default(monkeypatch, capsys):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     from cli import prompts
-    prompts.confirm_ollama_endpoint("http://localhost:11434/v1")
+    prompts.confirm_ollama_endpoint("http://localhost:11434")
     out = _console_out(capsys)
-    assert "http://localhost:11434/v1" in out
+    assert "http://localhost:11434" in out
     assert "OLLAMA_BASE_URL" not in out  # not from env
     assert "Note" not in out  # no warnings for the canonical default
 
@@ -101,7 +105,7 @@ def test_confirm_endpoint_warns_on_missing_scheme(monkeypatch, capsys):
     prompts.confirm_ollama_endpoint("0.0.0.128")
     out = _console_out(capsys)
     assert "missing a scheme" in out
-    assert "http://<host>:11434/v1" in out
+    assert "http://<host>:11434" in out
 
 
 def test_confirm_endpoint_warns_on_non_default_port_remote(monkeypatch, capsys):
@@ -139,28 +143,3 @@ def test_ollama_offers_custom_model_id():
         assert "custom" in values, f"Ollama {mode!r} missing 'custom' option: {entries}"
         # Custom option is last so it doesn't push the curated defaults off-screen
         assert values[-1] == "custom", f"'custom' should be last entry: {values}"
-
-
-@pytest.mark.unit
-def test_structured_output_suppresses_object_tool_choice(monkeypatch):
-    """Ollama rejects the object-form tool_choice like other local servers
-    (#1062), and a local model ID has no capability entry saying otherwise, so
-    it takes the same client as the generic local endpoint."""
-    from langchain_openai import ChatOpenAI
-    from pydantic import BaseModel
-
-    from tradingagents.llm_clients import create_llm_client
-
-    class Schema(BaseModel):
-        x: int
-
-    captured = {}
-    monkeypatch.setattr(
-        ChatOpenAI,
-        "with_structured_output",
-        lambda self, schema, method=None, **kw: captured.update({"method": method, **kw}) or "BOUND",
-    )
-
-    create_llm_client(provider="ollama", model="qwen3:30b").get_llm().with_structured_output(Schema)
-
-    assert captured["tool_choice"] is None

@@ -40,7 +40,7 @@ class NormalizedChatOpenAI(ChatOpenAI):
 
 
 class LocalCompatibleChatOpenAI(NormalizedChatOpenAI):
-    """OpenAI-compatible client for local servers (Ollama, vLLM, LM Studio, llama.cpp).
+    """OpenAI-compatible client for local servers (vLLM, LM Studio, llama.cpp).
 
     Their tool-calling support varies, and many reject the object-form
     ``tool_choice`` langchain sends for function-calling structured output. Bind
@@ -77,20 +77,17 @@ class ProviderSpec:
 
     chat_class: type = NormalizedChatOpenAI   # provider quirks live in the subclass
     base_url: str | None = None            # default endpoint (None -> SDK default)
-    base_url_env: str | None = None        # env var that overrides base_url (e.g. OLLAMA_BASE_URL)
+    base_url_env: str | None = None        # env var that overrides base_url
     key_optional: bool = False                # don't require/prompt; send a placeholder if unset
     placeholder_key: str = "EMPTY"            # sent when no key is available (keyless local servers)
     require_base_url: bool = False            # error if no base_url is resolved (generic endpoint)
     use_responses_api: bool = False           # native OpenAI Responses API
 
 
-# The OpenAI-compatible provider family: OpenAI itself, a local Ollama server,
-# and any other OpenAI-compatible endpoint the user names.
+# The OpenAI-compatible provider family: OpenAI itself and any other
+# OpenAI-compatible endpoint the user names. Ollama has its own client.
 OPENAI_COMPATIBLE_PROVIDERS: dict[str, ProviderSpec] = {
     "openai":     ProviderSpec(use_responses_api=True),
-    "ollama":     ProviderSpec(base_url="http://localhost:11434/v1", base_url_env="OLLAMA_BASE_URL",
-                               key_optional=True, placeholder_key="ollama",
-                               chat_class=LocalCompatibleChatOpenAI),
     "openai_compatible": ProviderSpec(
         require_base_url=True, key_optional=True, chat_class=LocalCompatibleChatOpenAI
     ),
@@ -118,7 +115,7 @@ def _is_native_openai_base_url(base_url: str | None) -> bool:
 
 
 class OpenAIClient(BaseLLMClient):
-    """Client for OpenAI and OpenAI-compatible providers (Ollama, custom endpoints)."""
+    """Client for OpenAI and OpenAI-compatible endpoints (vLLM, LM Studio, relays)."""
 
     def __init__(
         self,
@@ -141,8 +138,8 @@ class OpenAIClient(BaseLLMClient):
             chat_cls = spec.chat_class
 
             # base_url precedence: explicit client base_url (config /
-            # TRADINGAGENTS_LLM_BACKEND_URL) > provider env override (e.g.
-            # OLLAMA_BASE_URL) > provider default. None means the SDK default.
+            # TRADINGAGENTS_LLM_BACKEND_URL) > provider env override > provider
+            # default. None means the SDK default.
             env_base_url = os.environ.get(spec.base_url_env) if spec.base_url_env else None
             base_url = self.base_url or env_base_url or spec.base_url
             if spec.require_base_url and not base_url:

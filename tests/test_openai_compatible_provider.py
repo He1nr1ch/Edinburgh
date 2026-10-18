@@ -64,12 +64,13 @@ def test_any_model_accepted_no_forced_key():
 
 
 @pytest.mark.unit
-def test_env_backend_url_precedence():
+def test_env_backend_url_precedence(monkeypatch):
     # #978: explicit env URL wins over the menu/default regardless of provider source.
     from cli.prompts import resolve_backend_url
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)   # a developer's .env must not decide the test
     assert resolve_backend_url("openai", "https://api.openai.com/v1", env_url="http://proxy/v1") == "http://proxy/v1"
     assert resolve_backend_url("openai", "https://api.openai.com/v1", env_url=None) == "https://api.openai.com/v1"
-    assert resolve_backend_url("ollama", None, None) == "http://localhost:11434/v1"
+    assert resolve_backend_url("ollama", None, None) == "http://localhost:11434"
 
 
 @pytest.mark.unit

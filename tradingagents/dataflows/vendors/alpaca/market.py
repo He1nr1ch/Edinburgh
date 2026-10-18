@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated
 
 import pandas as pd
@@ -87,7 +87,7 @@ def load_ohlcv(symbol: str, as_of_date: str, fill_gaps: bool = True) -> pd.DataF
             data = cached
 
     if data is None:
-        start = (now - pd.DateOffset(years=5)).to_pydatetime()
+        start = (now - pd.DateOffset(years=5)).to_pydatetime().replace(tzinfo=UTC)
         downloaded = _bars(canonical, start, None)
         replace_file(data_file, lambda temp: downloaded.to_csv(temp, index=False, encoding="utf-8"))
         data = downloaded
@@ -153,9 +153,11 @@ def get_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
     after a decision date, which the cache cut at that date does not hold.
     """
     canonical = normalize_symbol(symbol)
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=1)
-    if end < start:
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    # Alpaca's ``end`` is inclusive on the instant; a bar is stamped after midnight
+    # UTC, so midnight on ``end_date`` keeps that day's bar out and the day before in.
+    end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    if end <= start:
         return pd.Series(dtype=float)
     try:
         frame = _bars(canonical, start, end)

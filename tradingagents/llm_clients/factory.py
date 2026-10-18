@@ -30,11 +30,15 @@ def create_llm_client(
     """
     provider_lower = provider.lower()
 
-    # Anthropic has its own API; everything else is OpenAI-compatible and
-    # routes through the provider registry (single source of truth).
+    # Anthropic and Ollama have their own APIs; everything else is
+    # OpenAI-compatible and routes through the provider registry.
     if provider_lower == "anthropic":
         from .anthropic_client import AnthropicClient
         return AnthropicClient(model, base_url, **kwargs)
+
+    if provider_lower == "ollama":
+        from .ollama_client import OllamaClient
+        return OllamaClient(model, base_url, **kwargs)
 
     from .openai_client import OpenAIClient, is_openai_compatible
     if is_openai_compatible(provider_lower):
@@ -92,6 +96,11 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         effort = config.get("anthropic_effort")
         if effort:
             kwargs["effort"] = effort
+
+    elif provider == "ollama":
+        num_ctx = config.get("ollama_num_ctx")
+        if num_ctx:
+            kwargs["num_ctx"] = int(num_ctx)
 
     # Sampling temperature is cross-provider: forward it whenever set.
     # float() here so a value coming from a TRADINGAGENTS_TEMPERATURE env

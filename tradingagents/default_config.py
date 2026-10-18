@@ -31,6 +31,7 @@ _ENV_OVERRIDES = {
     # interactive choice, which is skipped when the matching var is set.
     "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
+    "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
 }
 
 
@@ -108,6 +109,11 @@ def build_default_config() -> dict:
         # Provider-specific thinking configuration
         "openai_reasoning_effort": None,    # "medium", "high", "low"
         "anthropic_effort": None,           # "high", "medium", "low"
+        # Context window asked of an Ollama server per request. The server's own
+        # default (often 4,096) truncates the prompt once tool results arrive,
+        # which drops the user message and fails the call; the analysts need
+        # tens of thousands of tokens. Lower it if the model does not fit.
+        "ollama_num_ctx": 32768,
         # Sampling temperature, forwarded to every provider when set. None leaves
         # each provider at its own default. Lower values reduce run-to-run
         # variation on models that honor it; reasoning models largely ignore it

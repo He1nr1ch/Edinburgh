@@ -15,7 +15,7 @@ from tradingagents.llm_clients.openai_client import (
 @pytest.mark.unit
 def test_registry_membership():
     assert is_openai_compatible("openai")
-    assert is_openai_compatible("ollama")
+    assert not is_openai_compatible("ollama")      # its own client, on the native API
     assert is_openai_compatible("openai_compatible")  # the generic endpoint
     # Anthropic has its own API and client.
     assert not is_openai_compatible("anthropic")
@@ -27,7 +27,6 @@ def test_registry_membership():
 @pytest.mark.unit
 @pytest.mark.parametrize("provider,base_url,chat_class,responses", [
     ("openai", None, NormalizedChatOpenAI, True),
-    ("ollama", "http://localhost:11434/v1", LocalCompatibleChatOpenAI, False),
     ("openai_compatible", None, LocalCompatibleChatOpenAI, False),
 ])
 def test_registry_spec(provider, base_url, chat_class, responses):
@@ -39,13 +38,10 @@ def test_registry_spec(provider, base_url, chat_class, responses):
 
 @pytest.mark.unit
 def test_key_optionality():
-    # Local/generic endpoints are key-optional; the hosted API requires a key.
-    assert OPENAI_COMPATIBLE_PROVIDERS["ollama"].key_optional is True
+    # The generic endpoint is key-optional; the hosted API requires a key.
     assert OPENAI_COMPATIBLE_PROVIDERS["openai_compatible"].key_optional is True
     assert OPENAI_COMPATIBLE_PROVIDERS["openai_compatible"].require_base_url is True
     assert OPENAI_COMPATIBLE_PROVIDERS["openai"].key_optional is False
-    # OLLAMA_BASE_URL is the only base-URL env override.
-    assert OPENAI_COMPATIBLE_PROVIDERS["ollama"].base_url_env == "OLLAMA_BASE_URL"
 
 
 @pytest.mark.unit

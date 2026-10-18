@@ -243,7 +243,7 @@ def _llm_provider_table() -> list[tuple[str, str, str | None]]:
     env-set provider resolves to the same default endpoint the menu uses.
     Ollama users point at a remote server via OLLAMA_BASE_URL.
     """
-    ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
+    ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434"
     return [
         ("Ollama (local or LAN server)", "ollama", ollama_url),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
@@ -350,7 +350,7 @@ def confirm_ollama_endpoint(url: str) -> None:
         console.print(
             f"[yellow]Note: {url!r} is missing a scheme. "
             f"Ollama-serve typically expects a URL like "
-            f"http://<host>:11434/v1.[/yellow]"
+            f"http://<host>:11434.[/yellow]"
         )
     elif ":11434" not in url and "://localhost" not in url and "://127.0.0.1" not in url:
         console.print(

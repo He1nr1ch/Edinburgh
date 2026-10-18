@@ -43,7 +43,9 @@ def fetch_articles(symbols: str | None, start: datetime, end: datetime, limit: i
         page = common.call(lambda req=request: common.news_client().get_news(req), what)
         if page is None:
             break
-        items = getattr(page, "news", None)
+        # alpaca-py's NewsSet keeps the articles under ``data["news"]``.
+        data = getattr(page, "data", None)
+        items = data.get("news", []) if isinstance(data, dict) else getattr(page, "news", None)
         if items is None:
             items = page.get("news", []) if isinstance(page, dict) else []
         articles.extend(items)
