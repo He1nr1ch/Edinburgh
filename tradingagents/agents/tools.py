@@ -10,9 +10,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from tradingagents.dataflows.date_window import as_of, as_of_window
-from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
-from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
-from tradingagents.dataflows.vendors.yahoo.snapshot import build_verified_market_snapshot
+from tradingagents.dataflows.router import route_to_vendor
 
 
 @tool
@@ -23,7 +21,7 @@ def get_stock_data(
     trade_date: Annotated[str, InjectedState("trade_date")] = "",
 ) -> str:
     """
-    Retrieve stock price data (OHLCV) for the instrument under analysis.
+    Retrieve daily price data (OHLCV) for the instrument under analysis.
     Uses the configured core_stock_apis vendor.
     Args:
         start_date (str): Start date in yyyy-mm-dd format
@@ -85,30 +83,7 @@ def get_verified_market_snapshot(
     price levels, Bollinger bands, RSI, MACD, moving averages, support /
     resistance, or historical comparisons, and treat it as the source of truth.
     """
-    # An exception out of a tool would end the run.
-    try:
-        return build_verified_market_snapshot(symbol, as_of(curr_date, trade_date), look_back_days)
-    except VendorUnavailableError as exc:
-        return vendor_unavailable("get_verified_market_snapshot", exc)
-    except NoMarketDataError as exc:
-        return no_data_available(exc)
-
-
-@tool
-def get_fundamentals(
-    ticker: Annotated[str, InjectedState("company_of_interest")],
-    curr_date: Annotated[str, "current date you are trading at, yyyy-mm-dd"],
-    trade_date: Annotated[str, InjectedState("trade_date")] = "",
-) -> str:
-    """
-    Retrieve comprehensive fundamental data for the instrument under analysis.
-    Uses the configured fundamental_data vendor.
-    Args:
-        curr_date (str): Current date you are trading at, yyyy-mm-dd
-    Returns:
-        str: A formatted report containing comprehensive fundamental data
-    """
-    return route_to_vendor("get_fundamentals", ticker, as_of(curr_date, trade_date))
+    return route_to_vendor("get_market_snapshot", symbol, as_of(curr_date, trade_date), look_back_days)
 
 
 @tool
@@ -199,7 +174,7 @@ def get_global_news(
     trade_date: Annotated[str, InjectedState("trade_date")] = "",
 ) -> str:
     """
-    Retrieve global news data.
+    Retrieve market-wide news.
     Uses the configured news_data vendor. Defaults for look_back_days and
     limit come from DEFAULT_CONFIG (global_news_lookback_days,
     global_news_article_limit); pass explicit values to override.
@@ -210,23 +185,9 @@ def get_global_news(
         limit (int): Maximum number of articles to return; omit to inherit config
 
     Returns:
-        str: A formatted string containing global news data
+        str: A formatted string containing market news
     """
     return route_to_vendor("get_global_news", as_of(curr_date, trade_date), look_back_days, limit)
-
-
-@tool
-def get_insider_transactions(
-    ticker: Annotated[str, InjectedState("company_of_interest")],
-    trade_date: Annotated[str, InjectedState("trade_date")] = "",
-) -> str:
-    """
-    Retrieve insider transaction information about a company.
-    Uses the configured news_data vendor.
-    Returns:
-        str: A report of insider transaction data
-    """
-    return route_to_vendor("get_insider_transactions", ticker, trade_date or None)
 
 
 @tool
@@ -262,30 +223,3 @@ def get_macro_indicators(
         str: A formatted markdown report of the macro series
     """
     return route_to_vendor("get_macro_indicators", indicator, as_of(curr_date, trade_date), look_back_days)
-
-
-@tool
-def get_prediction_markets(
-    topic: Annotated[
-        str,
-        "Event topic/keyword, e.g. 'Fed rate cut', 'recession 2026', "
-        "'US election', or a sector/company event.",
-    ],
-    limit: Annotated[int | None, "Max markets to return; omit for a default of 6"] = None,
-    trade_date: Annotated[str, InjectedState("trade_date")] = "",
-) -> str:
-    """
-    Retrieve live, market-implied probabilities for forward-looking events from
-    prediction markets (Polymarket): Fed decisions, recession, elections,
-    geopolitics, crypto. Returns the most-traded open markets matching the
-    topic, each with its implied probability, traded volume, resolution date,
-    and recent move. Uses the configured prediction_markets vendor.
-
-    Args:
-        topic (str): Event keyword(s) to search
-        limit (int): Max markets to return; omit for a default of 6
-
-    Returns:
-        str: A formatted markdown report of matching prediction markets
-    """
-    return route_to_vendor("get_prediction_markets", topic, limit, trade_date or None)

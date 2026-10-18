@@ -20,8 +20,7 @@ class TestTemperatureForwarding:
             # test_openai_reasoning_effort), so forwarding is tested on gpt-4.1.
             ("openai", "gpt-4.1"),
             ("anthropic", "claude-sonnet-5"),
-            ("google", "gemini-3.5-flash"),
-            ("deepseek", "deepseek-chat"),
+            ("ollama", "qwen3.8:27b"),
         ],
     )
     def test_temperature_reaches_client_when_set(self, provider, model):

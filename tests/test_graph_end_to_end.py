@@ -19,9 +19,8 @@ from langchain_core.runnables import RunnableLambda
 from pydantic import Field
 
 from tradingagents.agents import context, schemas
-from tradingagents.agents.analysts import sentiment_analyst
 from tradingagents.dataflows import router
-from tradingagents.dataflows.vendors.yahoo import market as yahoo_market, snapshot
+from tradingagents.dataflows.vendors.alpaca import market as alpaca_market
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph import trading_graph
 
@@ -39,8 +38,6 @@ STRUCTURED = {
     schemas.PortfolioDecision: schemas.PortfolioDecision(
         rating=schemas.PortfolioRating.OVERWEIGHT, executive_summary="s",
         investment_thesis="Street consensus rating: Buy (28 of 35 analysts)."),
-    schemas.SentimentReport: schemas.SentimentReport(
-        overall_band=schemas.SentimentBand.NEUTRAL, overall_score=5.0, confidence="low", narrative="n"),
 }
 
 ARGS = {"symbol": "NVDA", "ticker": "NVDA", "curr_date": TRADE_DATE, "start_date": "2026-01-02",
@@ -111,11 +108,8 @@ def offline(monkeypatch, tmp_path):
         "Date": pd.bdate_range(end=TRADE_DATE, periods=60),
         "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.5, "Volume": 1_000_000,
     })
-    monkeypatch.setattr(snapshot, "load_ohlcv",
-                        lambda *a, **k: called.add("ohlcv") or prices.copy())
-    monkeypatch.setattr(sentiment_analyst, "fetch_stocktwits_messages", lambda *a, **k: "no posts")
-    monkeypatch.setattr(sentiment_analyst, "fetch_reddit_posts", lambda *a, **k: "no posts")
-    monkeypatch.setattr(yahoo_market.yf, "Ticker", lambda s: type("T", (), {"info": {"longName": "NVIDIA"}})())
+    monkeypatch.setattr(alpaca_market, "load_ohlcv", lambda *a, **k: called.add("ohlcv") or prices.copy())
+    monkeypatch.setattr(context, "get_asset_profile", lambda ticker: {"name": "NVIDIA", "exchange": "NASDAQ"})
     context._identity.cache_clear()
     return called
 
@@ -136,13 +130,12 @@ def test_a_full_run_reaches_a_logged_decision(tmp_path, monkeypatch, offline, st
     state, signal = graph.propagate("NVDA", TRADE_DATE)
 
     assert signal == state["final_rating"] == "Overweight"
-    for key in ("market_report", "sentiment_report", "news_report", "fundamentals_report",
+    for key in ("market_report", "news_report", "fundamentals_report",
                 "investment_plan", "trader_investment_plan", "final_trade_decision"):
         assert state[key].strip(), key
-    tool_methods = {"get_stock_data", "get_indicators", "get_news", "get_global_news",
-                    "get_macro_indicators", "get_prediction_markets", "get_fundamentals",
-                    "get_balance_sheet", "get_cashflow", "get_income_statement",
-                    "get_insider_transactions", "ohlcv"}
+    tool_methods = {"get_stock_data", "get_indicators", "get_market_snapshot", "get_news",
+                    "get_global_news", "get_macro_indicators",
+                    "get_balance_sheet", "get_cashflow", "get_income_statement"}
     assert offline == tool_methods
     assert [e["rating"] for e in graph.memory_log.load_entries()] == ["Overweight"]
 
@@ -207,7 +200,7 @@ def test_each_report_streams_as_soon_as_its_analyst_files_it(tmp_path, monkeypat
     """The main state takes the analysts' reports only when the slowest one is
     done; the CLI shows each report, and stops each clock, as it lands."""
     graph = _graph(tmp_path, monkeypatch, ScriptedModel())
-    reports = ("market_report", "sentiment_report", "news_report", "fundamentals_report")
+    reports = ("market_report", "news_report", "fundamentals_report")
 
     first = next(state for _, state in graph.stream_run(graph.create_run_state("NVDA", TRADE_DATE),
                                                         **graph.propagator.get_graph_args())
@@ -222,17 +215,17 @@ def test_a_streamed_run_reads_its_own_graph_config(tmp_path, monkeypatch, offlin
     its tools, and the graph's config must not reach the caller between steps."""
     from tradingagents.dataflows.config import get_config, set_config
 
-    graph = _graph(tmp_path, monkeypatch, ScriptedModel(), output_language="French")
-    set_config({"output_language": "German"})
+    graph = _graph(tmp_path, monkeypatch, ScriptedModel(), news_article_limit=7)
+    set_config({"news_article_limit": 9})
     seen = []
-    monkeypatch.setitem(router.VENDOR_METHODS["get_stock_data"], "yfinance",
-                        lambda *a, **k: seen.append(get_config()["output_language"]) or "prices")
+    monkeypatch.setitem(router.VENDOR_METHODS["get_stock_data"], "alpaca",
+                        lambda *a, **k: seen.append(get_config()["news_article_limit"]) or "prices")
 
-    between = [get_config()["output_language"]
+    between = [get_config()["news_article_limit"]
                for _ in graph.stream_run(graph.create_run_state("NVDA", TRADE_DATE), **graph.propagator.get_graph_args())]
 
-    assert seen and set(seen) == {"French"}
-    assert set(between) == {"German"}
+    assert seen and set(seen) == {7}
+    assert set(between) == {9}
 
 
 class LoopingModel(ScriptedModel):

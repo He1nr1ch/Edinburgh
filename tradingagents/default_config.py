@@ -16,19 +16,19 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DEEP_THINK_BACKEND_URL":    "deep_think_backend_url",
     "TRADINGAGENTS_QUICK_THINK_BACKEND_URL":   "quick_think_backend_url",
     "TRADINGAGENTS_LLM_BACKEND_URL":      "backend_url",
-    "TRADINGAGENTS_OUTPUT_LANGUAGE":      "output_language",
     "TRADINGAGENTS_MAX_DEBATE_ROUNDS":    "max_debate_rounds",
     "TRADINGAGENTS_MAX_RISK_ROUNDS":      "max_risk_discuss_rounds",
     "TRADINGAGENTS_MAX_TOOL_ROUNDS":      "max_tool_rounds",
     "TRADINGAGENTS_CHECKPOINT_ENABLED":   "checkpoint_enabled",
     "TRADINGAGENTS_BENCHMARK_TICKER":     "benchmark_ticker",
+    "TRADINGAGENTS_ALPACA_FEED":          "alpaca_feed",
+    "TRADINGAGENTS_ALPACA_PAPER":         "alpaca_paper",
     "TRADINGAGENTS_TEMPERATURE":          "temperature",
     "TRADINGAGENTS_LLM_MAX_RETRIES":      "llm_max_retries",
     "TRADINGAGENTS_MAX_TOKENS":           "max_tokens",
     # Provider-specific reasoning/thinking knobs (None = each provider's own
     # default). Settable here for non-interactive runs; the CLI also offers an
     # interactive choice, which is skipped when the matching var is set.
-    "TRADINGAGENTS_GOOGLE_THINKING_LEVEL":   "google_thinking_level",
     "TRADINGAGENTS_OPENAI_REASONING_EFFORT": "openai_reasoning_effort",
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
 }
@@ -106,7 +106,6 @@ def build_default_config() -> dict:
         "quick_think_backend_url": None,
         "deep_think_backend_url": None,
         # Provider-specific thinking configuration
-        "google_thinking_level": None,      # "high", "minimal", etc.
         "openai_reasoning_effort": None,    # "medium", "high", "low"
         "anthropic_effort": None,           # "high", "medium", "low"
         # Sampling temperature, forwarded to every provider when set. None leaves
@@ -126,9 +125,6 @@ def build_default_config() -> dict:
         # Checkpoint/resume: when True, LangGraph saves state after each node
         # so a crashed run can resume from the last successful step.
         "checkpoint_enabled": False,
-        # Output language for analyst reports and final decision
-        # Internal agent debate stays in English for reasoning quality
-        "output_language": "English",
         # Debate and discussion settings
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
@@ -154,55 +150,27 @@ def build_default_config() -> dict:
         # Category-level configuration (default for all tools in category).
         # The configured value is the exact vendor chain — requests are NOT silently
         # routed to vendors you didn't choose. For ordered fallback, list several,
-        # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
+        # e.g. "alpaca,other". "default" uses all available vendors.
         "data_vendors": {
-            "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
-            "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
-            # Statements come from SEC EDGAR as filed (US filers), then Yahoo; the
-        # overview and insider tools, which SEC EDGAR does not serve, from Yahoo.
-        "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
-            "news_data": "yfinance",             # Options: alpha_vantage, yfinance
-            "macro_data": "fred",                # Options: fred (needs FRED_API_KEY)
-            "prediction_markets": "polymarket",  # Options: polymarket (keyless)
+            "core_stock_apis": "alpaca",        # Options: alpaca
+            "technical_indicators": "alpaca",   # Options: alpaca
+            "fundamental_data": "sec_edgar",    # Options: sec_edgar (statements as filed, US filers)
+            "news_data": "alpaca",              # Options: alpaca
+            "macro_data": "fred",               # Options: fred (needs FRED_API_KEY)
         },
         # Tool-level configuration (takes precedence over category-level)
         "tool_vendors": {
-            # Example: "get_stock_data": "alpha_vantage",  # Override category default
+            # Example: "get_news": "alpaca",  # Override category default
         },
-        # Benchmark for alpha calculation in the reflection layer.
-        # ``benchmark_ticker`` (when set) overrides the suffix map for all
-        # tickers; leave it None to use ``benchmark_map`` for auto-detection
-        # based on the ticker's exchange suffix. SPY remains the US default
-        # so the reflection label keeps reading "Alpha vs SPY" for US tickers
-        # while non-US tickers get their regional index automatically.
+        # Alpaca: the equity data feed (sip needs a paid market-data plan; iex is
+        # free) and whether the key pair is a paper-trading account's.
+        "alpaca_feed": "sip",
+        "alpaca_paper": True,
         # Trading days from the first close after the analysis date over which a
         # decision's outcome is measured, for reflection and for the backtest figures.
         "holding_period_days": 5,
+        # Benchmark for alpha calculation in the reflection layer; None means SPY.
         "benchmark_ticker": None,
-        "benchmark_map": {
-            ".NS":  "^NSEI",       # NSE India (Nifty 50)
-            ".BO":  "^BSESN",      # BSE India (Sensex)
-            ".T":   "^N225",       # Tokyo (Nikkei 225)
-            ".TW":  "^TWII",       # Taiwan (TAIEX)
-            ".TWO": "^TWII",       # Taipei OTC (TPEx has no Yahoo index; TAIEX)
-            ".KS":  "^KS11",       # Korea (KOSPI)
-            ".KQ":  "^KQ11",       # Korea (KOSDAQ)
-            ".HK":  "^HSI",        # Hong Kong (Hang Seng)
-            ".SI":  "^STI",        # Singapore (Straits Times)
-            ".L":   "^FTSE",       # London (FTSE 100)
-            ".DE":  "^GDAXI",      # Germany (DAX)
-            ".PA":  "^FCHI",       # Paris (CAC 40)
-            ".AS":  "^AEX",        # Amsterdam (AEX)
-            ".SW":  "^SSMI",       # Switzerland (SMI)
-            ".MI":  "FTSEMIB.MI",  # Milan (FTSE MIB)
-            ".TO":  "^GSPTSE",     # Toronto (TSX Composite)
-            ".AX":  "^AXJO",       # Australia (ASX 200)
-            ".SS":  "000001.SS",   # Shanghai (SSE Composite)
-            ".SZ":  "399001.SZ",   # Shenzhen (SZSE Component)
-            ".SA":  "^BVSP",       # B3 Brazil (Ibovespa)
-            "":     "SPY",         # default for US-listed tickers (no suffix)
-        },
-
     })
 
 

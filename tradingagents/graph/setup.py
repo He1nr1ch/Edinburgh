@@ -17,7 +17,6 @@ from tradingagents.agents import (
     create_news_analyst,
     create_portfolio_manager,
     create_research_manager,
-    create_sentiment_analyst,
     create_trader,
 )
 from tradingagents.agents.analysts.turn import WRAP_UP
@@ -107,14 +106,13 @@ class GraphSetup:
         self.max_tool_rounds = max_tool_rounds
 
     def setup_graph(
-        self, selected_analysts=("market", "social", "news", "fundamentals"), memory_node=None
+        self, selected_analysts=("market", "news", "fundamentals"), memory_node=None
     ):
         """Set up and compile the agent workflow graph.
 
         Args:
             selected_analysts (list): List of analyst types to include. Options are:
                 - "market": Market analyst
-                - "social": Sentiment analyst
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
             memory_node: Node that settles past decisions and returns the run's
@@ -124,7 +122,6 @@ class GraphSetup:
 
         analyst_factories = {
             "market": lambda: create_market_analyst(self.quick_thinking_llm),
-            "social": lambda: create_sentiment_analyst(self.quick_thinking_llm),
             "news": lambda: create_news_analyst(self.quick_thinking_llm),
             "fundamentals": lambda: create_fundamentals_analyst(self.quick_thinking_llm),
         }

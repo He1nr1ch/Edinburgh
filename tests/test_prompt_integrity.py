@@ -12,7 +12,7 @@ import importlib
 
 import pytest
 
-ANALYSTS = ["market_analyst", "sentiment_analyst", "news_analyst", "fundamentals_analyst"]
+ANALYSTS = ["market_analyst", "news_analyst", "fundamentals_analyst"]
 
 
 @pytest.mark.unit
@@ -71,7 +71,7 @@ def test_a_report_that_was_never_produced_says_so(module, factory):
     state = {
         "company_of_interest": "NVDA", "trade_date": "2026-08-14", "asset_type": "stock",
         "instrument_context": "", "portfolio_context": "", "past_context": "",
-        "market_report": "RSI 61, price 178.", "sentiment_report": "", "news_report": "",
+        "market_report": "RSI 61, price 178.", "news_report": "",
         "fundamentals_report": "", "investment_plan": "P", "trader_investment_plan": "T",
         "investment_debate_state": {"bull_history": "", "bear_history": "", "history": "",
                                     "current_response": "", "count": 0},

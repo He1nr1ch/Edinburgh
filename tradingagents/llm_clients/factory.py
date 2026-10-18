@@ -30,24 +30,11 @@ def create_llm_client(
     """
     provider_lower = provider.lower()
 
-    # Native (non-OpenAI) APIs are matched first so their string check doesn't
-    # import the OpenAI client. Everything else is OpenAI-compatible and routes
-    # through the provider registry (single source of truth).
+    # Anthropic has its own API; everything else is OpenAI-compatible and
+    # routes through the provider registry (single source of truth).
     if provider_lower == "anthropic":
         from .anthropic_client import AnthropicClient
         return AnthropicClient(model, base_url, **kwargs)
-
-    if provider_lower == "google":
-        from .google_client import GoogleClient
-        return GoogleClient(model, base_url, **kwargs)
-
-    if provider_lower == "azure":
-        from .azure_client import AzureOpenAIClient
-        return AzureOpenAIClient(model, base_url, **kwargs)
-
-    if provider_lower == "bedrock":
-        from .bedrock_client import BedrockClient
-        return BedrockClient(model, base_url, **kwargs)
 
     from .openai_client import OpenAIClient, is_openai_compatible
     if is_openai_compatible(provider_lower):
@@ -88,7 +75,7 @@ def _coerce_max_tokens(value):
 
 
 # Providers that take OpenAI's ``openai_reasoning_effort``.
-REASONING_EFFORT_PROVIDERS = ("openai", "chatgpt")
+REASONING_EFFORT_PROVIDERS = ("openai",)
 
 
 def build_llm_kwargs(config: dict) -> dict[str, Any]:
@@ -96,12 +83,7 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
     kwargs = {}
     provider = config.get("llm_provider", "").lower()
 
-    if provider == "google":
-        thinking_level = config.get("google_thinking_level")
-        if thinking_level:
-            kwargs["thinking_level"] = thinking_level
-
-    elif provider in REASONING_EFFORT_PROVIDERS:
+    if provider in REASONING_EFFORT_PROVIDERS:
         reasoning_effort = config.get("openai_reasoning_effort")
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
@@ -119,17 +101,14 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         kwargs["temperature"] = float(temperature)
 
     # SDK retry budget is cross-provider. Forward it only when explicitly set
-    # so each provider keeps its own default (usually 2) otherwise (#1091).
+    # so each provider keeps its own default (usually 2) otherwise.
     max_retries = config.get("llm_max_retries")
     if max_retries is not None and max_retries != "":
         kwargs["max_retries"] = _coerce_max_retries(max_retries)
 
-    # Output-token cap is cross-provider, but Gemini names it
-    # ``max_output_tokens``; forward under the right key when set (#1204).
     max_tokens = config.get("max_tokens")
     if max_tokens is not None and max_tokens != "":
-        key = "max_output_tokens" if provider == "google" else "max_tokens"
-        kwargs[key] = _coerce_max_tokens(max_tokens)
+        kwargs["max_tokens"] = _coerce_max_tokens(max_tokens)
 
     return kwargs
 
@@ -140,11 +119,11 @@ def tier_provider(config: dict, tier: str) -> str:
 
 
 def create_tier_client(config: dict, tier: str, **extra) -> BaseLLMClient:
-    """The client for the ``quick`` or ``deep`` model tier (#1440).
+    """The client for the ``quick`` or ``deep`` model tier.
 
-    A tier on its own provider gets that provider's settings (thinking level,
-    reasoning effort, the name of the output-token cap) and its own endpoint,
-    else the provider's default: ``backend_url`` belongs to ``llm_provider``.
+    A tier on its own provider gets that provider's settings (reasoning effort,
+    effort level) and its own endpoint, else the provider's default:
+    ``backend_url`` belongs to ``llm_provider``.
     """
     provider = tier_provider(config, tier)
     if provider == config["llm_provider"].lower():

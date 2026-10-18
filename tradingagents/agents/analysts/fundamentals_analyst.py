@@ -1,22 +1,18 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.turn import take_turn
-from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
+from tradingagents.agents.context import get_instrument_context_from_state
 from tradingagents.agents.tools import (
     get_balance_sheet,
     get_cashflow,
-    get_fundamentals,
     get_income_statement,
-    get_insider_transactions,
 )
 
 # The tools this analyst is offered; its tool node is built from the same tuple.
 TOOLS = (
-    get_fundamentals,
     get_balance_sheet,
     get_cashflow,
     get_income_statement,
-    get_insider_transactions,
 )
 
 
@@ -26,10 +22,9 @@ def create_fundamentals_analyst(llm):
         instrument_context = get_instrument_context_from_state(state)
 
         system_message = (
-            "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information such as financial documents, company profile, basic company financials, and company financial history to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
+            "You are a researcher tasked with analyzing fundamental information over the past week about a company. Please write a comprehensive report of the company's fundamental information from its filed financial statements: balance sheet, cash flow and income statement, their trends and the ratios they imply to gain a full view of the company's fundamental information to inform traders. Make sure to include as much detail as possible. Provide specific, actionable insights with supporting evidence to help traders make informed decisions."
             + " Make sure to append a Markdown table at the end of the report to organize key points in the report, organized and easy to read."
-            + " Use the available tools: `get_fundamentals` for comprehensive company analysis, `get_balance_sheet`, `get_cashflow`, and `get_income_statement` for specific financial statements, and `get_insider_transactions` for recent insider buying and selling."
-            + get_language_instruction()
+            + " Use the available tools: `get_balance_sheet`, `get_cashflow`, and `get_income_statement`, which serve the statements as filed with the SEC (quarterly or annual). Compute the ratios you need (margins, growth, leverage, cash conversion) from them; no market-cap or valuation-multiple feed is available, so say so rather than guess."
         )
 
         prompt = ChatPromptTemplate.from_messages(

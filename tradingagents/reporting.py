@@ -13,8 +13,8 @@ from tradingagents.agents.rating import run_rating
 
 
 def analyst_names(keys) -> list[str]:
-    """The analysts as users select them: the sentiment analyst's key is "social"."""
-    return ["sentiment" if key == "social" else key for key in keys or []]
+    """The analysts as users select them."""
+    return list(keys or [])
 
 
 def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
@@ -50,7 +50,6 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
 _SECTIONS = (
     ("I. Analyst Team Reports", "1_analysts", (
         ("Market Analyst", "market.md", ("market_report",)),
-        ("Sentiment Analyst", "sentiment.md", ("sentiment_report",)),
         ("News Analyst", "news.md", ("news_report",)),
         ("Fundamentals Analyst", "fundamentals.md", ("fundamentals_report",)),
     )),
@@ -89,13 +88,11 @@ def _report_parts(final_state: dict) -> list[tuple[str, str, list[tuple[str, str
     return parts
 
 
-def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict | None = None,
-                      html: bool = True) -> Path:
+def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict | None = None) -> Path:
     """Save a completed run's reports to ``save_path``; return the complete-report path.
 
     ``settings`` (``TradingAgentsGraph.run_settings()``) adds what produced the run
-    to the report's header. ``html`` also writes ``complete_report.html``, one
-    self-contained page of the same report (#1419).
+    to the report's header.
     """
     save_path = Path(save_path)
     save_path.mkdir(parents=True, exist_ok=True)
@@ -111,10 +108,4 @@ def write_report_tree(final_state: dict, ticker: str, save_path, settings: dict 
     (save_path / "complete_report.md").write_text(
         _header(ticker, final_state, settings) + "\n\n".join(sections), encoding="utf-8"
     )
-    if html:
-        from tradingagents.report_html import render_report
-
-        (save_path / "complete_report.html").write_text(
-            render_report(ticker, final_state, settings, parts), encoding="utf-8"
-        )
     return save_path / "complete_report.md"

@@ -5,14 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tradingagents"
 dynamic = ["version"]
-description = "TradingAgents: Multi-Agents LLM Financial Trading Framework"
+description = "Edinburgh: a multi-agent trading desk on Alpaca market data"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "cryptography>=42.0",
+    "alpaca-py>=0.44",
     "langchain-core>=1.6.5",
     "langchain-anthropic>=1.7.4",
-    "langchain-google-genai>=4.4.0",
     "langchain-openai>=1.6.6",
     "langgraph>=1.2.12",
     "langgraph-checkpoint-sqlite>=3.1.1",
@@ -27,7 +26,6 @@ dependencies = [
     "typer>=0.21.0",
     "stockstats>=0.6.5",
     "typing-extensions>=4.14.0",
-    "yfinance>=1.7.0",
 ]
 
 [project.optional-dependencies]
@@ -35,11 +33,6 @@ dev = [
     "ruff>=0.16",
     "pytest>=8.0",
     "pytest-subtests>=0.13",
-]
-# Amazon Bedrock support (AWS SigV4 auth + boto3). Optional so the core install
-# stays lean: pip install "tradingagents[bedrock]".
-bedrock = [
-    "langchain-aws>=1.7.9",
 ]
 
 [project.scripts]
@@ -53,7 +46,6 @@ include = ["tradingagents*", "cli*"]
 
 [tool.setuptools.package-data]
 cli = ["static/*"]
-tradingagents = ["assets/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

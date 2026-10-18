@@ -16,49 +16,49 @@ class DataflowsConfigIsolationTests(unittest.TestCase):
 
     def test_get_config_returns_deep_copy(self):
         cfg = get_config()
-        cfg["data_vendors"]["core_stock_apis"] = "alpha_vantage"
-        cfg["tool_vendors"]["get_stock_data"] = "alpha_vantage"
+        cfg["data_vendors"]["core_stock_apis"] = "other"
+        cfg["tool_vendors"]["get_stock_data"] = "other"
 
         fresh = get_config()
-        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "yfinance")
+        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "alpaca")
         self.assertNotIn("get_stock_data", fresh["tool_vendors"])
 
     def test_set_config_does_not_alias_caller_nested_dicts(self):
         custom = copy.deepcopy(default_config.DEFAULT_CONFIG)
-        custom["data_vendors"]["core_stock_apis"] = "alpha_vantage"
-        custom["tool_vendors"]["get_stock_data"] = "alpha_vantage"
+        custom["data_vendors"]["core_stock_apis"] = "other"
+        custom["tool_vendors"]["get_stock_data"] = "other"
 
         set_config(custom)
 
-        custom["data_vendors"]["core_stock_apis"] = "yfinance"
-        custom["tool_vendors"]["get_stock_data"] = "yfinance"
+        custom["data_vendors"]["core_stock_apis"] = "alpaca"
+        custom["tool_vendors"]["get_stock_data"] = "alpaca"
 
         fresh = get_config()
-        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "alpha_vantage")
-        self.assertEqual(fresh["tool_vendors"]["get_stock_data"], "alpha_vantage")
+        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "other")
+        self.assertEqual(fresh["tool_vendors"]["get_stock_data"], "other")
 
     def test_partial_nested_update_preserves_existing_defaults(self):
         set_config(
             {
                 "data_vendors": {
-                    "core_stock_apis": "alpha_vantage",
+                    "core_stock_apis": "other",
                 }
             }
         )
 
         fresh = get_config()
-        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "alpha_vantage")
-        self.assertEqual(fresh["data_vendors"]["technical_indicators"], "yfinance")
-        self.assertEqual(fresh["data_vendors"]["fundamental_data"], "sec_edgar,yfinance")
-        self.assertEqual(fresh["data_vendors"]["news_data"], "yfinance")
+        self.assertEqual(fresh["data_vendors"]["core_stock_apis"], "other")
+        self.assertEqual(fresh["data_vendors"]["technical_indicators"], "alpaca")
+        self.assertEqual(fresh["data_vendors"]["fundamental_data"], "sec_edgar")
+        self.assertEqual(fresh["data_vendors"]["news_data"], "alpaca")
 
     def test_nested_dict_updates_merge_one_level_deep(self):
-        set_config({"tool_vendors": {"get_stock_data": "alpha_vantage"}})
-        set_config({"tool_vendors": {"get_news": "alpha_vantage"}})
+        set_config({"tool_vendors": {"get_stock_data": "other"}})
+        set_config({"tool_vendors": {"get_news": "other"}})
 
         fresh = get_config()
-        self.assertEqual(fresh["tool_vendors"]["get_stock_data"], "alpha_vantage")
-        self.assertEqual(fresh["tool_vendors"]["get_news"], "alpha_vantage")
+        self.assertEqual(fresh["tool_vendors"]["get_stock_data"], "other")
+        self.assertEqual(fresh["tool_vendors"]["get_news"], "other")
 
 
 # --- the config of the run in progress (#1369) --------------------------------
@@ -91,11 +91,11 @@ def test_a_run_reads_its_own_graphs_vendors_not_the_last_graph_built():
     """Building a graph sets the process-wide config, and set_config merges, so
     a second graph built with the defaults was served the first one's vendors."""
     first = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    first["tool_vendors"] = {"get_balance_sheet": "sec_edgar,yfinance"}
+    first["tool_vendors"] = {"get_balance_sheet": "other"}
     set_config(first)                                   # graph A is built
     second = _graph(copy.deepcopy(default_config.DEFAULT_CONFIG))
 
-    assert _vendors_seen_by_a_run(second) == ["sec_edgar,yfinance"]
+    assert _vendors_seen_by_a_run(second) == ["sec_edgar"]   # its own default, not graph A's
 
 
 @pytest.mark.unit
@@ -103,11 +103,11 @@ def test_a_graph_built_earlier_still_runs_with_its_own_config():
     """Scoping at construction would hand graph A graph B's config if B was built
     after A; the config must be bound when the run starts."""
     a_config = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    a_config["tool_vendors"] = {"get_balance_sheet": "sec_edgar,yfinance"}
+    a_config["tool_vendors"] = {"get_balance_sheet": "sec_edgar,other"}
     a = _graph(a_config)
     set_config(copy.deepcopy(default_config.DEFAULT_CONFIG))   # graph B is built
 
-    assert _vendors_seen_by_a_run(a) == ["sec_edgar,yfinance"]
+    assert _vendors_seen_by_a_run(a) == ["sec_edgar,other"]
 
 
 @pytest.mark.unit
@@ -131,12 +131,12 @@ def test_concurrent_runs_each_read_their_own_config():
         graph._run_graph = _run
         graph.propagate("AAPL", "2026-09-01")
 
-    threads = [threading.Thread(target=run, args=("a", "alpha_vantage")),
-               threading.Thread(target=run, args=("b", "sec_edgar,yfinance"))]
+    threads = [threading.Thread(target=run, args=("a", "other")),
+               threading.Thread(target=run, args=("b", "sec_edgar,other"))]
     [t.start() for t in threads]
     [t.join() for t in threads]
 
-    assert results == {"a": "alpha_vantage", "b": "sec_edgar,yfinance"}
+    assert results == {"a": "other", "b": "sec_edgar,other"}
 
 
 @pytest.mark.unit
@@ -144,7 +144,7 @@ def test_settling_reads_the_graphs_own_config(monkeypatch):
     from tradingagents.dataflows.router import get_vendor
 
     config = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    config["tool_vendors"] = {"get_stock_data": "alpha_vantage"}
+    config["tool_vendors"] = {"get_stock_data": "other"}
     graph = _graph(config)
     graph.memory_log = graph.reflector = None      # the settlement below is a stand-in
     seen = []
@@ -155,7 +155,7 @@ def test_settling_reads_the_graphs_own_config(monkeypatch):
 
     graph.settle_pending("AAPL")
 
-    assert seen == ["alpha_vantage"]
+    assert seen == ["other"]
 
 
 @pytest.mark.unit
@@ -185,11 +185,11 @@ def test_tools_inside_a_langgraph_run_see_the_run_config():
     g.add_edge("tools", END)
 
     config = copy.deepcopy(default_config.DEFAULT_CONFIG)
-    config["tool_vendors"] = {"get_balance_sheet": "sec_edgar,yfinance"}
+    config["tool_vendors"] = {"get_balance_sheet": "sec_edgar,other"}
     with run_config(config):
         out = g.compile().invoke({"messages": [("user", "go")]})
 
-    assert out["messages"][-1].content == "sec_edgar,yfinance"
+    assert out["messages"][-1].content == "sec_edgar,other"
 
 
 @pytest.mark.unit

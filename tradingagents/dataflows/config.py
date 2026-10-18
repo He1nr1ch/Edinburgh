@@ -34,7 +34,7 @@ def set_config(config: dict):
     """Update the configuration with custom values.
 
     Dict-valued keys (e.g. ``data_vendors``) are merged one level deep so a
-    partial update like ``{"data_vendors": {"core_stock_apis": "alpha_vantage"}}``
+    partial update like ``{"data_vendors": {"news_data": "alpaca"}}``
     keeps the other nested keys from the default; scalar keys are replaced.
     """
     initialize_config()

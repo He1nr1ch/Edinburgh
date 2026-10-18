@@ -69,7 +69,7 @@ def test_env_backend_url_precedence():
     from cli.prompts import resolve_backend_url
     assert resolve_backend_url("openai", "https://api.openai.com/v1", env_url="http://proxy/v1") == "http://proxy/v1"
     assert resolve_backend_url("openai", "https://api.openai.com/v1", env_url=None) == "https://api.openai.com/v1"
-    assert resolve_backend_url("deepseek", None, None) == "https://api.deepseek.com"
+    assert resolve_backend_url("ollama", None, None) == "http://localhost:11434/v1"
 
 
 @pytest.mark.unit

@@ -1,4 +1,4 @@
-"""Prompt context shared by the agents: instrument identity, output language and portfolio."""
+"""Prompt context shared by the agents: instrument identity and portfolio."""
 
 import functools
 import logging
@@ -6,32 +6,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from tradingagents.dataflows.date_window import is_historical
-from tradingagents.dataflows.vendors.yahoo.fundamentals import get_company_profile
+from tradingagents.dataflows.vendors.alpaca import get_asset_profile
 
 logger = logging.getLogger(__name__)
-
-
-def get_language_instruction() -> str:
-    """Return a prompt instruction for the configured output language.
-
-    Returns empty string when English (default), so no extra tokens are used.
-    Applied to every agent whose output reaches the saved report —
-    analysts, researchers, debaters, research manager, trader, and
-    portfolio manager — so a non-English run produces a fully localized
-    report rather than a mix of languages.
-    """
-    from tradingagents.dataflows.config import get_config
-    lang = get_config().get("output_language", "English")
-    if lang.strip().lower() == "english":
-        return ""
-    # The labelled lines are read by the program, so they keep their English
-    # label and value: a translated rating line leaves the reader prose to
-    # search, where a negated rating ("not a Sell") reads as the call (#1435).
-    return (
-        f" Write your entire response in {lang}, except the labelled lines the format"
-        f" asks for (the \"**Rating**:\" line, \"FINAL TRANSACTION PROPOSAL:\"):"
-        f" keep their label and value in English, exactly as specified."
-    )
 
 
 def opponent_argument_or_opening(text: str, opponent: str) -> str:
@@ -67,13 +44,11 @@ def resolve_instrument_identity(ticker: str) -> dict:
     the price action to a narrative and invent an identity that then cascaded
     through every downstream agent.
 
-    Best-effort by design: if yfinance is unavailable, rate-limited, or doesn't
+    Best-effort by design: if Alpaca is unavailable, unconfigured, or doesn't
     recognise the ticker, we return ``{}`` and the caller falls back to
     ticker-only context rather than failing before analysis starts. An answer
     is cached for the process; a failed lookup is asked again next time.
 
-    Identity resolves for the same instrument the price path fetches
-    (``XAUUSD`` -> ``GC=F``, #983).
     """
     try:
         return _identity(ticker)
@@ -85,18 +60,14 @@ def resolve_instrument_identity(ticker: str) -> dict:
 @functools.lru_cache(maxsize=256)
 def _identity(ticker: str) -> dict:
     """The vendor's identity fields for ``ticker``; raises if the lookup fails."""
-    info = get_company_profile(ticker)
+    info = get_asset_profile(ticker)
     identity: dict[str, str] = {}
-    company_name = _clean_identity_value(info.get("longName")) or _clean_identity_value(
-        info.get("shortName")
-    )
+    company_name = _clean_identity_value(info.get("name"))
     if company_name:
         identity["company_name"] = company_name
     for source_key, target_key in (
-        ("sector", "sector"),
-        ("industry", "industry"),
         ("exchange", "exchange"),
-        ("quoteType", "quote_type"),
+        ("asset_class", "quote_type"),
     ):
         value = _clean_identity_value(info.get(source_key))
         if value:
@@ -128,7 +99,7 @@ def build_instrument_context(
     context = (
         f"The {instrument_label} to analyze is `{ticker}`. "
         "The tools serve this instrument; refer to it by this exact ticker in every report and recommendation, "
-        "preserving any exchange suffix (e.g. `.TO`, `.L`, `.HK`, `.T`, `-USD`)."
+        "preserving its exact spelling (e.g. `BRK.B`, `BTC/USD`)."
     )
 
     identity = identity or {}
@@ -176,7 +147,7 @@ def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
     stored on the state (see ``TradingAgentsGraph.resolve_instrument_context``).
     Falls back to a ticker-only context — with no network lookup — when the
     state was constructed without it (bare programmatic states, tests), so a
-    consumer is never forced to make a yfinance call mid-graph.
+    consumer is never forced to make a vendor call mid-graph.
     """
     context = state.get("instrument_context")
     if isinstance(context, str) and context.strip():

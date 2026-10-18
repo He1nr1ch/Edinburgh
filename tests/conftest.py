@@ -47,13 +47,6 @@ _own_file_locations()
 def pytest_configure(config):
     for marker in ("unit", "integration", "smoke"):
         config.addinivalue_line("markers", f"{marker}: {marker}-level tests")
-    # yfinance caches each symbol's time zone on disk, in the home directory
-    # by default; the suite keeps it in a directory of its own.
-    import tempfile
-
-    import yfinance
-
-    yfinance.set_tz_cache_location(tempfile.mkdtemp(prefix="tradingagents-tests-yf-"))
 
 
 @pytest.fixture(autouse=True)
@@ -68,11 +61,6 @@ def _no_network(request, monkeypatch):
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: refuse(None, *a))
-    # yfinance's HTTP client is libcurl, which never touches Python's sockets.
-    from curl_cffi import requests as curl_requests
-
-    monkeypatch.setattr(curl_requests.Session, "request", refuse)
-    monkeypatch.setattr(curl_requests.AsyncSession, "request", refuse)
 
 
 @pytest.fixture(autouse=True)
@@ -84,27 +72,11 @@ def _at_a_terminal(monkeypatch):
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
 
 
-@pytest.fixture(autouse=True)
-def _own_cli_prefs(tmp_path, monkeypatch):
-    """The CLI keeps the last run's selections in the user's home; tests keep theirs apart."""
-    monkeypatch.setattr("cli.prefs._PREFS_PATH", tmp_path / "cli_prefs.json")
-
-
 _API_KEY_ENV_VARS = (
     "OPENAI_API_KEY",
-    "GOOGLE_API_KEY",
     "ANTHROPIC_API_KEY",
-    "XAI_API_KEY",
-    "DEEPSEEK_API_KEY",
-    "DASHSCOPE_API_KEY",
-    "DASHSCOPE_CN_API_KEY",
-    "ZHIPU_API_KEY",
-    "ZHIPU_CN_API_KEY",
-    "MINIMAX_API_KEY",
-    "MINIMAX_CN_API_KEY",
-    "OPENROUTER_API_KEY",
-    "AZURE_OPENAI_API_KEY",
-    "ALPHA_VANTAGE_API_KEY",
+    "ALPACA_API_KEY",
+    "ALPACA_SECRET_KEY",
 )
 
 

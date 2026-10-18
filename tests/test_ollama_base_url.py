@@ -49,14 +49,6 @@ def test_resolver_evaluation_is_call_time(monkeypatch):
     assert _base_url(mod, "ollama") == "http://late-set:11434/v1"
 
 
-def test_resolver_does_not_affect_other_providers(monkeypatch):
-    """OLLAMA_BASE_URL should NOT leak into xai/deepseek/etc."""
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://elsewhere/v1")
-    mod = _client_module()
-    assert _base_url(mod, "xai") == "https://api.x.ai/v1"
-    assert _base_url(mod, "deepseek") == "https://api.deepseek.com"
-
-
 def test_client_get_llm_picks_up_env(monkeypatch):
     """End-to-end: OllamaClient.get_llm() respects OLLAMA_BASE_URL."""
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://my-ollama:11434/v1")

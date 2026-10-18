@@ -25,7 +25,7 @@ class DummyLLMClient(BaseLLMClient):
 class ModelValidationTests(unittest.TestCase):
     def test_cli_catalog_models_are_all_validator_approved(self):
         for provider, models in get_known_models().items():
-            if provider in ("ollama", "openrouter"):
+            if provider in ("ollama", "openai_compatible"):
                 continue
 
             for model in models:
@@ -43,8 +43,8 @@ class ModelValidationTests(unittest.TestCase):
         self.assertIn("not-a-real-openai-model", str(caught[0].message))
         self.assertIn("openai", str(caught[0].message))
 
-    def test_openrouter_and_ollama_accept_custom_models_without_warning(self):
-        for provider in ("openrouter", "ollama"):
+    def test_local_providers_accept_custom_models_without_warning(self):
+        for provider in ("openai_compatible", "ollama"):
             client = DummyLLMClient(provider, "custom-model-name")
 
             with self.subTest(provider=provider):
@@ -76,7 +76,7 @@ def test_an_explicit_alias_of_a_listed_model_is_known():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provider", ["openai", "anthropic", "google", "xai"])
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "ollama"])
 @pytest.mark.parametrize("mode", ["quick", "deep"])
 def test_every_provider_lets_you_name_your_own_model(provider, mode):
     """The docs tell users to name any model their provider serves; the picker
@@ -88,9 +88,8 @@ def test_every_provider_lets_you_name_your_own_model(provider, mode):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("provider, model", [
-    ("xai", "grok-4.20-0309-reasoning"),
-    ("deepseek", "deepseek-v4-flash"),
-    ("qwen", "qwen3.7-max"),
+    ("openai", "gpt-5.4"),
+    ("anthropic", "claude-opus-5"),
 ])
 def test_a_retired_model_id_still_runs_without_a_warning(provider, model):
     """A config written against an earlier release keeps working: the provider

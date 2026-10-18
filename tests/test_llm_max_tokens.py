@@ -1,10 +1,8 @@
 """Configurable output-token cap (#1204).
 
-Some model/gateway combinations (e.g. deepseek-v4-flash deployments) emit
-unbounded reasoning/output and hang or trip an idle timeout. An opt-in
-``max_tokens`` config knob is forwarded to every provider so a run can bound it;
-Gemini names the parameter ``max_output_tokens``, so it is forwarded under the
-right key per provider.
+Some model/gateway combinations emit unbounded reasoning/output and hang or
+trip an idle timeout. An opt-in ``max_tokens`` config knob is forwarded to every
+provider so a run can bound it.
 """
 from __future__ import annotations
 
@@ -54,19 +52,11 @@ def test_not_forwarded_when_unset():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provider", ["openai", "anthropic", "deepseek", "openai_compatible"])
-def test_forwarded_as_max_tokens_for_non_google(provider):
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "ollama", "openai_compatible"])
+def test_forwarded_as_max_tokens(provider):
     kwargs = build_llm_kwargs({"llm_provider": provider, "max_tokens": 8192})
     assert kwargs["max_tokens"] == 8192
     assert "max_output_tokens" not in kwargs
-
-
-@pytest.mark.unit
-def test_forwarded_as_max_output_tokens_for_google():
-    # Gemini's kwarg name differs; forwarding plain max_tokens would be rejected.
-    kwargs = build_llm_kwargs({"llm_provider": "google", "max_tokens": 8192})
-    assert kwargs["max_output_tokens"] == 8192
-    assert "max_tokens" not in kwargs
 
 
 @pytest.mark.unit
@@ -84,13 +74,9 @@ def test_invalid_value_fails_loudly():
 # --- client-side allowlists carry the kwarg --------------------------------
 
 @pytest.mark.unit
-def test_openai_and_google_clients_accept_the_kwarg():
+def test_the_openai_client_accepts_the_kwarg():
     from tradingagents.llm_clients import openai_client
-    from tradingagents.llm_clients.google_client import GoogleClient  # noqa: F401
     assert "max_tokens" in openai_client._PASSTHROUGH_KWARGS
-    # Google client forwards max_output_tokens through construction.
-    llm = GoogleClient("gemini-3.5-flash", api_key="x", max_output_tokens=8192).get_llm()
-    assert getattr(llm, "max_output_tokens", None) == 8192
 
 
 # --- env overlay -----------------------------------------------------------

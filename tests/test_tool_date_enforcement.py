@@ -50,7 +50,6 @@ def test_as_of_window(start, end, expected):
 
 DATED_TOOLS = [
     tools.get_stock_data,
-    tools.get_fundamentals,
     tools.get_balance_sheet,
     tools.get_cashflow,
     tools.get_income_statement,
@@ -70,8 +69,8 @@ def test_trade_date_is_hidden_from_the_model(tool):
 
 INSTRUMENT_TOOLS = [
     tools.get_stock_data, tools.get_indicators, tools.get_verified_market_snapshot,
-    tools.get_fundamentals, tools.get_balance_sheet, tools.get_cashflow,
-    tools.get_income_statement, tools.get_news, tools.get_insider_transactions,
+    tools.get_balance_sheet, tools.get_cashflow,
+    tools.get_income_statement, tools.get_news,
 ]
 
 
@@ -118,8 +117,8 @@ def test_statement_tool_with_omitted_date_uses_the_run_date():
 
 @pytest.mark.unit
 def test_future_curr_date_from_the_model_is_clamped():
-    args = _run(tools.get_fundamentals, {"curr_date": "2026-09-14"}, tools)
-    assert args == ("get_fundamentals", "NVDA", TRADE_DATE)
+    args = _run(tools.get_verified_market_snapshot, {"curr_date": "2026-09-14"}, tools)
+    assert args == ("get_market_snapshot", "NVDA", TRADE_DATE, 30)
 
 
 @pytest.mark.unit

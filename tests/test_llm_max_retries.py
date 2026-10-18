@@ -51,7 +51,7 @@ def test_not_forwarded_when_unset():
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("provider", ["openai", "anthropic", "google"])
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "ollama"])
 def test_forwarded_across_providers(provider):
     kwargs = build_llm_kwargs({"llm_provider": provider, "llm_max_retries": 6})
     assert kwargs["max_retries"] == 6

@@ -31,17 +31,17 @@ def test_no_env_uses_built_in_defaults(monkeypatch):
 def test_string_overrides(monkeypatch):
     config = _config_with_env(
         monkeypatch,
-        TRADINGAGENTS_LLM_PROVIDER="google",
-        TRADINGAGENTS_DEEP_THINK_LLM="gemini-3-pro-preview",
-        TRADINGAGENTS_QUICK_THINK_LLM="gemini-3-flash-preview",
+        TRADINGAGENTS_LLM_PROVIDER="ollama",
+        TRADINGAGENTS_DEEP_THINK_LLM="qwen3.8:27b",
+        TRADINGAGENTS_QUICK_THINK_LLM="qwen3:latest",
         TRADINGAGENTS_LLM_BACKEND_URL="https://example.invalid/v1",
-        TRADINGAGENTS_OUTPUT_LANGUAGE="Chinese",
+        TRADINGAGENTS_ALPACA_FEED="iex",
     )
-    assert config["llm_provider"] == "google"
-    assert config["deep_think_llm"] == "gemini-3-pro-preview"
-    assert config["quick_think_llm"] == "gemini-3-flash-preview"
+    assert config["llm_provider"] == "ollama"
+    assert config["deep_think_llm"] == "qwen3.8:27b"
+    assert config["quick_think_llm"] == "qwen3:latest"
     assert config["backend_url"] == "https://example.invalid/v1"
-    assert config["output_language"] == "Chinese"
+    assert config["alpaca_feed"] == "iex"
 
 
 def test_int_coercion(monkeypatch):
@@ -73,11 +73,9 @@ def test_reasoning_thinking_overrides(monkeypatch):
     config = _config_with_env(
         monkeypatch,
         TRADINGAGENTS_OPENAI_REASONING_EFFORT="high",
-        TRADINGAGENTS_GOOGLE_THINKING_LEVEL="minimal",
         TRADINGAGENTS_ANTHROPIC_EFFORT="low",
     )
     assert config["openai_reasoning_effort"] == "high"
-    assert config["google_thinking_level"] == "minimal"
     assert config["anthropic_effort"] == "low"
 
 
@@ -85,7 +83,6 @@ def test_reasoning_effort_defaults_to_none(monkeypatch):
     """Unset reasoning/thinking knobs stay None so each provider uses its own default."""
     config = _config_with_env(monkeypatch)
     assert config["openai_reasoning_effort"] is None
-    assert config["google_thinking_level"] is None
     assert config["anthropic_effort"] is None
 
 

@@ -6,41 +6,27 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from tradingagents.dataflows.symbols import normalize_symbol
-from tradingagents.dataflows.vendors.yahoo.market import get_closes
+from tradingagents.dataflows.vendors.alpaca import get_closes
 
 logger = logging.getLogger(__name__)
 
 
 def resolve_benchmark(ticker: str, config: dict) -> str:
-    """Pick the benchmark ticker for alpha calculation against ``ticker``.
+    """The benchmark ticker for alpha calculation against ``ticker``.
 
-    ``config["benchmark_ticker"]`` overrides everything when set; otherwise
-    the suffix map matches the ticker's exchange suffix (e.g. ``.T`` for
-    Tokyo). US-listed tickers without a dotted suffix fall through to the
-    empty-suffix entry (SPY by default). Unrecognised suffixes, including
-    US tickers with dots like ``BRK.B``, also take the empty-suffix entry.
-    Returns are compared as percentages, each in its own currency.
+    ``config["benchmark_ticker"]`` when set, else SPY: Alpaca serves US
+    equities and crypto pairs, and SPY is the US market's reference. Returns
+    are compared as percentages.
     """
-
     explicit = config.get("benchmark_ticker")
-    if explicit:
-        # Same alias mapping as the analyzed ticker; an unmapped alias finds
-        # no prices, and the decision would stay pending for good.
-        return normalize_symbol(explicit)
-    benchmark_map = config.get("benchmark_map", {})
-    ticker_upper = normalize_symbol(ticker)
-    for suffix, benchmark in benchmark_map.items():
-        if suffix and ticker_upper.endswith(suffix.upper()):
-            return benchmark
-    return benchmark_map.get("", "SPY")
+    return normalize_symbol(explicit) if explicit else "SPY"
 
 
 def _by_day(closes):
     """Closes keyed by the calendar day of their bar, missing closes dropped.
 
-    Yahoo stamps a daily bar at midnight in its market's time zone (UTC for a
-    coin, New York for SPY), so two series meet on their dates, not their
-    instants. A missing or non-positive close is no price at all, not a bar to
+    Two series meet on their dates, not their instants, so a coin's bar and an
+    index's bar for the same day line up. A missing or non-positive close is no price at all, not a bar to
     score on.
     """
     closes = closes[closes > 0]

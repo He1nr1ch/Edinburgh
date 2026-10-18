@@ -24,13 +24,6 @@ ANALYST_NODE_SPECS: dict[str, AnalystNodeSpec] = {
         report_key="market_report",
         tools=market_analyst.TOOLS,
     ),
-    "social": AnalystNodeSpec(
-        # Saved configs select this analyst as "social". It fetches its
-        # sources before calling the model, so it has no tools.
-        key="social",
-        agent_node="Sentiment Analyst",
-        report_key="sentiment_report",
-    ),
     "news": AnalystNodeSpec(
         key="news",
         agent_node="News Analyst",

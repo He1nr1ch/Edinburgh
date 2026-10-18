@@ -1,7 +1,6 @@
 """Report parity: the shared writer produces the report tree for the CLI and the
 programmatic API alike (#1037)."""
 
-import re
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +23,7 @@ def _state():
 
 SETTINGS = {"version": "0.5.2", "llm_provider": "openai", "deep_think_llm": "gpt-6-sol",
             "quick_think_llm": "gpt-6-luna", "analysts": ["market", "news"], "max_debate_rounds": 1,
-            "max_risk_discuss_rounds": 2, "data_vendors": {"core_stock_apis": "yfinance"}}
+            "max_risk_discuss_rounds": 2, "data_vendors": {"core_stock_apis": "alpaca"}}
 
 
 @pytest.mark.unit
@@ -72,7 +71,7 @@ def test_the_report_names_the_analysis_date_and_what_produced_it(tmp_path):
     assert "openai, deep gpt-6-sol, quick gpt-6-luna" in header
     assert "Analysts: market, news" in header
     assert "research debate rounds 1, risk debate rounds 2" in header
-    assert "core_stock_apis yfinance" in header
+    assert "core_stock_apis alpaca" in header
 
 
 @pytest.mark.unit
@@ -82,8 +81,8 @@ def test_run_settings_record_the_run_without_endpoints_or_paths():
     graph = object.__new__(TradingAgentsGraph)
     graph.selected_analysts = ("market", "news")
     graph.config = {"llm_provider": "openai", "deep_think_llm": "gpt-6-sol", "quick_think_llm": "gpt-6-luna",
-                    "max_debate_rounds": 1, "max_risk_discuss_rounds": 1, "output_language": "English",
-                    "data_vendors": {"core_stock_apis": "yfinance"}, "tool_vendors": {},
+                    "max_debate_rounds": 1, "max_risk_discuss_rounds": 1,
+                    "data_vendors": {"core_stock_apis": "alpaca"}, "tool_vendors": {},
                     "backend_url": "https://user:secret@relay.example/v1", "results_dir": "/home/me/results"}
 
     settings = graph.run_settings()
@@ -124,12 +123,9 @@ def test_the_report_header_names_the_rating(tmp_path, decision, rating):
 
 @pytest.mark.unit
 def test_the_header_names_the_analysts_as_users_select_them(tmp_path):
-    settings = {**SETTINGS, "analysts": ["market", "social", "news"]}
+    settings = {**SETTINGS, "analysts": ["market", "news", "fundamentals"]}
 
-    write_report_tree(_state(), "NVDA", tmp_path, settings=settings, html=True)
+    write_report_tree(_state(), "NVDA", tmp_path, settings=settings)
 
     markdown = (tmp_path / "complete_report.md").read_text(encoding="utf-8")
-    assert "market, sentiment, news" in markdown and "social" not in markdown
-    page = (tmp_path / "complete_report.html").read_text(encoding="utf-8")
-    fields = re.findall(r'<span class="field">([^<]*)</span>', page)
-    assert {"market", "sentiment", "news"} <= set(fields) and "social" not in page
+    assert "market, news, fundamentals" in markdown
