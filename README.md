@@ -47,8 +47,8 @@ Or unattended, with every question answered by a flag or a `TRADINGAGENTS_*`
 variable (see `.env.example`):
 
 ```bash
-TRADINGAGENTS_LLM_PROVIDER=ollama OLLAMA_BASE_URL=http://192.168.0.98:11434/v1 \
-TRADINGAGENTS_QUICK_THINK_LLM=qwen3.8:27b TRADINGAGENTS_DEEP_THINK_LLM=qwen3.8:27b \
+TRADINGAGENTS_LLM_PROVIDER=ollama OLLAMA_BASE_URL=http://127.0.0.1:11435 \
+TRADINGAGENTS_QUICK_THINK_LLM=gemma4:26b TRADINGAGENTS_DEEP_THINK_LLM=gemma4:26b \
 TRADINGAGENTS_MAX_DEBATE_ROUNDS=1 TRADINGAGENTS_MAX_RISK_ROUNDS=1 \
 tradingagents --ticker NVDA --date 2026-10-16 --analysts market,news,fundamentals --save --no-show
 ```

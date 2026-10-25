@@ -129,7 +129,7 @@ def build_default_config() -> dict:
         # which drops the user message and fails the call; the analysts need
         # tens of thousands of tokens. Lower it if the model does not fit.
         "ollama_num_ctx": 32768,
-        # Whether an Ollama model that can think (qwen3.x) does so. Off by default:
+        # Whether an Ollama model that can think (gemma4, qwen3.x) does so. Off by default:
         # the agents' work is reading reports and writing them, where hidden
         # reasoning adds minutes per call for little gain. Turn it on for the
         # deep tier by running that tier on its own provider settings.

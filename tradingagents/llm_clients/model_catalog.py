@@ -43,16 +43,18 @@ MODEL_OPTIONS: ProviderModeOptions = {
         ],
     },
     # Ollama: whatever has been pulled on the server named by OLLAMA_BASE_URL.
-    # The first entry is the model on the PGX host; "Custom model ID" takes any
-    # other pulled model. Served through the native API (ollama_client).
+    # The first entry is the model PAIR serves on both cluster nodes; "Custom
+    # model ID" takes any other pulled model. Served through the native API (ollama_client).
     "ollama": {
         "quick": [
+            ("Gemma 4 26B (gemma4:26b)", "gemma4:26b"),
             ("Qwen 3.8 27B (qwen3.8:27b)", "qwen3.8:27b"),
             ("Qwen3:latest (8B)", "qwen3:latest"),
             ("GPT-OSS:latest (20B)", "gpt-oss:latest"),
             ("Custom model ID", "custom"),
         ],
         "deep": [
+            ("Gemma 4 26B (gemma4:26b)", "gemma4:26b"),
             ("Qwen 3.8 27B (qwen3.8:27b)", "qwen3.8:27b"),
             ("GPT-OSS:latest (20B)", "gpt-oss:latest"),
             ("Custom model ID", "custom"),
