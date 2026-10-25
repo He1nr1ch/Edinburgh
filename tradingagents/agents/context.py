@@ -5,10 +5,53 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.date_window import is_historical
 from tradingagents.dataflows.vendors.alpaca import get_asset_profile
 
 logger = logging.getLogger(__name__)
+
+
+REPORT_STYLES = ("concise", "detailed")
+
+# What a concise run asks of each kind of output, in place of the length the
+# detailed prompts leave open. Everything later in the run reads what is
+# written here, so a shorter report is also a shorter prompt downstream.
+_CONCISE_BRIEFS = {
+    "report": (
+        "Keep the report under about 300 words plus the table: the findings that bear "
+        "on the trade and the numbers behind them. Do not restate the raw data, define "
+        "the indicators or tools, or add background the trader already knows."
+    ),
+    "argument": (
+        "Keep this turn under about 150 words: your two or three strongest points, each "
+        "with the number behind it, and a direct answer to the other side's best point."
+    ),
+    "decision": (
+        "Be brief: each section a sentence or two that names the evidence, "
+        "not a recap of the debate."
+    ),
+}
+
+
+def report_style() -> str:
+    """This run's ``report_style``: ``concise`` (the default) or ``detailed``."""
+    style = str(get_config().get("report_style") or "concise").lower()
+    if style not in REPORT_STYLES:
+        raise ValueError(f"report_style must be one of {REPORT_STYLES}, not {style!r}")
+    return style
+
+
+def length_brief(kind: str, before: str = "") -> str:
+    """The length instruction for one kind of output, or "" on a detailed run.
+
+    ``kind`` is ``report`` (an analyst's report), ``argument`` (a debate turn)
+    or ``decision`` (a manager's or the trader's call). ``before`` is prefixed
+    only when there is an instruction, so a detailed run's prompt is unchanged.
+    """
+    if report_style() == "detailed":
+        return ""
+    return before + _CONCISE_BRIEFS[kind]
 
 
 def opponent_argument_or_opening(text: str, opponent: str) -> str:

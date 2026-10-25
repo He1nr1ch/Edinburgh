@@ -11,6 +11,7 @@ free-text generation and the rating is read from that text.
 from __future__ import annotations
 
 from tradingagents.agents.context import (
+    length_brief,
     get_instrument_context_from_state,
     get_portfolio_context_from_state,
 )
@@ -44,6 +45,8 @@ def create_portfolio_manager(llm):
             else ""
         )
 
+        brevity = length_brief("decision")
+        brevity = f"{brevity}\n\n" if brevity else ""
         prompt = f"""As the Portfolio Manager, synthesize the risk analysts' debate and deliver the final trading decision.
 
 {instrument_context}
@@ -82,7 +85,7 @@ Write these sections, in this order, starting with the rating on its own line:
 - **Executive Summary**: the call and how to act on it
 - **Investment Thesis**: the evidence that decided it, and what would change it
 
-{NO_EXTERNAL_TOOLS}"""
+{brevity}{NO_EXTERNAL_TOOLS}"""
 
         # The typed rating is the decision; the rendered text only carries it.
         # Read back from text, a rating the thesis quotes could replace it.

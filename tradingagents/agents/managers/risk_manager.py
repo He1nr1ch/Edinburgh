@@ -9,6 +9,7 @@ then sizes within that ceiling, and the feedback loop can score the stance.
 from __future__ import annotations
 
 from tradingagents.agents.context import (
+    length_brief,
     get_instrument_context_from_state,
     get_portfolio_context_from_state,
 )
@@ -30,6 +31,8 @@ def create_risk_manager(llm):
         past_context = (state.get("past_context") or "").strip()
         record_section = f"**Track record and lessons from settled decisions:**\n{past_context}\n\n" if past_context else ""
 
+        brevity = length_brief("decision")
+        brevity = f"{brevity}\n\n" if brevity else ""
         prompt = f"""As the Risk Manager, settle the risk analysts' debate: decide the level of risk the desk takes on the trader's proposal, and the ceiling on the position.
 
 {instrument_context}
@@ -62,7 +65,7 @@ Write these sections, in this order, starting with the risk level on its own lin
 - **Stop Loss**: an absolute price, or not provided
 - **Rationale**: the risks that decided the stance and bound the size
 
-{NO_EXTERNAL_TOOLS}"""
+{brevity}{NO_EXTERNAL_TOOLS}"""
 
         assessment = invoke_structured(structured_llm, prompt, "Risk Manager")
         if assessment is not None:

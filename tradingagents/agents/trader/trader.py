@@ -5,6 +5,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage
 
 from tradingagents.agents.context import (
+    length_brief,
     get_instrument_context_from_state,
     get_portfolio_context_from_state,
 )
@@ -31,6 +32,7 @@ def create_trader(llm):
         market_report = (state["market_report"] or "").strip()
         portfolio_context = get_portfolio_context_from_state(state)
 
+        brevity = length_brief("decision", before=" ")
         if market_report:
             grounding = (
                 "Ground concrete price levels (entry, stop-loss, position sizing) in the technical "
@@ -57,6 +59,7 @@ def create_trader(llm):
                     "or a range; convert a percentage distance to the price level it "
                     "implies, or omit the field if you cannot state a number. "
                     + NO_EXTERNAL_TOOLS
+                    + brevity
                 ),
             },
             {

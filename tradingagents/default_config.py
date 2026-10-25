@@ -36,6 +36,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
     "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
+    "TRADINGAGENTS_REPORT_STYLE":            "report_style",
 }
 
 
@@ -151,6 +152,11 @@ def build_default_config() -> dict:
         # Checkpoint/resume: when True, LangGraph saves state after each node
         # so a crashed run can resume from the last successful step.
         "checkpoint_enabled": False,
+        # How long the agents write: "concise" gives each report, debate turn and
+        # decision a length to keep to; "detailed" leaves it to the model, as the
+        # prompts did before. Later agents read every earlier report, so concise
+        # output is also shorter input and a faster run.
+        "report_style": "concise",
         # Debate and discussion settings
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
