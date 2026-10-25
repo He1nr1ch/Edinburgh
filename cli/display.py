@@ -604,6 +604,10 @@ class AnalystWallTimeTracker:
             return "Analyst wall time: pending"
         return "Analyst wall time: " + " | ".join(parts)
 
+    def wall_times(self) -> dict[str, float]:
+        """Seconds per finished analyst, by analyst key."""
+        return dict(self._wall_times)
+
 
 def sync_analyst_tracker_from_chunk(
     tracker: AnalystWallTimeTracker,
@@ -616,3 +620,84 @@ def sync_analyst_tracker_from_chunk(
         tracker.mark_started(spec.key, started_at=current_time)
         if chunk.get(spec.report_key):
             tracker.mark_completed(spec.key, completed_at=current_time)
+
+
+# The stages after the analysts, in run order, each done when the state first
+# carries its output.
+RUN_STAGES = (
+    ("Research", "investment_plan"),
+    ("Trader", "trader_investment_plan"),
+    ("Risk", "risk_assessment"),
+    ("Portfolio", "final_trade_decision"),
+)
+
+
+def format_duration(seconds: float) -> str:
+    """``12.3s`` under a minute, ``2m 07s`` under an hour, ``1h 02m`` past it."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes}m {secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes:02d}m"
+
+
+class RunTimer:
+    """How long a run takes: in all, and each stage from the end of the one before.
+
+    Setup ends when the stream starts, the analysts when the last selected
+    report lands, each later stage when its output first appears, and wrap-up
+    (logging the decision) when :meth:`finish` is called. A stage that never
+    ran is left out, and the next one's time covers it.
+    """
+
+    def __init__(self, report_keys, now: float | None = None):
+        self._report_keys = tuple(report_keys)
+        self._filed: set[str] = set()
+        self.started_at = monotonic() if now is None else now
+        self.started_wall = datetime.datetime.now().astimezone()
+        self._ended: dict[str, float] = {}
+        self.finished_at: float | None = None
+
+    def mark(self, stage: str, now: float | None = None) -> None:
+        self._ended.setdefault(stage, monotonic() if now is None else now)
+
+    def observe(self, chunk: dict, now: float | None = None) -> None:
+        """Close every stage whose output this chunk carries."""
+        current_time = monotonic() if now is None else now
+        self._filed.update(k for k in self._report_keys if chunk.get(k))
+        if self._report_keys and self._filed.issuperset(self._report_keys):
+            self.mark("Analysts", current_time)
+        for stage, key in RUN_STAGES:
+            if chunk.get(key):
+                self.mark(stage, current_time)
+
+    def finish(self, now: float | None = None) -> None:
+        self.finished_at = monotonic() if now is None else now
+        self.mark("Wrap-up", self.finished_at)
+
+    def total(self, now: float | None = None) -> float:
+        end = self.finished_at if self.finished_at is not None else (monotonic() if now is None else now)
+        return max(0.0, end - self.started_at)
+
+    def stages(self) -> dict[str, float]:
+        """Seconds per stage, in the order the stages ended."""
+        durations, previous = {}, self.started_at
+        for stage, ended in sorted(self._ended.items(), key=lambda item: item[1]):
+            durations[stage] = max(0.0, ended - previous)
+            previous = ended
+        return durations
+
+    def format_summary(self) -> str:
+        parts = " | ".join(f"{stage} {format_duration(secs)}" for stage, secs in self.stages().items())
+        summary = f"Run time: {format_duration(self.total())}"
+        return f"{summary} ({parts})" if parts else summary
+
+    def to_dict(self, **extra) -> dict:
+        return {
+            **extra,
+            "started": self.started_wall.isoformat(timespec="seconds"),
+            "total_seconds": round(self.total(), 2),
+            "stages": {stage: round(secs, 2) for stage, secs in self.stages().items()},
+        }

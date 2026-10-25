@@ -1,5 +1,6 @@
 """Running one analysis from the CLI: build the graph, stream it into the live view, save the report."""
 
+import json
 import os
 import sys
 import time
@@ -11,7 +12,9 @@ from rich.live import Live
 
 from cli.display import (
     ANALYST_ORDER,
+    ANALYST_REPORT_MAP,
     AnalystWallTimeTracker,
+    RunTimer,
     classify_message_type,
     console,
     create_layout,
@@ -117,6 +120,9 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     selected_analyst_keys = [a for a in ANALYST_ORDER if a in selected_set]
     analyst_execution_plan = build_analyst_execution_plan(selected_analyst_keys)
     analyst_wall_time_tracker = AnalystWallTimeTracker(analyst_execution_plan)
+    # From here, not from launch: the time spent answering the setup questions
+    # is not the run's.
+    run_timer = RunTimer(ANALYST_REPORT_MAP[k] for k in selected_analyst_keys)
 
     graph = TradingAgentsGraph(
         selected_analyst_keys,
@@ -235,6 +241,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         # interrupted run instead of re-appending the initial state (#1249); the
         # try/finally tears the checkpointer down even if the stream raises.
         trace = []
+        run_timer.mark("Setup")
         try:
             for messages, chunk in graph.stream_run(graph.checkpoint_input(init_agent_state), **args):
                 for message in messages:
@@ -259,6 +266,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                     update_display(layout, stats_handler=stats_handler, start_time=start_time)
                     continue
 
+                run_timer.observe(chunk)
                 update_analyst_statuses(
                     message_buffer,
                     chunk,
@@ -360,6 +368,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             graph.clear_checkpoint_on_success(
                 selections["ticker"], selections["analysis_date"], selections["asset_type"], portfolio
             )
+            run_timer.finish()
         finally:
             # Always restore the plain uncheckpointed graph, even on failure.
             graph.end_checkpoint()
@@ -371,6 +380,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             "System", f"Completed analysis for {selections['analysis_date']}"
         )
         message_buffer.add_message("System", analyst_wall_time_tracker.format_summary())
+        message_buffer.add_message("System", run_timer.format_summary())
 
         for section in message_buffer.report_sections:
             if section in final_state:
@@ -390,8 +400,27 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             "decision text below and judge it yourself.[/yellow]\n"
         )
     console.print(f"[dim]{analyst_wall_time_tracker.format_summary()}[/dim]")
+    console.print(f"[bold]{run_timer.format_summary()}[/bold]")
+    timing_file = _save_timing(results_dir, run_timer, analyst_wall_time_tracker, stats_handler, selections, config)
+    console.print(f"[dim]Timing saved to {timing_file}[/dim]")
 
     _offer_reports(final_state, graph, selections["ticker"], save=flags.get("save"), show=flags.get("show"))
+
+
+def _save_timing(results_dir: Path, run_timer, analyst_tracker, stats_handler, selections, config) -> Path:
+    """Write the run's timings beside its logs, so runs can be compared later."""
+    timing = run_timer.to_dict(
+        ticker=selections["ticker"],
+        trade_date=selections["analysis_date"],
+        provider=config.get("llm_provider"),
+        quick_think_llm=config.get("quick_think_llm"),
+        deep_think_llm=config.get("deep_think_llm"),
+    )
+    timing["analysts"] = {k: round(v, 2) for k, v in analyst_tracker.wall_times().items()}
+    timing["calls"] = stats_handler.get_stats()
+    timing_file = results_dir / "timing.json"
+    timing_file.write_text(json.dumps(timing, indent=2) + "\n", encoding="utf-8")
+    return timing_file
 
 
 def _offer_reports(final_state, graph, ticker, save=None, show=None):
