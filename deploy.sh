@@ -48,12 +48,14 @@ docker stop $CONTAINER 2>/dev/null || true
 docker rm $CONTAINER 2>/dev/null || true
 # --network host: PAIR answers plaintext only on Colossus's own loopback.
 # The data folder keeps worker state, the daily logs and the hedge record
-# across deploys; the image runs as uid 1000, the same as heinrich.
+# across deploys; the image runs as uid 1000, the same as heinrich. The :Z
+# relabels it for the container: Colossus is Fedora, and SELinux refuses a
+# container's writes to a bind mount without it.
 docker run -d --name $CONTAINER --restart unless-stopped \\
     --network host \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
-    -v $DATA_DIR:/home/appuser/.tradingagents \\
+    -v $DATA_DIR:/home/appuser/.tradingagents:Z \\
     $IMAGE:latest worker
 echo "--- Last 20 log lines ---"
 sleep 3
