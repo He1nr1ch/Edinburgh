@@ -37,6 +37,11 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
+    "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
+    "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
+    "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
+    "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
+    "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
 }
 
 
@@ -90,6 +95,10 @@ def build_default_config() -> dict:
         "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR") or os.path.join(_TRADINGAGENTS_HOME, "logs"),
         "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR") or os.path.join(_TRADINGAGENTS_HOME, "cache"),
         "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
+        # The SPY calls bought to hedge a book (tradingagents size --record-hedge),
+        # so a book that is already hedged is not hedged again.
+        "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
+        "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
         # Optional cap on the number of resolved memory log entries. When set,
         # the oldest resolved entries are pruned once this limit is exceeded.
         # Pending entries are never pruned. None disables rotation entirely.
@@ -207,6 +216,22 @@ def build_default_config() -> dict:
         # Trading days from the first close after the analysis date over which a
         # decision's outcome is measured, for reflection and for the backtest figures.
         "holding_period_days": 5,
+        # A net-short book is hedged with the one-week at-the-money SPY call,
+        # unless the one-month call costs less than this many times the weekly.
+        "hedge_monthly_ratio": 2.1,
+        # The daily worker (tradingagents worker). It trades by itself within these
+        # limits: on a paper account unless worker_allow_live is turned on.
+        "worker_trading_enabled": True,
+        "worker_allow_live": False,
+        "worker_interval_minutes": 5,
+        "worker_trim_fraction": 0.5,        # adverse, notable, unexpected news: sell this share of the position
+        "worker_add_fraction": 0.25,        # favorable, urgent, unexpected news: add this share of it
+        "worker_position_cap_pct": 10.0,    # an add never takes a position past this % of equity
+        "worker_news_lookback_hours": 18,   # the first pass reads back this far, to the previous close
+        "worker_symbols": None,             # comma-separated symbols to watch; None watches every equity position
+        "worker_alert_email": None,         # None sends alerts to TRADINGAGENTS_SMTP_USER
+        "worker_smtp_host": "smtp.gmail.com",
+        "worker_smtp_port": 587,
         # Benchmark for alpha calculation in the reflection layer; None means SPY.
         "benchmark_ticker": None,
     })

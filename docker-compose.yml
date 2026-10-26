@@ -8,6 +8,26 @@ services:
     tty: true
     stdin_open: true
 
+  # The daily worker, always on: it watches the account's positions each market
+  # day and sleeps between. Host networking because PAIR answers plaintext only on
+  # the host's loopback (127.0.0.1:11435); a bridged container could not reach it.
+  worker:
+    build: .
+    command: ["worker"]
+    env_file:
+      - .env
+    network_mode: host
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    volumes:
+      - ${TRADINGAGENTS_DATA_DIR:-tradingagents_data}:/home/appuser/.tradingagents
+    profiles:
+      - worker
+
   ollama:
     image: ollama/ollama:latest
     volumes:

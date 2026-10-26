@@ -55,6 +55,20 @@ def fetch_articles(symbols: str | None, start: datetime, end: datetime, limit: i
     return articles[:limit]
 
 
+def articles_since(symbol: str, since: datetime, limit: int = 20) -> list[dict]:
+    """Articles about ``symbol`` published after ``since``, newest first, as plain records."""
+    canonical = normalize_symbol(symbol)
+    found = fetch_articles(_news_symbol(canonical), since, datetime.now(UTC), limit)
+    return [{
+        "id": str(getattr(a, "id", "")),
+        "headline": getattr(a, "headline", None) or "",
+        "summary": getattr(a, "summary", None) or "",
+        "source": getattr(a, "source", None) or "",
+        "created_at": getattr(a, "created_at", None),
+        "url": getattr(a, "url", None) or "",
+    } for a in found]
+
+
 def format_articles(articles) -> str:
     out = ""
     for article in articles:

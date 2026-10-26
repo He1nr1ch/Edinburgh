@@ -13,9 +13,13 @@ RUN pip install --no-cache-dir .
 FROM python:3.13-slim
 
 # TRADINGAGENTS_IN_DOCKER lets an update notice name the rebuild command.
+# TZ pins the container clock to ET: the worker dates its daily log and the
+# close-of-day summary by local time, and in UTC anything after 8 PM ET is
+# already tomorrow.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    TRADINGAGENTS_IN_DOCKER=1
+    TRADINGAGENTS_IN_DOCKER=1 \
+    TZ=America/New_York
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"

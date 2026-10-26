@@ -109,6 +109,39 @@ The store is a SQLAlchemy URL (`TRADINGAGENTS_FEEDBACK_DB_URL`): SQLite under
 markdown memory log still writes the per-decision reflections; the store keeps
 each lesson with its outcome.
 
+## Sizing and the daily worker
+
+`tradingagents size <run IDs> --date YYYY-MM-DD` turns a list run's calls into
+a long/short book in whole shares (`--equity`, `--gross`, `--cap`), weighted by
+each call's Risk Manager ceiling, and prices a SPY call hedge for a net-short
+book: the weekly at-the-money call unless the monthly costs less than
+`hedge_monthly_ratio` (2.1) times it. `--record-hedge` records the calls as
+bought, so later runs do not hedge again until they expire.
+
+`tradingagents worker` watches the Alpaca account's equity positions every
+market day and sleeps in between. Each pass reads the news since the last one,
+has the model judge it for the position as held, and acts by fixed rules:
+adverse, unexpected news exits (high) or halves (medium) a position; urgent,
+unexpected good news adds a quarter, up to `worker_position_cap_pct`. A close or
+trim first cancels the symbol's waiting orders. It trades a paper account only,
+unless `worker_allow_live` is on; `--dry-run` sends nothing, `--once` makes one
+pass. Alerts go by email when `TRADINGAGENTS_SMTP_USER` and
+`TRADINGAGENTS_SMTP_PASSWORD` are set (for Gmail, an app password).
+
+It is deployed to Colossus as an always-on container, the same way as Dublin:
+`./deploy.sh` builds the image, pushes it to Docker Hub and, over SSH, pulls
+and restarts `edinburgh-worker` on Colossus with `--env-file ~/edinburgh/.env`,
+host networking (PAIR answers only on each machine's own loopback) and
+`~/edinburgh/data` mounted as the worker's data folder. It refuses to deploy
+uncommitted work, so the image tag matches GitHub. Provision the env once with
+`scp .env heinrich@192.168.0.98:edinburgh/.env`, with `OLLAMA_BASE_URL` set to
+PAIR's proxy on Colossus (`http://127.0.0.1:11434`).
+
+To run it on this machine instead, `docker compose --profile worker up -d worker`
+does the same from the compose file; set `TRADINGAGENTS_DATA_DIR` in `.env` to
+the full path of `~/.tradingagents` (Compose does not expand `~`) so the container
+shares its state, logs and hedge record with runs on the host.
+
 ## LLM providers
 
 `ollama` (local or LAN, no key), `anthropic`, `openai`, or any OpenAI-compatible

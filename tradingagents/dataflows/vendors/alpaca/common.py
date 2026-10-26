@@ -71,6 +71,14 @@ def news_client():
     return NewsClient(key, secret)
 
 
+@functools.lru_cache(maxsize=1)
+def option_client():
+    from alpaca.data.historical.option import OptionHistoricalDataClient
+
+    key, secret = credentials()
+    return OptionHistoricalDataClient(key, secret)
+
+
 @functools.lru_cache(maxsize=2)
 def trading_client(paper: bool):
     from alpaca.trading.client import TradingClient

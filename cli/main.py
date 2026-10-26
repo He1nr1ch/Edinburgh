@@ -175,5 +175,137 @@ def scorecard(
                       + ", ".join(f"{p['ticker']} {p['trade_date']}" for p in pending))
 
 
+@app.command()
+def size(
+    run_ids: list[str] = typer.Argument(..., help="Backtest run IDs to size together, e.g. sp100_20261023_t0_a sp100_20261023_t0_b"),
+    date: str = typer.Option(..., "--date", help="The analysis date whose calls to size, YYYY-MM-DD"),
+    equity: float = typer.Option(100_000, "--equity", help="Portfolio equity to size against"),
+    gross: float = typer.Option(75.0, "--gross", help="Target gross exposure, longs plus shorts, as % of equity"),
+    cap: float = typer.Option(10.0, "--cap", help="Most any one position may be, as % of equity"),
+    hedge: bool = typer.Option(True, "--hedge/--no-hedge", help="Price SPY calls to cover a net-short book"),
+    record_hedge: bool = typer.Option(False, "--record-hedge", help="Record the calls this plan buys as bought, so later runs do not hedge again"),
+):
+    """Size a list run's calls into a long/short book: shares and dollars per ticker, and its hedge."""
+    import csv
+    from pathlib import Path
+
+    from rich.table import Table
+
+    from tradingagents.sizing import last_closes, load_calls, size_book
+
+    root = Path(DEFAULT_CONFIG["results_dir"]) / "backtest"
+    calls = [c for run_id in run_ids for c in load_calls(root / run_id, date)]
+    if not calls:
+        console.print(f"[red]No calls for {date} under {', '.join(run_ids)} in {root}[/red]")
+        raise typer.Exit(code=1)
+    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap)
+
+    table = Table(title=f"Book for {equity:,.0f} on {date}")
+    for column in ("Ticker", "Side", "Rating", "Risk", "Ceiling", "Weight", "Price", "Shares", "Value"):
+        table.add_column(column, justify="right" if column not in ("Ticker", "Side", "Rating", "Risk") else "left")
+    for o in book.orders:
+        table.add_row(o.ticker, o.side, o.rating, o.risk_level or "", f"{o.ceiling_pct:g}%",
+                      f"{o.weight_pct:+.2f}%", f"{o.price:,.2f}", f"{o.shares:+,d}", f"{o.value:,.0f}")
+    console.print(table)
+    console.print(
+        f"Long {book.long_value:,.0f} · short {book.short_value:,.0f} · "
+        f"gross {book.gross_pct:.1f}% (target {gross:g}%) · net {book.net_pct:+.1f}% · "
+        f"cash after longs {book.cash:,.0f}"
+    )
+    if book.gross_pct < gross - 1:
+        at_cap = all(abs(o.weight_pct) >= cap - 1e-9 for o in book.orders)
+        why = (f"every position is at the {cap:g}% cap; more calls or a higher --cap would fill it"
+               if at_cap else "whole shares of these prices do not divide it more finely")
+        console.print(f"[yellow]Short of the {gross:g}% target: {why}.[/yellow]")
+    for ticker, why in book.skipped:
+        console.print(f"[dim]no position: {ticker}: {why}[/dim]")
+
+    plan = None
+    if hedge:
+        from tradingagents.hedge import hedge_book, open_hedges
+        from tradingagents.hedge import record_hedge as record
+
+        ledger = Path(DEFAULT_CONFIG["hedge_ledger_path"])
+        plan = hedge_book(book, date, monthly_ratio=DEFAULT_CONFIG["hedge_monthly_ratio"],
+                          held=open_hedges(ledger, date))
+        console.print(f"\n[bold]Hedge[/bold] · beta-weighted exposure {plan.exposure:+,.0f} · SPY {plan.spy_price:,.2f}")
+        for label, q in (("weekly", plan.weekly), ("monthly", plan.monthly)):
+            if q:
+                console.print(f"  {label:<8} {q.symbol}  strike {q.strike:g}  expires {q.expiry}  "
+                              f"bid {q.bid:.2f} ask {q.ask:.2f}  = {q.contract_cost:,.0f} a contract")
+        if plan.contracts:
+            console.print(f"  [green]Buy {plan.contracts} {plan.quote.symbol} ({plan.choice}) for "
+                          f"{plan.cost:,.0f}[/green]: {plan.reason}; covers {plan.coverage:.0%} of the exposure")
+            stamp = plan.quote.quoted_at
+            if stamp is not None and stamp.date().isoformat() != date:
+                console.print(f"  [yellow]Quoted {stamp:%Y-%m-%d %H:%M} UTC, not on {date}: "
+                              "option prices are the latest Alpaca has.[/yellow]")
+            if record_hedge:
+                record(ledger, plan, date)
+                console.print(f"  Recorded as bought in {ledger}; later runs will not hedge again until it expires.")
+            else:
+                console.print("  Once bought, run again with --record-hedge so later runs do not buy more.")
+        else:
+            console.print(f"  No new calls: {plan.reason}"
+                          + (f"; they cover {plan.coverage:.0%} of the exposure" if plan.held else "") + ".")
+            if plan.held and plan.coverage < 1:
+                console.print("  [yellow]The calls held cover less than the exposure now; "
+                              "none are added while they are open.[/yellow]")
+
+    out = root / "sizing" / f"{'+'.join(run_ids)}_{date}.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value"])
+        for o in book.orders:
+            writer.writerow([o.ticker, o.side, o.rating, o.risk_level or "", o.ceiling_pct,
+                             round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2)])
+        if plan and plan.contracts:
+            writer.writerow([plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
+                             plan.quote.ask, plan.contracts, round(plan.cost, 2)])
+    console.print(f"Orders saved to {out}")
+
+
+@app.command()
+def worker(
+    once: bool = typer.Option(False, "--once", help="One pass now, then stop, market open or not"),
+    today: bool = typer.Option(False, "--today", help="Watch until today's close, then stop, instead of running for good"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Judge the news and log the orders it would send, without sending them"),
+    interval: int = typer.Option(None, "--interval", help="Minutes between passes (default worker_interval_minutes)"),
+):
+    """Watch the held positions every market day: read their news and act within the guardrails.
+
+    Runs for good, asleep outside market hours: the process for a container.
+    """
+    import logging
+    from tradingagents.dataflows.vendors.alpaca.common import paper_trading
+    from tradingagents.llm_clients.factory import create_tier_client
+    from tradingagents.worker.notify import email_configured
+    from tradingagents.worker.runner import default_duties, run_day, run_forever, run_pass
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    config = DEFAULT_CONFIG
+    llm = create_tier_client(config, "quick").get_llm()
+    mode = "paper" if paper_trading() else "LIVE"
+    trading = ("off" if not config["worker_trading_enabled"] else
+               "dry run" if dry_run else
+               "on" if mode == "paper" or config["worker_allow_live"] else "blocked (live account)")
+    console.print(f"Worker on the {mode} account · trading {trading} · "
+                  f"email {'on' if email_configured() else 'off (set TRADINGAGENTS_SMTP_USER and _PASSWORD)'}")
+    if once:
+        findings = run_pass(config, llm, default_duties(), dry_run)
+        for f in findings:
+            order = f" -> {f.action.kind} {f.action.side} {f.action.qty} [{f.outcome}]" if f.action else ""
+            console.print(f"[{f.severity}] {f.symbol}: {f.headline}{order}")
+        if not findings:
+            console.print("Nothing new about the positions watched.")
+        return
+    minutes = interval or config["worker_interval_minutes"]
+    if today:
+        run_day(config, llm, default_duties(), minutes, dry_run)
+    else:
+        run_forever(config, llm, default_duties(), minutes, dry_run)
+
+
 if __name__ == "__main__":
     app()
