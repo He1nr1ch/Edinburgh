@@ -92,11 +92,24 @@ INDICATOR_DESCRIPTIONS: dict[str, str] = {
 }
 
 # A fixed, common indicator set so the snapshot is the same shape every run.
+# VWMA and MFI are the volume-based pair: the model rarely asks for them, so
+# without them here no volume signal reached the decision.
 SNAPSHOT_INDICATORS: tuple[str, ...] = (
     "close_10_ema", "close_50_sma", "close_200_sma",
     "rsi", "boll", "boll_ub", "boll_lb",
     "macd", "macds", "macdh", "atr",
+    "vwma", "mfi",
 )
+
+
+# stockstats gives MFI as a 0-1 fraction; it is read on 0-100, and the
+# analyst's prompt states its 80/20 thresholds on that scale.
+_SCALE = {"mfi": 100.0}
+
+
+def _computed(df: pd.DataFrame, indicator: str) -> pd.Series:
+    """``indicator`` on every row of a stockstats frame, on its usual scale."""
+    return df[indicator] * _SCALE.get(indicator, 1.0)
 
 
 def indicator_by_date(data: pd.DataFrame, indicator: str) -> dict[str, str]:
@@ -107,10 +120,10 @@ def indicator_by_date(data: pd.DataFrame, indicator: str) -> dict[str, str]:
         )
     df = wrap(data.copy())
     df["Date"] = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
-    df[indicator]  # triggers the stockstats calculation
+    values = _computed(df, indicator)
     return {
-        row["Date"]: ("N/A" if pd.isna(row[indicator]) else str(row[indicator]))
-        for _, row in df.iterrows()
+        date: ("N/A" if pd.isna(value) else str(value))
+        for date, value in zip(df["Date"], values)
     }
 
 
@@ -177,8 +190,7 @@ def render_snapshot(
     indicator_values: dict[str, str] = {}
     for name in tuple(indicators or SNAPSHOT_INDICATORS):
         try:
-            stock_df[name]
-            indicator_values[name] = _fmt(stock_df.iloc[-1][name])
+            indicator_values[name] = _fmt(_computed(stock_df, name).iloc[-1])
         except Exception as exc:  # noqa: BLE001 — one bad indicator shouldn't sink the snapshot
             indicator_values[name] = f"N/A ({type(exc).__name__})"
 

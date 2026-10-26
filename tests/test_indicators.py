@@ -46,6 +46,28 @@ def test_the_snapshot_uses_the_last_bar_on_or_before_the_date():
 
 
 @pytest.mark.unit
+def test_the_snapshot_carries_the_volume_indicators():
+    """VWMA and MFI are always in the snapshot, with values, so a volume signal
+    reaches the analyst whether or not it asks for one."""
+    out = indicators.render_snapshot("NVDA", _frame(), "2026-01-09")
+
+    for name in ("vwma", "mfi"):
+        row = next(line for line in out.splitlines() if line.startswith(f"| {name} |"))
+        assert "N/A" not in row, row
+
+
+@pytest.mark.unit
+def test_mfi_is_on_the_0_to_100_scale_its_thresholds_use():
+    """stockstats returns a fraction; read as is, a neutral 50 looks like an
+    extreme oversold 0.5 against the prompt's 80/20 thresholds."""
+    frame = _frame()
+    frame["Close"] = [100.0 + (i % 2) for i in range(len(frame))]   # flat, choppy: MFI near the middle
+    frame["High"], frame["Low"] = frame["Close"] + 1, frame["Close"] - 1
+    values = [float(v) for v in indicators.indicator_by_date(frame, "mfi").values() if v != "N/A"]
+    assert 20 < values[-1] < 80
+
+
+@pytest.mark.unit
 def test_a_snapshot_with_no_bar_by_the_date_is_no_data():
     with pytest.raises(NoMarketDataError):
         indicators.render_snapshot("NVDA", _frame(end="2026-01-09"), "2025-01-01")
