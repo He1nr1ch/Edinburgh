@@ -343,7 +343,7 @@ class PortfolioDecision(BaseModel):
     the rating-scale guidance.
     """
 
-    model_config = ConfigDict(json_schema_extra=_always_asked("position_size_pct", "risk_level"))
+    model_config = ConfigDict(json_schema_extra=_always_asked("position_size_pct", "risk_level", "price_target"))
 
     rating: PortfolioRating = Field(
         description=(
@@ -388,7 +388,15 @@ class PortfolioDecision(BaseModel):
     )
     price_target: float | None = Field(
         default=None,
-        description="Optional target price in the instrument's quote currency.",
+        description=(
+            "The price at which to take profit, as an absolute price in the "
+            "instrument's quote currency (e.g. 231.5), never a percentage. For a "
+            "Buy or Overweight it is above the current price; for a Sell or "
+            "Underweight, the lower price the stock is expected to reach. Ground it "
+            "in the price structure the analysts gave (resistance, support, the "
+            "Bollinger bands, the moving averages). Null only for a Hold with no "
+            "position."
+        ),
     )
     time_horizon: str | None = Field(
         default=None,

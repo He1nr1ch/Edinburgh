@@ -176,6 +176,19 @@ def scorecard(
 
 
 @app.command()
+def sp500():
+    """Refresh watchlists/sp500.txt from Wikipedia's constituent list (fails closed on a bad fetch)."""
+    from tradingagents.sp500 import WATCHLIST, refresh_sp500_watchlist
+
+    try:
+        count = refresh_sp500_watchlist()
+    except Exception as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    console.print(f"{count} symbols written to {WATCHLIST}")
+
+
+@app.command()
 def size(
     run_ids: list[str] = typer.Argument(..., help="Backtest run IDs to size together, e.g. sp100_20261023_t0_a sp100_20261023_t0_b"),
     date: str = typer.Option(..., "--date", help="The analysis date whose calls to size, YYYY-MM-DD"),
