@@ -121,3 +121,27 @@ def test_constraint_text_is_unambiguous():
     # No template braces: it is embedded in ChatPromptTemplate strings, where
     # braces would be parsed as input variables.
     assert "{" not in NO_EXTERNAL_TOOLS and "}" not in NO_EXTERNAL_TOOLS
+
+
+@pytest.mark.unit
+def test_portfolio_manager_prompt_asks_for_a_price_target_with_its_direction():
+    """A required schema field is not enough: the model follows the prompt's
+    output list, and with no target line there every target came back null."""
+    from tradingagents.agents.schemas import PortfolioDecision, PortfolioRating
+
+    captured = {}
+    llm = _capturing_llm(captured, PortfolioDecision(
+        rating=PortfolioRating.HOLD, executive_summary="x", investment_thesis="y"))
+    risk = {
+        "history": "h", "aggressive_history": "a", "conservative_history": "c",
+        "neutral_history": "n", "current_aggressive_response": "",
+        "current_conservative_response": "", "current_neutral_response": "",
+        "latest_speaker": "Neutral", "count": 1,
+    }
+    create_portfolio_manager(llm)({
+        "company_of_interest": "NVDA", "risk_debate_state": risk,
+        "investment_plan": "plan", "trader_investment_plan": "trader plan",
+    })
+    text = _prompt_text(captured["prompt"])
+    assert "- **Price Target**:" in text and "- **Time Horizon**:" in text
+    assert "above the current price for a Buy or Overweight, below it for a Sell or Underweight" in text

@@ -75,6 +75,8 @@ Ground every conclusion in specific evidence from the analysts. The risk debate 
 
 You decide the direction and the size. The size is the target position after this decision as a percentage of total portfolio equity, one number: 0 means hold nothing. Stay within Risk Management's maximum unless the thesis says why not, and name the risk stance you adopt.
 
+Set a price target as an absolute price, the level at which the position takes its profit: above the current price for a Buy or Overweight, below it for a Sell or Underweight, grounded in the levels the trader and Risk Management cite (resistance, support, the bands, the moving averages). Give the time horizon over which you expect it to be reached.
+
 ## Output
 
 Write these sections, in this order, starting with the rating on its own line:
@@ -84,6 +86,8 @@ Write these sections, in this order, starting with the rating on its own line:
 - **Risk Level**: exactly one of Aggressive / Neutral / Conservative
 - **Executive Summary**: the call and how to act on it
 - **Investment Thesis**: the evidence that decided it, and what would change it
+- **Price Target**: an absolute price, e.g. 231.5; not provided only for a Hold with no position
+- **Time Horizon**: e.g. 2-4 weeks
 
 {brevity}{NO_EXTERNAL_TOOLS}"""
 
