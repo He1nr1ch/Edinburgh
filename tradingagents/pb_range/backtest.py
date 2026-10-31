@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
-from tradingagents.pb_range.model import Params, ValueArea, four_hour_bias
+from tradingagents.pb_range.model import Params, ValueArea, four_hour_biases
 from tradingagents.pb_range.setups import RANGE, Scanner, Setup
 
 
@@ -118,8 +118,8 @@ def run(bars: pd.DataFrame, params: Params | None = None, *, equity: float = 100
     """Trade ``bars`` (15-minute, in order) from the first bar to the last."""
     p = params or Params()
     bars = bars.reset_index(drop=True)
-    scanner = Scanner(bars, p, equity=equity, value_area=value_area,
-                      bias=four_hour_bias(bars))
+    scanner = Scanner(bars, p, equity=equity, value_area=value_area)
+    biases = four_hour_biases(bars)      # what the 4-hour chart said at each bar, not at the end
     dates = pd.to_datetime(bars["Date"])
     opens, highs, lows, closes = (bars[c].to_numpy(dtype=float) for c in ("Open", "High", "Low", "Close"))
 
@@ -163,6 +163,7 @@ def run(bars: pd.DataFrame, params: Params | None = None, *, equity: float = 100
         pending = still
 
         # 3. this bar's setups and events
+        scanner.bias = biases[i]
         new = scanner.step(i)
         if position is not None:
             _trail(position, scanner, p, closes[i])

@@ -18,6 +18,7 @@ from tradingagents.pb_range import (
     Tracker,
     Zone,
     four_hour_bias,
+    four_hour_biases,
     partials,
     run as run_backtest,
     size_units,
@@ -329,6 +330,30 @@ def test_the_four_hour_bias_follows_the_blocks():
     assert four_hour_bias(make_bars(np.linspace(140, 100, 16 * 30))) == "bearish"
     assert four_hour_bias(make_bars([100, 101] * (16 * 15))) == "unclear"
     assert four_hour_bias(make_bars([100] * 20)) == "unclear"        # too few blocks to say
+
+
+@pytest.mark.unit
+def test_the_bias_at_each_bar_is_what_the_bars_so_far_said():
+    closes = list(np.linspace(100, 140, 16 * 30)) + list(np.linspace(140, 100, 16 * 30))
+    bars = make_bars(closes)
+    biases = four_hour_biases(bars)
+    assert len(biases) == len(bars)
+    for i in (15, 16 * 24 - 1, 16 * 30 - 1, 16 * 30 + 7, 16 * 45 - 1, len(bars) - 1):
+        assert biases[i] == four_hour_bias(bars.iloc[: i + 1])
+    assert biases[16 * 30 - 1] == "bullish" and biases[-1] == "bearish"
+
+
+@pytest.mark.unit
+def test_a_backtest_trade_carries_the_bias_of_its_own_time():
+    # The window ends bearish, but the trade near its start must not know that.
+    dip_to_fill = 111.1 - WICK + 0.2
+    to_target = list(np.linspace(112, 112 + WICK + 12 + 2 * WICK + 1, 8))
+    decline = list(np.linspace(to_target[-1], 60, 16 * 40))
+    bars = p_scenario([110.2, 111.5, dip_to_fill] + to_target + decline)
+    assert four_hour_bias(bars) == "bearish"
+    result = run_backtest(bars, Params(max_losses_per_day=99))
+    early = [t for t in result.trades if t.setup.bar < 100]
+    assert early and all(t.setup.bias == "unclear" for t in early)
 
 
 @pytest.mark.unit

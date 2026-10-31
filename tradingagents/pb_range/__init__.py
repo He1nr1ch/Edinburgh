@@ -12,6 +12,7 @@ from tradingagents.pb_range.model import (
     ValueArea,
     Zone,
     four_hour_bias,
+    four_hour_biases,
     value_area,
     week_of,
 )
@@ -28,6 +29,6 @@ from tradingagents.pb_range.setups import (
 
 __all__ = [
     "BREAKOUT", "FAKE_BREAKOUT", "RANGE", "Event", "Params", "Result", "Scanner", "Setup",
-    "Tracker", "Trade", "ValueArea", "Zone", "four_hour_bias", "partials", "run", "size_units",
+    "Tracker", "Trade", "ValueArea", "Zone", "four_hour_bias", "four_hour_biases", "partials", "run", "size_units",
     "target_levels", "value_area", "week_of",
 ]

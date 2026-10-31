@@ -349,16 +349,32 @@ def four_hour_bias(bars: pd.DataFrame, bars_per_block: int = 16, ema: int = 20) 
     falling one, unclear otherwise. Nill looks for counter trades when a push
     has stopped and the picture is unclear.
     """
+    return four_hour_biases(bars, bars_per_block, ema)[-1] if len(bars) else "unclear"
+
+
+def four_hour_biases(bars: pd.DataFrame, bars_per_block: int = 16, ema: int = 20) -> list[str]:
+    """The bias as it stood at each bar, from the bars up to and including it.
+
+    The EMA is recursive, so a prefix of the blocks gives the same averages as
+    the whole series; the bias only changes when a block completes, and a bar
+    carries the bias of the last block that closed at or before it. A
+    backtest reads this rather than the final bias, which would look ahead.
+    """
     closes = bars["Close"].to_numpy(dtype=float)
     blocks = closes[bars_per_block - 1::bars_per_block]
-    if len(blocks) < ema + 4:
-        return "unclear"
     avg = pd.Series(blocks).ewm(span=ema, adjust=False).mean().to_numpy()
-    if blocks[-1] > avg[-1] and avg[-1] > avg[-4]:
-        return "bullish"
-    if blocks[-1] < avg[-1] and avg[-1] < avg[-4]:
-        return "bearish"
-    return "unclear"
+    per_block = []
+    for k in range(len(blocks)):
+        if k + 1 < ema + 4:
+            per_block.append("unclear")
+        elif blocks[k] > avg[k] and avg[k] > avg[k - 3]:
+            per_block.append("bullish")
+        elif blocks[k] < avg[k] and avg[k] < avg[k - 3]:
+            per_block.append("bearish")
+        else:
+            per_block.append("unclear")
+    return [per_block[(i + 1) // bars_per_block - 1] if i + 1 >= bars_per_block else "unclear"
+            for i in range(len(closes))]
 
 
 @dataclass(frozen=True)
