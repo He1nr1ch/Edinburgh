@@ -153,7 +153,7 @@ bars, no model, and lives in `tradingagents/pb_range/`:
   move down followed by one. A range is valid after **three touches** of its
   edges and at least half a session of bars. The impulse is a move of 3 ATRs
   within 16 bars that gives back little; the range is the box of the bars
-  after it, at most half the impulse tall; a close outside ends it. Nill does
+  after it, at most 35% of the impulse tall; a close outside ends it. Nill does
   not share his drawing rules, so these are the module's own, all in `Params`.
 - **Three trades.** The *range trade*, a limit at one edge of a big range for
   the other, in and out, not opened when the range completes in the evening.
@@ -161,6 +161,8 @@ bars, no model, and lives in `tradingagents/pb_range/`:
   close beyond the breakout bar; best on small ranges after a big move. The
   *fake breakout*: a close outside and the next bar back inside, bought at the
   edge with the stop just beyond the fake low, held past the top of the range.
+  By default only in the direction of the impulse (a long on a P, a short on a
+  B), Nill's favourite; `fake_breakout_against_impulse` turns the other on.
 - **Stop first, then size.** The stop leans on structure and is never widened.
   The size is what risks `risk_pct` of equity to it, in lots of three so the
   partials come out even, and never more than the account. Targets run from
@@ -174,9 +176,27 @@ bars, no model, and lives in `tradingagents/pb_range/`:
 The command prints the zones, the setups of the last session with entry, stop,
 targets, R:R and units, and with `--backtest` trades every setup in the window
 by the rules (limits, stops first, a third off at each target, break-even
-after the first, the stop trailed under each new range) and reports the R
-multiples. Intraday bars come from Alpaca; the free IEX feed carries little
-volume, so the value area is only as good as the feed.
+after the first, the stop trailed under each new range, range trades closed
+with the session) and reports the R multiples. Intraday bars come from Alpaca;
+the free IEX feed carries little volume, so the value area is only as good as
+the feed.
+
+**What four months of the S&P 100 said.** The defaults were checked on
+15-minute bars of the 102 names in `watchlists/sp100.txt` from July to October
+2026, split at 1 September, one parameter at a time and then in combination
+(fills at the limit, no costs). Two changes held in every period and
+combination and are now the defaults: a range cap of 35% of the impulse
+instead of 50%, and fake breakouts with the impulse only. Two defects the
+sweep exposed were fixed: a range order filled in the last hour and held
+overnight was the worst trade of every run, so range orders no longer fill in
+the evening and a range trade still open at the last bar is closed there.
+With those defaults the sweep made +56R on July–August and −5R on
+September–October over 314 trades, winning 20% of them; five trades supplied
+all of the profit and without them it lost 45R. Read that as a method with a
+small hit rate and rare ten-to-forty R winners whose edge, if any, this sample
+cannot confirm, not as a system to size up. The breakout with confirmation
+fired 27 times and lost; the range trade was flat; the against-impulse fake
+breakout lost in every cut.
 
 ## LLM providers
 

@@ -9,7 +9,9 @@ third at each target when the position divides in three; after the first, the
 stop moves to the entry. A newly validated range in the trade's direction
 trails the stop under it (over it for a short); the stop is never moved the
 other way. After ``max_losses_per_day`` losses in a row, no new orders that
-day. One position at a time.
+day. A range order does not fill in the evening and a range trade still open
+at the session's last bar is closed there, so none is held overnight unseen.
+One position at a time.
 
 Fills at the limit price with no slippage or commission: a test of whether the
 rules have an edge on the bars, not a broker statement.
@@ -131,9 +133,13 @@ def run(bars: pd.DataFrame, params: Params | None = None, *, equity: float = 100
         if day != when.date():
             day, losses_today = when.date(), 0
 
-        # 1. the open position against this bar
+        # 1. the open position against this bar; a range trade ends with the session
         if position is not None:
             _manage(position, when, opens[i], highs[i], lows[i])
+            last_of_day = i == len(bars) - 1 or dates[i + 1].date() != when.date()
+            if (not position.closed and position.setup.kind == RANGE
+                    and p.evening_hour is not None and last_of_day):
+                position.fills.append(Fill(when, float(closes[i]), position.open_units, "close of day"))
             if position.closed:
                 losses_today = losses_today + 1 if position.r_multiple <= 0 else 0
                 position = None
@@ -144,7 +150,7 @@ def run(bars: pd.DataFrame, params: Params | None = None, *, equity: float = 100
             expired = (not s.zone.live) if s.kind == RANGE else (i - s.bar > fill_window)
             if expired:
                 continue
-            fill = None if position is not None else _limit_fill(s, opens[i], highs[i], lows[i])
+            fill = None if position is not None else _fill(s, p, when, opens[i], highs[i], lows[i])
             if fill is None:
                 still.append(s)
                 continue
@@ -166,6 +172,19 @@ def run(bars: pd.DataFrame, params: Params | None = None, *, equity: float = 100
     if position is not None and not position.closed:
         position.fills.append(Fill(dates.iloc[-1], float(closes[-1]), position.open_units, "end"))
     return Result(trades, scanner.setups, scanner)
+
+
+def _fill(s: Setup, p: Params, when: pd.Timestamp, open_: float, high: float, low: float) -> float | None:
+    """The fill price on this bar, or None: a market order takes the open, a limit waits for its price.
+
+    A range order does not fill in the evening: a range trade is not held
+    through the night unseen, and the order waits for the next session.
+    """
+    if s.kind == RANGE and p.evening_hour is not None and when.hour >= p.evening_hour:
+        return None
+    if p.entry == "close" and s.kind != RANGE:
+        return open_
+    return _limit_fill(s, open_, high, low)
 
 
 def _limit_fill(s: Setup, open_: float, high: float, low: float) -> float | None:

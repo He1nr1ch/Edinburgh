@@ -226,20 +226,27 @@ class Scanner:
         # The stop is below the range for a long, above it for a short: the
         # structure the breakout left. Small ranges keep it close.
         stop = z.low - buffer if side == "long" else z.high + buffer
-        entry = b.extreme    # a limit at the level the confirming bar closed beyond
+        # A limit at the level the confirming bar closed beyond, or that bar's close.
+        entry = b.extreme if self.p.entry == "edge" else self.tracker.close[i]
         notes = ("small range: close stop",) if z.height < self.p.big_range_atr * z.atr else \
                 ("big range: wide stop",)
         return self._setup(BREAKOUT, side, i, z, entry, stop, partials(target_levels(z, side, entry, self._prior(z))), notes)
 
     def _fake_breakout(self, event: Event, i: int) -> Setup | None:
         z, buffer = event.zone, self.p.stop_buffer_atr * event.zone.atr
+        at_edge = self.p.entry == "edge"
+        with_impulse = (event.direction == "down") == (z.kind == "P")
+        if not with_impulse and not self.p.fake_breakout_against_impulse:
+            return None
         if event.direction == "down":
-            side, entry, stop = "long", z.low, event.extreme - buffer
+            side, stop = "long", event.extreme - buffer
+            entry = z.low if at_edge else self.tracker.close[i]
             notes = ("sellers failed; hold past the top",)
         else:
             if not self.p.fake_breakout_shorts:
                 return None
-            side, entry, stop = "short", z.high, event.extreme + buffer
+            side, stop = "short", event.extreme + buffer
+            entry = z.high if at_edge else self.tracker.close[i]
             notes = ("buyers failed; the less preferred side",)
         return self._setup(FAKE_BREAKOUT, side, i, z, entry, stop, partials(target_levels(z, side, entry, self._prior(z))), notes)
 

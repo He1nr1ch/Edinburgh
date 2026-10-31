@@ -114,8 +114,9 @@ def test_a_break_that_does_not_come_back_ends_the_zone_for_good():
 
 @pytest.mark.unit
 def test_a_range_too_tall_for_its_impulse_is_not_one():
-    bars = make_bars(CHOP + IMPULSE_UP + [112, 104, 112, 104] * 4)    # swings of eight after a move of twelve
+    bars = make_bars(CHOP + IMPULSE_UP + [112, 111, 106, 107] * 4)    # swings of six after a move of twelve
     assert Tracker(bars).run() == []
+    assert Tracker(bars, Params(range_max_fraction=0.7)).run() != []
 
 
 # -- the three trades ------------------------------------------------------------
@@ -139,10 +140,13 @@ def test_a_fake_breakdown_and_reclaim_is_a_long_with_the_stop_under_the_fake_low
 
 
 @pytest.mark.unit
-def test_the_short_side_of_the_fake_breakout_can_be_turned_off():
-    bars = p_scenario([113.0, 111.5])      # above the range, then back inside
-    assert any(s.kind == FAKE_BREAKOUT and s.side == "short" for s in Scanner(bars).run())
-    assert not any(s.kind == FAKE_BREAKOUT for s in Scanner(bars, Params(fake_breakout_shorts=False)).run())
+def test_a_fake_breakout_against_its_impulse_is_taken_only_when_asked():
+    bars = p_scenario([113.0, 111.5])      # above a P, then back inside: a short against the impulse
+    assert not any(s.kind == FAKE_BREAKOUT for s in Scanner(bars).run())
+    against = Params(fake_breakout_against_impulse=True)
+    assert any(s.kind == FAKE_BREAKOUT and s.side == "short" for s in Scanner(bars, against).run())
+    no_shorts = Params(fake_breakout_against_impulse=True, fake_breakout_shorts=False)
+    assert not any(s.kind == FAKE_BREAKOUT for s in Scanner(bars, no_shorts).run())
 
 
 @pytest.mark.unit
@@ -274,6 +278,30 @@ def test_the_backtest_fills_the_reclaim_limit_and_runs_it_to_the_target():
     assert [f.reason for f in t.fills] == ["target 1"]
     assert t.r_multiple > Params.min_rr
     assert result.stats()["win_rate"] == 1.0
+
+
+@pytest.mark.unit
+def test_a_range_order_does_not_fill_in_the_evening():
+    """The four worst trades of the S&P 100 sweep were range shorts filled in the
+    last hour and gapped against overnight, to -11R."""
+    bars = make_bars(CHOP + IMPULSE_UP + [111.9, 110.5, 109.1, 110.5] * 4 + [109.1 - WICK + 0.2] * 10)
+    # The range is valid at 10:45; every bar that reaches its low comes after 11:00.
+    evening = run_backtest(bars, Params(evening_hour=11, max_losses_per_day=99))
+    assert evening.trades == []
+    anytime = run_backtest(bars, Params(evening_hour=None, max_losses_per_day=99))
+    assert [t.setup.kind for t in anytime.trades] == [RANGE]
+
+
+@pytest.mark.unit
+def test_a_range_trade_still_open_at_the_close_is_closed_there():
+    low = 109.1 - WICK
+    bars = make_bars(CHOP + IMPULSE_UP + [111.9, 110.5, 109.1, 110.5] * 4 + [low + 0.2] * 40)   # drifts, never reaches an edge
+    result = run_backtest(bars, Params(max_losses_per_day=99))
+
+    assert len(result.trades) == 1
+    t = result.trades[0]
+    assert t.setup.kind == RANGE and [f.reason for f in t.fills] == ["close of day"]
+    assert t.fills[0].at.strftime("%H:%M") == "15:45" and t.fills[0].at.date() == t.entry_at.date()
 
 
 @pytest.mark.unit

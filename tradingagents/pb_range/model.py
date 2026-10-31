@@ -21,7 +21,9 @@ drawing rule here is this module's own, stated in :class:`Params`: an impulse
 is a move of ``impulse_atr`` ATRs within ``impulse_max_bars`` bars that gives
 back little on the way; the range is the box of the bars after it, while the
 box stays under ``range_max_fraction`` of the impulse; a close outside the box
-ends it. The tracker is incremental, one bar at a time, so a scan and a
+ends it. The defaults were checked on four months of the S&P 100 (July to
+October 2026, split in two): a cap of 0.35 lost less than 0.5 in every period
+and combination, and the fake breakout paid only with its impulse. The tracker is incremental, one bar at a time, so a scan and a
 backtest see exactly what was known at each bar.
 """
 
@@ -49,7 +51,7 @@ class Params:
     # at least this many bars (half a session) and this many ATRs tall before it
     # can be valid, and valid on this many touches of its edges. A bar within
     # ``touch_tolerance`` of the range's height of an edge touches it.
-    range_max_fraction: float = 0.5
+    range_max_fraction: float = 0.35
     range_min_bars: int = 13
     range_min_atr: float = 0.3
     touches_to_validate: int = 3
@@ -87,6 +89,16 @@ class Params:
     # Whether the short side of the fake breakout is traded at all. Nill trades
     # it much less: when there is power to the upside, more usually comes.
     fake_breakout_shorts: bool = True
+    # Whether a fake breakout is traded against its impulse too: a short on a P
+    # after a failed break above, a long on a B after a failed break below.
+    # Nill takes those, less often; the one with the impulse is the favourite,
+    # and the only one that paid in the S&P 100 sweep (see the README).
+    fake_breakout_against_impulse: bool = False
+    # Where a breakout or fake breakout is entered: "edge", a limit back at the
+    # level the setup completed on (the range's edge, the breakout bar's
+    # extreme), as Nill does; or "close", at the close of the bar that
+    # completed it, which fills every setup but pays a worse price.
+    entry: str = "edge"
 
 
 @dataclass
