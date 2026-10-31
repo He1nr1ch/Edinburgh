@@ -279,6 +279,102 @@ def size(
     console.print(f"Orders saved to {out}")
 
 
+@app.command(name="pb-range")
+def pb_range(
+    ticker: str = typer.Argument(..., help="Ticker, e.g. NVDA or BTC/USD"),
+    date: str = typer.Option(None, "--date", help="Last session to read, YYYY-MM-DD (default today)"),
+    days: int = typer.Option(10, "--days", help="Calendar days of 15-minute bars to read before it"),
+    equity: float = typer.Option(100_000, "--equity", help="Equity the positions are sized against"),
+    risk: float = typer.Option(1.0, "--risk", help="Share of equity risked between entry and stop, in %"),
+    backtest: bool = typer.Option(False, "--backtest", help="Also trade every setup in the window by the rules and report"),
+):
+    """Patrick Nill's P and B ranges on the 15-minute chart: the zones, the week's value area, the 4-hour bias, and the setups.
+
+    An impulse then a range, valid on its third touch; traded edge to edge, on a
+    confirmed breakout, or on a fake breakout that closes back inside. The stop
+    comes from structure and the size from the stop.
+    """
+    from datetime import datetime, timedelta
+
+    from rich.table import Table
+
+    from tradingagents.dataflows.errors import NoMarketDataError, VendorError
+    from tradingagents.dataflows.symbols import is_crypto_symbol, normalize_symbol
+    from tradingagents.pb_range import (
+        Params,
+        Scanner,
+        four_hour_bias,
+        run as run_pb,
+        value_area,
+        week_of,
+    )
+    from tradingagents.pb_range.data import intraday_bars
+
+    symbol = normalize_symbol(ticker)
+    end = date or datetime.now().strftime("%Y-%m-%d")
+    try:
+        start = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=days)).strftime("%Y-%m-%d")
+    except ValueError:
+        console.print("[red]--date must be YYYY-MM-DD[/red]")
+        raise typer.Exit(code=1) from None
+    params = Params(risk_pct=risk, evening_hour=None if is_crypto_symbol(symbol) else Params.evening_hour)
+    try:
+        bars = intraday_bars(symbol, start, end)
+    except (NoMarketDataError, VendorError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+
+    last = bars["Date"].iloc[-1]
+    area = value_area(week_of(bars, last), params.value_area)
+    bias = four_hour_bias(bars)
+    scanner = Scanner(bars, params, equity=equity, value_area=area, bias=bias)
+    scanner.run()
+    console.print(f"[bold]{symbol}[/bold] · {len(bars)} fifteen-minute bars {bars['Date'].iloc[0]:%Y-%m-%d %H:%M} to {last:%Y-%m-%d %H:%M} New York "
+                  f"· 4-hour bias {bias}"
+                  + (f" · week's value area {area.low:,.2f} / POC {area.poc:,.2f} / {area.high:,.2f}" if area else ""))
+
+    zones = Table(title="P and B ranges")
+    for column in ("Kind", "From", "Status", "Low", "High", "Height", "Touches", "Origin", "Impulse"):
+        zones.add_column(column, justify="left" if column in ("Kind", "From", "Status") else "right")
+    for z in scanner.zones:
+        zones.add_row(z.kind, f"{bars['Date'].iloc[z.start]:%m-%d %H:%M}", z.status() + (f", {z.reclaims} fake" if z.reclaims else ""),
+                      f"{z.low:,.2f}", f"{z.high:,.2f}", f"{z.height / z.atr:.1f} ATR",
+                      f"{z.touches_top}+{z.touches_bottom}", f"{z.origin:,.2f}", f"{z.impulse:,.2f}")
+    console.print(zones if scanner.zones else "No impulse followed by a range in these bars.")
+
+    session = last.normalize()
+    recent = [s for s in scanner.setups if s.at >= session] or scanner.setups[-3:]
+    if recent:
+        table = Table(title="Setups" + (" (last session)" if recent[0].at >= session else " (latest)"))
+        for column in ("When", "Trade", "Side", "Entry", "Stop", "Targets", "R:R", "Units", "Risk", "Notes"):
+            table.add_column(column, justify="left" if column in ("When", "Trade", "Side", "Notes") else "right")
+        for s in recent:
+            table.add_row(f"{s.at:%m-%d %H:%M}", s.kind, s.side, f"{s.entry:,.2f}", f"{s.stop:,.2f}",
+                          " / ".join(f"{t:,.2f}" for t in s.targets), f"{s.rr:.1f}", f"{s.units:,d}",
+                          f"{s.risk:,.0f}", "; ".join(s.notes))
+        console.print(table)
+    else:
+        console.print("No setup: no valid range has offered an edge, a confirmed breakout or a fake breakout.")
+
+    if backtest:
+        result = run_pb(bars, params, equity=equity, value_area=area)
+        stats = result.stats()
+        if not stats["trades"]:
+            console.print("Backtest: no order filled in this window.")
+            return
+        trades = Table(title="Backtest: every setup traded by the rules")
+        for column in ("Entered", "Trade", "Side", "Entry", "Units", "Exits", "P&L", "R"):
+            trades.add_column(column, justify="left" if column in ("Entered", "Trade", "Side", "Exits") else "right")
+        for t in result.closed:
+            exits = ", ".join(f"{f.reason} {f.price:,.2f}" for f in t.fills)
+            trades.add_row(f"{t.entry_at:%m-%d %H:%M}", t.setup.kind, t.side, f"{t.entry:,.2f}", f"{t.units:,d}",
+                           exits, f"{t.pnl:+,.0f}", f"{t.r_multiple:+.2f}")
+        console.print(trades)
+        console.print(f"{stats['trades']} trades · win rate {stats['win_rate']:.0%} · {stats['total_r']:+.1f}R in all, "
+                      f"{stats['mean_r']:+.2f}R each · profit factor {stats['profit_factor']:.2f} · "
+                      f"P&L {stats['pnl']:+,.0f} on {equity:,.0f} · worst run {stats['worst_losing_streak']} losses")
+
+
 @app.command()
 def worker(
     once: bool = typer.Option(False, "--once", help="One pass now, then stop, market open or not"),

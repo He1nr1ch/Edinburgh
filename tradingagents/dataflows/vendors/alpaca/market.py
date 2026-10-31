@@ -1,4 +1,4 @@
-"""Alpaca daily bars: raw OHLCV, technical indicators, closes for settlement, the verified snapshot."""
+"""Alpaca bars: daily OHLCV, technical indicators, closes for settlement, the verified snapshot, intraday bars."""
 
 from __future__ import annotations
 
@@ -165,3 +165,38 @@ def get_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
         return pd.Series(dtype=float)
     frame = frame[(frame["Date"] >= pd.to_datetime(start_date)) & (frame["Date"] < pd.to_datetime(end_date))]
     return pd.Series(frame["Close"].to_numpy(dtype=float), index=pd.DatetimeIndex(frame["Date"]), name="Close")
+
+
+def intraday_bars(symbol: str, start: str, end: str, minutes: int = 15) -> pd.DataFrame:
+    """``minutes``-minute bars from ``start`` through ``end`` (dates, inclusive), stamped in New York time.
+
+    Every bar Alpaca has, extended hours included; the caller keeps the session
+    it wants. Raises NoMarketDataError when there are none.
+    """
+    from alpaca.data.enums import Adjustment
+    from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
+    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+
+    canonical = normalize_symbol(symbol)
+    timeframe = TimeFrame(minutes, TimeFrameUnit.Minute)
+    start_utc = pd.Timestamp(datetime.strptime(start, "%Y-%m-%d"), tz=MARKET_TZ).tz_convert("UTC").to_pydatetime()
+    end_day = datetime.strptime(end, "%Y-%m-%d") + pd.Timedelta(days=1)
+    end_utc = pd.Timestamp(end_day, tz=MARKET_TZ).tz_convert("UTC").to_pydatetime()
+    what = f"{minutes}-minute bars for {canonical}"
+    if is_crypto_symbol(canonical):
+        request = CryptoBarsRequest(symbol_or_symbols=canonical, timeframe=timeframe, start=start_utc, end=end_utc)
+        bars = common.call(lambda: common.crypto_client().get_crypto_bars(request), what)
+    else:
+        request = StockBarsRequest(symbol_or_symbols=canonical, timeframe=timeframe, start=start_utc, end=end_utc,
+                                   adjustment=Adjustment.ALL, feed=common.data_feed())
+        bars = common.call(lambda: common.stock_client().get_stock_bars(request), what)
+
+    frame = None if bars is None else bars.df
+    if frame is None or frame.empty:
+        raise NoMarketDataError(symbol, canonical, f"no {minutes}-minute bars between {start} and {end}")
+    frame = frame.reset_index()
+    if "symbol" in frame.columns:
+        frame = frame[frame["symbol"] == canonical].drop(columns=["symbol"])
+    frame = frame.rename(columns=_COLUMNS)[list(_COLUMNS.values())]
+    frame["Date"] = pd.to_datetime(frame["Date"], utc=True).dt.tz_convert(MARKET_TZ).dt.tz_localize(None)
+    return frame.sort_values("Date").reset_index(drop=True)

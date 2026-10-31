@@ -142,6 +142,42 @@ does the same from the compose file; set `TRADINGAGENTS_DATA_DIR` in `.env` to
 the full path of `~/.tradingagents` (Compose does not expand `~`) so the container
 shares its state, logs and hedge record with runs on the host.
 
+## The P and B range model
+
+`tradingagents pb-range NVDA` reads the 15-minute chart the way Patrick Nill
+does (the Robbins World Cup trader; the model is condensed in Trading Notes'
+[video](https://www.youtube.com/watch?v=kJyooWDFXyk)). It is arithmetic on
+bars, no model, and lives in `tradingagents/pb_range/`:
+
+- **Zones.** A **P** is a strong move up followed by a range, a **B** a strong
+  move down followed by one. A range is valid after **three touches** of its
+  edges and at least half a session of bars. The impulse is a move of 3 ATRs
+  within 16 bars that gives back little; the range is the box of the bars
+  after it, at most half the impulse tall; a close outside ends it. Nill does
+  not share his drawing rules, so these are the module's own, all in `Params`.
+- **Three trades.** The *range trade*, a limit at one edge of a big range for
+  the other, in and out, not opened when the range completes in the evening.
+  The *breakout with confirmation*: a close outside, a pullback to the edge, a
+  close beyond the breakout bar; best on small ranges after a big move. The
+  *fake breakout*: a close outside and the next bar back inside, bought at the
+  edge with the stop just beyond the fake low, held past the top of the range.
+- **Stop first, then size.** The stop leans on structure and is never widened.
+  The size is what risks `risk_pct` of equity to it, in lots of three so the
+  partials come out even, and never more than the account. Targets run from
+  fair value to fair value: the next range's edge, the origin of the move, or
+  the impulse projected one to one at a new high. Under 3R to the final
+  target, no trade. After three losses in a row the day is over.
+- **The big picture.** The 4-hour bias (blocks of 16 bars) and the week's
+  volume-profile value area; a range on the value area high or low is noted
+  as the stronger setup.
+
+The command prints the zones, the setups of the last session with entry, stop,
+targets, R:R and units, and with `--backtest` trades every setup in the window
+by the rules (limits, stops first, a third off at each target, break-even
+after the first, the stop trailed under each new range) and reports the R
+multiples. Intraday bars come from Alpaca; the free IEX feed carries little
+volume, so the value area is only as good as the feed.
+
 ## LLM providers
 
 `ollama` (local or LAN, no key), `anthropic`, `openai`, or any OpenAI-compatible
