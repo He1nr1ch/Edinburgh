@@ -50,6 +50,9 @@ def create_trader(llm):
                 "content": (
                     "You are a trading agent analyzing market data to make investment decisions. "
                     "Based on your analysis, provide a specific recommendation to buy, sell, or hold. "
+                    "This desk runs long and short: Sell means sell the stock short, with the entry the "
+                    "price to short at and the stop-loss above it, where the short is bought back; a "
+                    "Buy's stop is below its entry. "
                     + grounding
                     # Entry/stop are numeric price fields. Asking for concrete
                     # levels invites a percentage ("15%"), which is not a price
@@ -75,7 +78,7 @@ def create_trader(llm):
                     "Write these sections, in this order, starting with the action "
                     "on its own line:\n\n"
                     "- **Action**: exactly one of Buy / Hold / Sell. A research "
-                    "recommendation of Overweight is a Buy and Underweight is a Sell, "
+                    "recommendation of Overweight is a Buy and Underweight is a Sell (a short), "
                     "sized by how strong the case is; conflict alone is not a Hold.\n"
                     "- **Reasoning**: why, against the plan and the price structure\n"
                     "- **Entry Price**, **Stop Loss**, **Position Sizing**: when you can state them"

@@ -54,7 +54,7 @@ def create_risk_manager(llm):
 
 ---
 
-Weigh the three stances on their evidence, independent of speaking order. The debate always contains conflicting stances; choosing between them is the job. Set the maximum position as a percentage of total portfolio equity, one number from 0 to 100, and a stop-loss as an absolute price when the market report gives the levels to ground one.
+Weigh the three stances on their evidence, independent of speaking order. The debate always contains conflicting stances; choosing between them is the job. Set the maximum position as a percentage of total portfolio equity, one number from 0 to 100, and a stop-loss as an absolute price when the market report gives the levels to ground one. This desk runs long and short: for a Sell or Underweight the position is a short, so its stop is above the current price, the level at which the short is bought back; for a Buy or Overweight the stop is below.
 
 ## Output
 
@@ -62,7 +62,7 @@ Write these sections, in this order, starting with the risk level on its own lin
 
 - **Risk Level**: exactly one of Aggressive / Neutral / Conservative
 - **Maximum Position**: the ceiling as a percentage of portfolio equity, e.g. 5
-- **Stop Loss**: an absolute price, or not provided
+- **Stop Loss**: an absolute price, above the price for a short and below it for a long, or not provided
 - **Rationale**: the risks that decided the stance and bound the size
 
 {brevity}{NO_EXTERNAL_TOOLS}"""

@@ -146,7 +146,8 @@ class ResearchPlan(BaseModel):
     recommendation: PortfolioRating = Field(
         description=(
             "The investment recommendation. Exactly one of Buy / Overweight / "
-            "Hold / Underweight / Sell. Conflicting arguments alone are not a "
+            "Hold / Underweight / Sell; Underweight and Sell are short positions. "
+            "Conflicting arguments alone are not a "
             "reason to Hold: commit to the stronger side, sized by how "
             "decisively it wins. Choose Hold only when the evidence is still "
             "balanced after weighing, or too thin to support a call."
@@ -195,7 +196,7 @@ class TraderProposal(BaseModel):
     """
 
     action: TraderAction = Field(
-        description="The transaction direction. Exactly one of Buy / Hold / Sell.",
+        description="The transaction direction. Exactly one of Buy / Hold / Sell; Sell is a short sale.",
     )
     reasoning: str = Field(
         description=(
@@ -215,8 +216,9 @@ class TraderProposal(BaseModel):
         default=None,
         description=(
             "Optional stop-loss as an absolute price in the instrument's quote "
-            "currency (e.g. 172.0), never a percentage. Convert a percentage "
-            "distance to the price level it implies, or omit it."
+            "currency (e.g. 172.0), never a percentage: below the entry for a Buy, "
+            "above it for a Sell (a short). Convert a percentage distance to the "
+            "price level it implies, or omit it."
         ),
     )
     position_sizing: str | None = Field(
@@ -291,7 +293,8 @@ class RiskAssessment(BaseModel):
         default=None,
         description=(
             "Recommended stop-loss as an absolute price in the instrument's quote "
-            "currency (e.g. 172.0), never a percentage. The stop belongs here, not "
+            "currency (e.g. 172.0), never a percentage: above the current price for a "
+            "short (Sell / Underweight), below it for a long. The stop belongs here, not "
             "in the rationale; null only when no stop applies."
         ),
     )
@@ -360,7 +363,7 @@ class PortfolioDecision(BaseModel):
         description=(
             "The target position after this decision, as a percentage of total "
             "portfolio equity: a number from 0 to 100 (e.g. 4.5), never a range. "
-            "0 means hold no position (a Sell exits; a Hold with no position "
+            "0 means hold no position (a Sell or Underweight is a short of this size; a Hold with no position "
             "stays out). Stay within Risk Management's maximum unless the thesis "
             "says why not."
         ),

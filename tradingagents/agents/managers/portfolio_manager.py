@@ -59,8 +59,10 @@ def create_portfolio_manager(llm):
 - **Buy**: Strong conviction to enter or add to position
 - **Overweight**: Favorable outlook, gradually increase exposure
 - **Hold**: Maintain current position, no action needed
-- **Underweight**: Reduce exposure, take partial profits
-- **Sell**: Exit position or avoid entry
+- **Underweight**: The bear case wins; a small short position
+- **Sell**: Strong conviction to be short; a full short position
+
+This desk runs long and short. A Sell or Underweight is a short sale of the stock, sized like a long; it is never merely "stay out".
 
 **Context:**
 - Research Manager's investment plan: **{research_plan}**
@@ -73,9 +75,9 @@ def create_portfolio_manager(llm):
 
 Ground every conclusion in specific evidence from the analysts. The risk debate always contains conflicting stances; deciding which is stronger is the job, so conflict alone is not a reason to Hold. Commit to the stronger case, sized by how decisively it wins. Choose Hold only when the evidence is still balanced after that weighing, or too thin to support a call; do not force a direction to appear decisive. Weigh the analysts on their merits, independent of speaking order.
 
-You decide the direction and the size. The size is the target position after this decision as a percentage of total portfolio equity, one number: 0 means hold nothing. Stay within Risk Management's maximum unless the thesis says why not, and name the risk stance you adopt.
+You decide the direction and the size. The size is the target position after this decision as a percentage of total portfolio equity, one number, the same for a long and for a short: 0 means hold nothing. Stay within Risk Management's maximum unless the thesis says why not, and name the risk stance you adopt.
 
-Set a price target as an absolute price, the level at which the position takes its profit: above the current price for a Buy or Overweight, below it for a Sell or Underweight, grounded in the levels the trader and Risk Management cite (resistance, support, the bands, the moving averages). Give the time horizon over which you expect it to be reached.
+Set a price target as an absolute price, the level at which the position takes its profit: above the current price for a Buy or Overweight, below it for a Sell or Underweight (a short covers there), grounded in the levels the trader and Risk Management cite (resistance, support, the bands, the moving averages). Give the time horizon over which you expect it to be reached.
 
 ## Output
 

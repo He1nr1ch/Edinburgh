@@ -32,8 +32,10 @@ def create_research_manager(llm):
 - **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
 - **Overweight**: Constructive view; recommend gradually increasing exposure
 - **Hold**: Balanced view; recommend maintaining the current position
-- **Underweight**: Cautious view; recommend trimming exposure
-- **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
+- **Underweight**: The bear case is the stronger; recommend a small short position
+- **Sell**: Strong conviction in the bear thesis; recommend a full short position
+
+This desk runs long and short: a bearish call is an instruction to sell the stock short, not merely to stay out of it.
 
 The debate always contains conflicting arguments; deciding which side is stronger is the job, so conflict alone is not a reason to Hold. Commit to the side with the stronger case, sized by how decisively it wins. Choose Hold only when the evidence is still balanced after that weighing, or too thin to support a call; do not manufacture a direction to appear decisive. Weigh the bull and bear cases on their merits, independent of which side spoke first or last.
 
