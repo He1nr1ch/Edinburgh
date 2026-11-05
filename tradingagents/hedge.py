@@ -133,15 +133,19 @@ def record_hedge(ledger: Path, plan: Hedge, bought_on: str) -> HeldHedge:
 def hedge_book(book, trade_date: str, monthly_ratio: float = 2.1,
                weekly_days: int = 7, monthly_days: int = 28,
                held: tuple[HeldHedge, ...] = ()) -> Hedge:
-    """Price the hedge for a sized book: betas over the past year, SPY calls quoted now."""
-    from tradingagents.dataflows.vendors.alpaca import atm_call, get_closes
+    """Price the hedge for a sized book: betas over the past year, SPY calls quoted now.
+
+    The strike and contract count follow SPY's live price when Alpaca has one,
+    since the option quotes are live; the analysis date's close is the fallback.
+    """
+    from tradingagents.dataflows.vendors.alpaca import atm_call, get_closes, latest_price
 
     day = datetime.strptime(trade_date, "%Y-%m-%d")
     start, end = (day - timedelta(days=365)).strftime("%Y-%m-%d"), (day + timedelta(days=1)).strftime("%Y-%m-%d")
     spy = get_closes("SPY", start, end)
     exposure = sum(math.copysign(o.value, o.shares) * beta(get_closes(o.ticker, start, end), spy)
                    for o in book.orders)
-    spy_price = float(spy.iloc[-1])
+    spy_price = latest_price("SPY") or float(spy.iloc[-1])
     weekly = atm_call("SPY", spy_price, (day + timedelta(days=weekly_days)).date())
     monthly = atm_call("SPY", spy_price, (day + timedelta(days=monthly_days)).date())
     return plan_hedge(exposure, spy_price, weekly, monthly, monthly_ratio, held)

@@ -23,6 +23,21 @@ class OptionQuote:
         return self.ask * 100
 
 
+def latest_price(symbol: str) -> float | None:
+    """The last trade price Alpaca has for ``symbol`` now, or None when it has none.
+
+    Option quotes are live, so the strike must be chosen against the live
+    underlying, not a past close: on a 4% down day the close's strike is 4%
+    out of the money and the call is cheap because it protects little.
+    """
+    from alpaca.data.requests import StockLatestTradeRequest
+
+    request = StockLatestTradeRequest(symbol_or_symbols=symbol.upper(), feed=common.data_feed())
+    trades = common.call(lambda: common.stock_client().get_stock_latest_trade(request), f"latest trade for {symbol}")
+    trade = (trades or {}).get(symbol.upper())
+    return float(trade.price) if trade is not None and trade.price else None
+
+
 def _strike(symbol: str) -> float:
     return int(symbol[-8:]) / 1000
 

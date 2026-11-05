@@ -85,3 +85,23 @@ def test_once_hedged_no_more_calls_are_bought_until_the_hedge_expires(tmp_path):
 def test_a_plan_that_buys_nothing_cannot_be_recorded(tmp_path):
     with pytest.raises(ValueError):
         record_hedge(tmp_path / "hedges.json", plan_hedge(10_000, 759.97, WEEKLY, None), "2026-10-23")
+
+
+@pytest.mark.unit
+def test_the_strike_follows_spys_live_price_not_the_analysis_close(monkeypatch):
+    """Quotes are live, so a strike at a stale close can be far out of the money."""
+    import tradingagents.dataflows.vendors.alpaca as alpaca
+    from tradingagents import hedge
+    from tradingagents.sizing import Book, Order
+
+    asked = []
+    monkeypatch.setattr(alpaca, "latest_price", lambda s: 736.16)
+    monkeypatch.setattr(alpaca, "get_closes", lambda s, a, b: pd.Series([760.0, 766.73], index=pd.to_datetime(["2026-11-03", "2026-11-04"])))
+    monkeypatch.setattr(alpaca, "atm_call", lambda u, price, d: asked.append(price) or _call(d, 7.0))
+    book = Book(100_000, 75, 10, [Order("T", "Sell", "Neutral", 5, -5, 20.0, -250)])
+
+    plan = hedge.hedge_book(book, "2026-11-04")
+    assert asked == [736.16, 736.16] and plan.spy_price == 736.16
+
+    monkeypatch.setattr(alpaca, "latest_price", lambda s: None)   # no live trade: the close stands in
+    assert hedge.hedge_book(book, "2026-11-04").spy_price == 766.73

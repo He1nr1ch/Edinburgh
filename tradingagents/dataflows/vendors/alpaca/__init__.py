@@ -14,7 +14,7 @@ from tradingagents.dataflows.vendors.alpaca.market import (
     load_ohlcv,
 )
 from tradingagents.dataflows.vendors.alpaca.news import articles_since, get_global_news, get_news
-from tradingagents.dataflows.vendors.alpaca.options import OptionQuote, atm_call
+from tradingagents.dataflows.vendors.alpaca.options import OptionQuote, atm_call, latest_price
 
 __all__ = [
     "OptionQuote",
@@ -27,6 +27,7 @@ __all__ = [
     "get_market_snapshot",
     "get_news",
     "get_stock_data",
+    "latest_price",
     "intraday_bars",
     "load_ohlcv",
 ]
