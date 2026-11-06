@@ -200,23 +200,21 @@ def size(
     hedge: bool = typer.Option(True, "--hedge/--no-hedge", help="Price SPY calls to cover a net-short book"),
     record_hedge: bool = typer.Option(False, "--record-hedge", help="Record the calls this plan buys as bought, so later runs do not hedge again"),
 ):
-    """Size a list run's calls into a long/short book: shares and dollars per ticker, and its hedge."""
-    import csv
+    """Size a list run's calls into a long/short book: shares and dollars per ticker, its bench and its hedge."""
     from pathlib import Path
 
     from rich.table import Table
 
-    from tradingagents.sizing import last_closes, load_calls, size_book
+    from tradingagents.book import build_book, save_book
 
-    root = Path(DEFAULT_CONFIG["results_dir"]) / "backtest"
-    calls = [c for run_id in run_ids for c in load_calls(root / run_id, date)]
-    if not calls:
-        console.print(f"[red]No calls for {date} under {', '.join(run_ids)} in {root}[/red]")
-        raise typer.Exit(code=1)
+    try:
+        built = build_book(run_ids, date, DEFAULT_CONFIG, equity, gross, cap, min_target, top)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from None
+    book = built.book
     floor = DEFAULT_CONFIG["min_target_pct"] if min_target is None else min_target
     per_side = DEFAULT_CONFIG["names_per_side"] if top is None else top
-    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor, per_side,
-                     DEFAULT_CONFIG["default_stop_pct"])
     outside = sum(1 for _, why in book.skipped if why.startswith("outside the top"))
     if outside:
         console.print(f"[dim]{outside} call(s) cleared the floor but sit outside the top {per_side} on their side[/dim]")
@@ -253,6 +251,9 @@ def size(
     for ticker, why in book.skipped:
         if not why.startswith(counted):
             console.print(f"[dim]no position: {ticker}: {why}[/dim]")
+    if built.bench:
+        console.print("[bold]Bench[/bold] (replacements, by move to target): "
+                      + ", ".join(f"{b['ticker']} {b['side']} {b['expected_move_pct']:+.1f}%" for b in built.bench))
 
     plan = None
     if hedge:
@@ -286,20 +287,10 @@ def size(
                 console.print("  [yellow]The calls held cover less than the exposure now; "
                               "none are added while they are open.[/yellow]")
 
-    out = root / "sizing" / f"{'+'.join(run_ids)}_{date}.csv"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value",
-                         "stop", "stop_from", "target"])
-        for o in book.orders:
-            writer.writerow([o.ticker, o.side, o.rating, o.risk_level or "", o.ceiling_pct,
-                             round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2),
-                             o.stop, o.stop_from, o.target or ""])
-        if plan and plan.contracts:
-            writer.writerow([plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
-                             plan.quote.ask, plan.contracts, round(plan.cost, 2), "", "", ""])
-    console.print(f"Orders saved to {out}")
+    hedge_row = ([plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
+                  plan.quote.ask, plan.contracts, round(plan.cost, 2), "", "", ""] if plan and plan.contracts else None)
+    save_book(built, DEFAULT_CONFIG, hedge_row)
+    console.print(f"Orders saved to {built.book_path}; bench to {built.bench_path.name}")
 
 
 @app.command(name="pb-range")
@@ -437,6 +428,23 @@ def worker(
         run_day(config, llm, default_duties(), minutes, dry_run)
     else:
         run_forever(config, llm, default_duties(), minutes, dry_run)
+
+
+@app.command()
+def daily(
+    date: str = typer.Option(None, "--date", help="Analysis date, YYYY-MM-DD (default: the last close)"),
+    parts: int = typer.Option(None, "--parts", help="Processes to run at once (default daily_parts)"),
+    equity: float = typer.Option(None, "--equity", help="Equity to size against (default: the account's)"),
+):
+    """The 4 AM job by hand: analyse the watchlist on the last close, size the book, bench the next-best."""
+    import logging
+
+    from tradingagents.daily import run_daily
+    from tradingagents.dataflows.vendors.alpaca import trading
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    built = run_daily(DEFAULT_CONFIG, equity or trading.get_account().equity, date, parts)
+    console.print(f"{len(built.book.orders)} orders, bench {len(built.bench)}; saved to {built.book_path}")
 
 
 @app.command()

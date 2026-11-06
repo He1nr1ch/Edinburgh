@@ -168,6 +168,20 @@ def top_per_side(calls: list[Call], prices: dict[str, float], n: int) -> list[Ca
     return kept
 
 
+def bench_for(calls: list[Call], prices: dict[str, float], chosen: set[str],
+              min_target_pct: float, n: int) -> list[Call]:
+    """The ``n`` best calls after the book, long or short together, by expected move.
+
+    The user's rule: a short list of replacements ready for the day, for the
+    Watcher to pick from when a book position sells out. Only calls that clear
+    the floor and are not in the book qualify.
+    """
+    pool = [c for c in calls if SIDE.get(c.rating) and c.ticker not in chosen
+            and prices.get(c.ticker) and worth_trading(c, prices[c.ticker], min_target_pct) is None]
+    pool.sort(key=lambda c: (-(c.target_move_pct(prices[c.ticker]) or 0.0), c.ticker))
+    return pool[:n]
+
+
 def size_book(calls: list[Call], prices: dict[str, float], equity: float,
               gross_pct: float = 75.0, cap_pct: float = 10.0, min_target_pct: float = 0.0,
               names_per_side: int = 0, default_stop_pct: float = 2.0) -> Book:

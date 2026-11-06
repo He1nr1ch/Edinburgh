@@ -1,4 +1,4 @@
-"""The Watcher's stop guard: a position through its stop is closed, news or no news.
+"""The Watcher's stop and take-profit guards: a position through its stop or its target is closed.
 
 The desk's stops are levels in a file, not orders at the broker, so nothing
 would act on them by itself. Each pass checks every watched position's price
@@ -38,6 +38,43 @@ def breached(h: Holding, stop: float) -> bool:
     if not price:
         return False
     return price <= stop if h.qty > 0 else price >= stop
+
+
+def standing_target(h: Holding, decisions: dict[str, data.DecisionRef]) -> float | None:
+    ref = decisions.get(h.symbol.upper())
+    if ref is None:
+        return None
+    summary = data.decision_summary(data.load_decision(ref), None, 0)
+    return summary["target"] if summary["side"] in ("long", "short") else None
+
+
+def reached(h: Holding, target: float) -> bool:
+    """Whether the position's price is through its target on the profit side."""
+    price = abs(h.market_value) / abs(h.qty) if h.qty else None
+    if not price:
+        return False
+    return price >= target if h.qty > 0 else price <= target
+
+
+class TargetDuty:
+    """Take the profit: a position through the desk's target is closed."""
+    name = "targets"
+
+    def run(self, context: WorkerContext) -> list[Finding]:
+        decisions = data.find_decisions(Path(context.config["results_dir"]))
+        findings = []
+        for h in context.watched():
+            target = standing_target(h, decisions)
+            if not target or not reached(h, target):
+                continue
+            price = abs(h.market_value) / abs(h.qty)
+            gain = (price / h.avg_entry_price - 1) * 100 * (1 if h.qty > 0 else -1) if h.avg_entry_price else 0.0
+            reason = f"price {price:,.2f} is through the target {target:,.2f}; {gain:+.1f}% on the position"
+            findings.append(Finding(
+                self.name, h.symbol, "notable", f"{h.side} {h.symbol}: target reached at {target:,.2f}", reason,
+                Action(h.symbol, "exit", "sell" if h.qty > 0 else "buy", abs(int(h.qty)), reason),
+            ))
+        return findings
 
 
 class StopDuty:

@@ -41,6 +41,14 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
     "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
     "TRADINGAGENTS_DEFAULT_STOP_PCT":        "default_stop_pct",
+    "TRADINGAGENTS_GROSS_PCT":               "gross_pct",
+    "TRADINGAGENTS_POSITION_CAP_PCT":        "position_cap_pct",
+    "TRADINGAGENTS_BENCH_SIZE":              "bench_size",
+    "TRADINGAGENTS_DAILY_ANALYSIS_TIME":     "daily_analysis_time",
+    "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
+    "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
+    "TRADINGAGENTS_DAILY_ANALYSTS":          "daily_analysts",
+    "TRADINGAGENTS_WORKER_PLACE_BOOK":       "worker_place_book",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -231,6 +239,24 @@ def build_default_config() -> dict:
         # When the Risk Manager and the Trader give no usable stop, the stop is this
         # far from the close against the position: below for a long, above for a short.
         "default_stop_pct": 2.0,
+        # The book's gross exposure (longs plus shorts) as % of equity, and the
+        # most one name may be.
+        "gross_pct": 75.0,
+        "position_cap_pct": 10.0,
+        # The bench: the next-best calls after the book, long or short together,
+        # for the Watcher to replace a position that sells out during the day.
+        "bench_size": 10,
+        # The daily job (tradingagents daily; the worker runs it on trading days):
+        # analyse the watchlist on the last close at this Eastern time, in this
+        # many processes at once, then size the book and the bench. The S&P 500
+        # takes about five hours on three PAIR nodes; the S&P 100 under one.
+        "daily_analysis_time": "04:00",
+        "daily_watchlist": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlists", "sp500.txt"),
+        "daily_parts": 3,
+        "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
+        # Whether the worker places the day's book at the open (paper only
+        # unless worker_allow_live). Off, it builds the book and watches only.
+        "worker_place_book": True,
         # The daily worker (tradingagents worker). It trades by itself within these
         # limits: on a paper account unless worker_allow_live is turned on.
         "worker_trading_enabled": True,

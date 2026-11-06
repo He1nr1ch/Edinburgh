@@ -68,6 +68,24 @@ def get_clock() -> Clock:
     return Clock(bool(clock.is_open), clock.timestamp, clock.next_open, clock.next_close)
 
 
+def last_trading_day(before: datetime) -> str:
+    """The most recent session that closed before ``before`` (a date, YYYY-MM-DD), by Alpaca's calendar."""
+    from datetime import timedelta
+
+    from alpaca.trading.requests import GetCalendarRequest
+
+    request = GetCalendarRequest(start=(before - timedelta(days=10)).date(), end=before.date())
+    days = common.call(lambda: _client().get_calendar(request), "the market calendar") or []
+    # A session counts once its close has passed: any earlier date, or today
+    # after the close. Calendar times are Eastern; ``before`` is local time.
+    local = before.astimezone()
+    closed = [d for d in days if d.date < local.date()
+              or (d.date == local.date() and local.time() > d.close.time())]
+    if not closed:
+        raise VendorUnavailableError("Alpaca's calendar shows no session before " + before.isoformat())
+    return closed[-1].date.isoformat()
+
+
 def open_orders() -> dict[str, str]:
     """Every order sent but not yet filled or cancelled, by order id: its symbol."""
     from alpaca.trading.enums import QueryOrderStatus

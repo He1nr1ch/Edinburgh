@@ -9,13 +9,15 @@ as the container's process.
 from __future__ import annotations
 
 import logging
+import math
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
-from tradingagents.worker.duty import Duty, Finding, WorkerContext
+from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
 from tradingagents.worker.notify import send_email
 from tradingagents.worker.policy import refusal
 from tradingagents.worker.state import WorkerState
@@ -24,12 +26,16 @@ from tradingagents.web.snapshots import write_snapshot
 logger = logging.getLogger(__name__)
 
 
-def default_duties() -> list[Duty]:
-    """The Watcher's two guards: the stop first (arithmetic, no model), then the news."""
-    from tradingagents.worker.news import WatcherDuty
-    from tradingagents.worker.stops import StopDuty
+ET = ZoneInfo("America/New_York")
 
-    return [StopDuty(), WatcherDuty()]
+
+def default_duties() -> list[Duty]:
+    """The Watcher's guards, in order: stop and target (arithmetic, no model), news, then replacements."""
+    from tradingagents.worker.news import WatcherDuty
+    from tradingagents.worker.replace import ReplacementDuty
+    from tradingagents.worker.stops import StopDuty, TargetDuty
+
+    return [StopDuty(), TargetDuty(), WatcherDuty(), ReplacementDuty()]
 
 
 def _log(config: dict, now: datetime, text: str) -> None:
@@ -57,7 +63,11 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
         try:
             cancelled = trading.cancel_orders_for(a.symbol, open_now) if a.kind in ("exit", "trim") else 0
             order_id = trading.submit_market_order(a.symbol, a.qty, a.side)
-            context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now)
+            context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason)
+            if a.kind == "replace":
+                context.state.book[a.symbol.upper()] = {"placed_on": context.now.strftime("%Y-%m-%d"),
+                                                        "side": "long" if a.side == "buy" else "short",
+                                                        "value": a.value}
             pending.add(a.symbol)
             f.outcome = f"sent, order {order_id}" + (
                 f"; cancelled {cancelled} waiting order(s) first"
@@ -116,6 +126,104 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
     return findings
 
 
+def place_book(config: dict, dry_run: bool = False) -> list[str]:
+    """Open the day's book at the open: every order not yet held, once per day.
+
+    The book is the one the daily job built this morning (or the newest saved
+    one, with a note). Positions already held that are not in the new book are
+    left to the Watcher's guards; nothing is closed here.
+    """
+    from tradingagents.book import load_rows
+    from tradingagents.web.data import latest_book
+
+    with run_config(config):
+        now = datetime.now(UTC).astimezone()
+        today = now.strftime("%Y-%m-%d")
+        state = WorkerState.load(config["worker_state_path"])
+        day = state.day(today)
+        if day["placed"] or not config.get("worker_place_book", True):
+            return []
+        book_path = Path(day["book_path"]) if day.get("book_path") else None
+        if book_path is None or not book_path.is_file():
+            book_path, _ = latest_book(Path(config["results_dir"]))
+            if book_path is None:
+                _log(config, now, "no book to place")
+                return []
+            _log(config, now, f"today's job left no book; placing the newest, {book_path.name}")
+        account = trading.get_account()
+        market_open = trading.get_clock().is_open
+        held = {h.symbol.upper() for h in account.holdings}
+        pending = set(trading.open_orders().values())
+        placed = []
+        for o in load_rows(book_path):
+            if o["side"] not in ("long", "short") or o["ticker"].upper() in held | pending:
+                continue
+            qty = abs(int(float(o["shares"])))
+            action = Action(o["ticker"], "open", "buy" if o["side"] == "long" else "sell", qty,
+                            f"the day's book ({book_path.name})")
+            why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
+            if why_not:
+                _log(config, now, f"  not placed: {o['ticker']}: {why_not}")
+                continue
+            if dry_run:
+                _log(config, now, f"  dry run: would open {o['side']} {qty} {o['ticker']}")
+                placed.append(o["ticker"])
+                continue
+            try:
+                order_id = trading.submit_market_order(o["ticker"], qty, action.side)
+            except Exception as exc:
+                _log(config, now, f"  failed: {o['ticker']}: {exc}")
+                continue
+            state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason)
+            state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": float(o["value"])}
+            placed.append(o["ticker"])
+            _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} (order {order_id})")
+        day["placed"] = placed
+        state.save()
+        _log(config, now, f"book placed: {len(placed)} order(s) from {book_path.name}")
+        if placed:
+            send_email(f"Edinburgh: the day's book, {len(placed)} order(s)",
+                       "\n".join(f"- {t}" for t in placed) + f"\n\nfrom {book_path}", config)
+        return placed
+
+
+def run_daily_job(config: dict, dry_run: bool = False) -> None:
+    """The 4 AM job, once per trading day; its outcome is recorded whatever happens."""
+    from tradingagents.daily import run_daily
+
+    with run_config(config):
+        today = datetime.now(ET).strftime("%Y-%m-%d")
+        state = WorkerState.load(config["worker_state_path"])
+        day = state.day(today)
+        if day["analysis"]:
+            return
+        day["analysis"] = "running"
+        state.save()
+        try:
+            equity = trading.get_account().equity
+            built = run_daily(config, equity)
+            state = WorkerState.load(config["worker_state_path"])   # the sweep took hours; passes may have run
+            day = state.day(today)
+            day.update(analysis="done", book_path=str(built.book_path))
+            send_email(f"Edinburgh: the book for {today}",
+                       f"{len(built.book.orders)} orders and a bench of {len(built.bench)} from {built.date}'s close.\n"
+                       + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
+                                   for o in built.book.orders), config)
+        except Exception as exc:
+            logger.exception("The daily job failed")
+            state = WorkerState.load(config["worker_state_path"])
+            state.day(today)["analysis"] = f"failed: {exc}"
+        state.save()
+
+
+def daily_job_due(config: dict, now: datetime, state: WorkerState) -> bool:
+    """Whether today's job has not run and its time (ET) has come on a weekday."""
+    local = now.astimezone(ET)
+    hour, minute = (int(x) for x in str(config["daily_analysis_time"]).split(":"))
+    due_at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return local.weekday() < 5 and local >= due_at and not state.day(local.strftime("%Y-%m-%d"))["analysis"]
+
+
 def summarize_day(config: dict, day: str) -> str:
     state = WorkerState.load(config["worker_state_path"])
     orders = state.orders_on(day)
@@ -135,6 +243,7 @@ def _sleep_until(target: datetime, now: datetime, chunk_minutes: int = 15) -> No
 
 def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False) -> None:
     """Passes from now until the close, then the day's summary. Call while the market is open."""
+    place_book(config, dry_run)
     while True:
         run_pass(config, llm, duties, dry_run)
         with run_config(config):
@@ -156,6 +265,11 @@ def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dr
         try:
             with run_config(config):
                 clock = trading.get_clock()
+                state = WorkerState.load(config["worker_state_path"])
+            if not clock.is_open and daily_job_due(config, clock.now, state):
+                logger.info("Running the daily analysis.")
+                run_daily_job(config, dry_run)
+                continue
             if clock.is_open:
                 logger.info("The market is open; watching until the close.")
                 run_day(config, llm, duties, interval_minutes, dry_run)

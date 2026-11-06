@@ -22,6 +22,7 @@ class Action:
     side: str           # buy or sell
     qty: int
     reason: str
+    value: float | None = None      # what the order is worth at the price it was sized at
 
 
 @dataclass

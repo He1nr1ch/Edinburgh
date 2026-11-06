@@ -17,6 +17,8 @@ class WorkerState:
     seen: dict[str, list[str]] = field(default_factory=dict)        # symbol -> article ids
     last_check: dict[str, str] = field(default_factory=dict)        # symbol -> ISO time
     orders: list[dict] = field(default_factory=list)                # every order placed
+    book: dict[str, dict] = field(default_factory=dict)             # ticker -> the book position the worker opened
+    days: dict[str, dict] = field(default_factory=dict)             # date -> {"analysis", "book_path", "placed", "replaced"}
 
     @classmethod
     def load(cls, path: str | Path) -> WorkerState:
@@ -24,11 +26,13 @@ class WorkerState:
         if not path.is_file():
             return cls(path)
         data = json.loads(path.read_text(encoding="utf-8"))
-        return cls(path, data.get("seen", {}), data.get("last_check", {}), data.get("orders", []))
+        return cls(path, data.get("seen", {}), data.get("last_check", {}), data.get("orders", []),
+                   data.get("book", {}), data.get("days", {}))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"seen": self.seen, "last_check": self.last_check, "orders": self.orders}
+        data = {"seen": self.seen, "last_check": self.last_check, "orders": self.orders,
+                "book": self.book, "days": self.days}
         self.path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
     def is_new(self, symbol: str, article_id: str) -> bool:
@@ -39,9 +43,13 @@ class WorkerState:
         ids.extend(i for i in article_ids if i not in ids)
         del ids[:-_SEEN_LIMIT]
 
+    def day(self, date: str) -> dict:
+        return self.days.setdefault(date, {"analysis": "", "book_path": "", "placed": [], "replaced": {}})
+
     def orders_on(self, day: str) -> list[dict]:
         return [o for o in self.orders if str(o.get("at", "")).startswith(day)]
 
-    def record_order(self, symbol: str, kind: str, side: str, qty: int, order_id: str, at: datetime) -> None:
+    def record_order(self, symbol: str, kind: str, side: str, qty: int, order_id: str, at: datetime,
+                     reason: str = "") -> None:
         self.orders.append({"symbol": symbol, "kind": kind, "side": side, "qty": qty,
-                            "order_id": order_id, "at": at.isoformat()})
+                            "order_id": order_id, "at": at.isoformat(), "reason": reason})

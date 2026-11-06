@@ -132,7 +132,8 @@ def latest_book(results_dir: Path, day: str | None = None) -> tuple[Path | None,
     """The newest orders CSV the size command wrote, as rows; for ``day``, the newest for that date."""
     folder = Path(results_dir) / "backtest" / "sizing"
     pattern = f"*_{day}.csv" if day else "*.csv"
-    files = sorted(folder.glob(pattern), key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
+    files = sorted((p for p in folder.glob(pattern) if not p.name.endswith("_bench.csv")),
+                   key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
     if not files:
         return None, []
     with files[-1].open(encoding="utf-8") as f:
