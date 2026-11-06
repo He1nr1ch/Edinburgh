@@ -440,6 +440,18 @@ def worker(
 
 
 @app.command()
+def snapshot():
+    """Record today's open positions for the positions page's day-by-day view."""
+    from pathlib import Path
+
+    from tradingagents.dataflows.vendors.alpaca import trading
+    from tradingagents.web.snapshots import write_snapshot
+
+    path = write_snapshot(Path(DEFAULT_CONFIG["results_dir"]), trading.get_account(), DEFAULT_CONFIG["default_stop_pct"])
+    console.print(f"Snapshot written to {path}")
+
+
+@app.command()
 def web(
     host: str = typer.Option("0.0.0.0", "--host"),
     port: int = typer.Option(8010, "--port"),

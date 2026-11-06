@@ -50,22 +50,35 @@ def _field(text: str, name: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def find_decisions(results_dir: Path) -> dict[str, DecisionRef]:
-    """The newest saved decision per ticker, by analysis date then file time."""
-    found: dict[str, DecisionRef] = {}
-    patterns = (("backtest/*/*/TradingAgentsStrategy_logs/full_states_log_*.json", -3),
-                ("*/TradingAgentsStrategy_logs/full_states_log_*.json", -3))
-    for pattern, ticker_part in patterns:
+def all_decisions(results_dir: Path) -> dict[str, list[DecisionRef]]:
+    """Every saved decision per ticker, newest first (by analysis date, then file time)."""
+    found: dict[str, list[DecisionRef]] = {}
+    patterns = ("backtest/*/*/TradingAgentsStrategy_logs/full_states_log_*.json",
+                "*/TradingAgentsStrategy_logs/full_states_log_*.json")
+    for pattern in patterns:
         for path in Path(results_dir).glob(pattern):
             if "backtest" in path.parts and pattern.startswith("*/"):
                 continue        # the first pattern already took it
-            ticker = path.parts[ticker_part]
             date = path.name[len("full_states_log_"):-len(".json")]
             run = path.parts[-4] if "backtest" in path.parts else "single"
-            ref = DecisionRef(ticker, date, path, run)
-            current = found.get(ticker)
-            if current is None or (date, path.stat().st_mtime) > (current.date, current.path.stat().st_mtime):
-                found[ticker] = ref
+            found.setdefault(path.parts[-3], []).append(DecisionRef(path.parts[-3], date, path, run))
+    for refs in found.values():
+        refs.sort(key=lambda r: (r.date, r.path.stat().st_mtime), reverse=True)
+    return found
+
+
+def find_decisions(results_dir: Path) -> dict[str, DecisionRef]:
+    """The newest saved decision per ticker."""
+    return {ticker: refs[0] for ticker, refs in all_decisions(results_dir).items()}
+
+
+def decisions_as_of(results_dir: Path, day: str) -> dict[str, DecisionRef]:
+    """The decision that stood for each ticker on ``day``: the newest dated on or before it."""
+    found = {}
+    for ticker, refs in all_decisions(results_dir).items():
+        standing = next((r for r in refs if r.date <= day), None)
+        if standing is not None:
+            found[ticker] = standing
     return found
 
 
@@ -115,10 +128,11 @@ def agent_outputs(state: dict) -> list[tuple[str, str]]:
     return out
 
 
-def latest_book(results_dir: Path) -> tuple[Path | None, list[dict]]:
-    """The newest orders CSV the size command wrote, as rows."""
+def latest_book(results_dir: Path, day: str | None = None) -> tuple[Path | None, list[dict]]:
+    """The newest orders CSV the size command wrote, as rows; for ``day``, the newest for that date."""
     folder = Path(results_dir) / "backtest" / "sizing"
-    files = sorted(folder.glob("*.csv"), key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
+    pattern = f"*_{day}.csv" if day else "*.csv"
+    files = sorted(folder.glob(pattern), key=lambda p: p.stat().st_mtime) if folder.is_dir() else []
     if not files:
         return None, []
     with files[-1].open(encoding="utf-8") as f:

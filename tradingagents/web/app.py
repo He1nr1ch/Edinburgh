@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from markdown_it import MarkdownIt
 
 from tradingagents.dataflows.config import get_config
-from tradingagents.web import data
+from tradingagents.web import data, snapshots
 
 app = FastAPI(title="Edinburgh positions", docs_url=None, redoc_url=None)
 
@@ -102,6 +102,49 @@ def _holdings():
     return trading.get_account()
 
 
+def _positions_table(rows: list[dict]) -> str:
+    out = ['<div class="wrap"><table><tr><th>Ticker</th><th>Side</th><th>Qty</th><th>Value</th>'
+           '<th>Entry</th><th>Price</th><th>P&amp;L</th><th>Rating</th><th>Risk</th>'
+           '<th>Stop</th><th>To stop</th><th>Target</th><th>To target</th><th>Decided</th><th>Report</th></tr>']
+    for r in rows:
+        d = r["decision"] or {}
+        stop_cls = ' class="dflt"' if str(d.get("stop_from", "")).startswith("default") else ""
+        stop = (f'<span{stop_cls} title="{html.escape(str(d.get("stop_from", "")))}">{_num(d.get("stop"))}</span>'
+                if d.get("stop") else "—")
+        report = (f'<a href="/report/{html.escape(r["ticker"])}/{r["decision_date"]}">agents</a>'
+                  if r.get("decision_date") else '<span class="none">none</span>')
+        out.append(
+            f'<tr><td><b>{html.escape(r["ticker"])}</b></td><td class="{r["side"]}">{r["side"]}</td>'
+            f'<td>{_num(r["qty"], 0, signed=True)}</td><td>{_num(abs(r["market_value"]), 0)}</td>'
+            f'<td>{_num(r["avg_entry_price"])}</td><td>{_num(r["price"])}</td><td>{_pct(r["pnl_pct"])}</td>'
+            f'<td class="l">{html.escape(d.get("rating") or "—")}</td><td class="l">{html.escape(d.get("risk_level") or "—")}</td>'
+            f'<td>{stop}</td><td>{_pct(r["to_stop_pct"])}</td><td>{_num(d.get("target"))}</td>'
+            f'<td>{_pct(r["to_target_pct"])}</td><td class="l">{r.get("decision_date") or "—"}</td><td class="l">{report}</td></tr>')
+    out.append("</table></div><p class=\"meta\">A stop in italics is the 2% default: the desk gave none, "
+               "or one on the wrong side. \"To stop\" and \"to target\" are from the price shown, "
+               "in the position's direction.</p>")
+    return "\n".join(out)
+
+
+def _book_table(orders: list[dict], held: set[str]) -> str:
+    out = ['<div class="wrap"><table><tr><th>Ticker</th><th>Side</th><th>Rating</th><th>Risk</th>'
+           '<th>Shares</th><th>Price</th><th>Value</th><th>Stop</th><th>From</th><th>Target</th><th>Held</th><th>Report</th></tr>']
+    for o in orders:
+        if o["side"] not in ("long", "short"):
+            out.append(f'<tr><td><b>{html.escape(o["ticker"])}</b></td><td class="l" colspan="7">{html.escape(o["side"])}</td>'
+                       f'<td colspan="2">{html.escape(o["value"])}</td><td></td><td></td></tr>')
+            continue
+        out.append(
+            f'<tr><td><b>{html.escape(o["ticker"])}</b></td><td class="{o["side"]}">{o["side"]}</td>'
+            f'<td class="l">{html.escape(o["rating"])}</td><td class="l">{html.escape(o["risk_level"])}</td>'
+            f'<td>{html.escape(o["shares"])}</td><td>{html.escape(o["price"])}</td><td>{html.escape(o["value"])}</td>'
+            f'<td>{html.escape(o.get("stop") or "")}</td><td class="l">{html.escape(o.get("stop_from") or "")}</td>'
+            f'<td>{html.escape(o.get("target") or "")}</td><td class="l">{"yes" if o["ticker"] in held else "no"}</td>'
+            f'<td class="l"><a href="/report/{html.escape(o["ticker"])}">agents</a></td></tr>')
+    out.append("</table></div>")
+    return "\n".join(out)
+
+
 @app.get("/health")
 def health():
     decisions = data.find_decisions(_results_dir())
@@ -151,55 +194,60 @@ def index():
     except Exception as exc:   # the page must open even when Alpaca does not answer
         rows, account_line = [], f"Alpaca did not answer: {html.escape(str(exc))}"
 
-    body = [f"<h1>Edinburgh positions</h1><p class=\"meta\">{account_line} · as of {data.now_text()}</p>"]
+    days = snapshots.list_days(_results_dir())
+    today = days[0] if days and days[0]["date"] == data.now_text()[:10] else None
+    recorded = (f' · today recorded at {today["as_of"][11:16]}' if today else " · no record of today yet")
+    body = [f"<h1>Edinburgh positions</h1><p class=\"meta\">{account_line} · as of {data.now_text()}{recorded} · "
+            f'<a href="/days">past days</a></p>']
     body.append("<h2>Open positions</h2>")
-    if rows:
-        body.append('<div class="wrap"><table><tr><th>Ticker</th><th>Side</th><th>Qty</th><th>Value</th>'
-                    '<th>Entry</th><th>Price</th><th>P&amp;L</th><th>Rating</th><th>Risk</th>'
-                    '<th>Stop</th><th>To stop</th><th>Target</th><th>To target</th><th>Decided</th><th>Report</th></tr>')
-        for r in rows:
-            d = r["decision"] or {}
-            stop_cls = ' class="dflt"' if str(d.get("stop_from", "")).startswith("default") else ""
-            stop = (f'<span{stop_cls} title="{html.escape(d.get("stop_from", ""))}">{_num(d.get("stop"))}</span>'
-                    if d.get("stop") else "—")
-            report = (f'<a href="/report/{html.escape(r["ticker"])}/{r["decision_date"]}">agents</a>'
-                      if r["decision_date"] else '<span class="none">none</span>')
-            body.append(
-                f'<tr><td><b>{html.escape(r["ticker"])}</b></td><td class="{r["side"]}">{r["side"]}</td>'
-                f'<td>{_num(r["qty"], 0, signed=True)}</td><td>{_num(abs(r["market_value"]), 0)}</td>'
-                f'<td>{_num(r["avg_entry_price"])}</td><td>{_num(r["price"])}</td><td>{_pct(r["pnl_pct"])}</td>'
-                f'<td class="l">{html.escape(d.get("rating") or "—")}</td><td class="l">{html.escape(d.get("risk_level") or "—")}</td>'
-                f'<td>{stop}</td><td>{_pct(r["to_stop_pct"])}</td><td>{_num(d.get("target"))}</td>'
-                f'<td>{_pct(r["to_target_pct"])}</td><td class="l">{r["decision_date"] or "—"}</td><td class="l">{report}</td></tr>')
-        body.append("</table></div><p class=\"meta\">A stop in italics is the 2% default: the desk gave none, "
-                    "or one on the wrong side. \"To stop\" and \"to target\" are from the current price, "
-                    "in the position's direction.</p>")
-    else:
-        body.append("<p>No open positions.</p>")
+    body.append(_positions_table(rows) if rows else "<p>No open positions.</p>")
 
     book_path, orders = data.latest_book(_results_dir())
     body.append("<h2>The day's book</h2>")
     if orders:
-        held = {r["ticker"] for r in rows}
         body.append(f'<p class="meta">From <code>{html.escape(book_path.name)}</code></p>')
-        body.append('<div class="wrap"><table><tr><th>Ticker</th><th>Side</th><th>Rating</th><th>Risk</th>'
-                    '<th>Shares</th><th>Price</th><th>Value</th><th>Stop</th><th>From</th><th>Target</th><th>Held</th><th>Report</th></tr>')
-        for o in orders:
-            if o["side"] not in ("long", "short"):
-                body.append(f'<tr><td><b>{html.escape(o["ticker"])}</b></td><td class="l" colspan="7">{html.escape(o["side"])}</td>'
-                            f'<td colspan="2">{html.escape(o["value"])}</td><td></td><td></td></tr>')
-                continue
-            body.append(
-                f'<tr><td><b>{html.escape(o["ticker"])}</b></td><td class="{o["side"]}">{o["side"]}</td>'
-                f'<td class="l">{html.escape(o["rating"])}</td><td class="l">{html.escape(o["risk_level"])}</td>'
-                f'<td>{html.escape(o["shares"])}</td><td>{html.escape(o["price"])}</td><td>{html.escape(o["value"])}</td>'
-                f'<td>{html.escape(o.get("stop") or "")}</td><td class="l">{html.escape(o.get("stop_from") or "")}</td>'
-                f'<td>{html.escape(o.get("target") or "")}</td><td class="l">{"yes" if o["ticker"] in held else "no"}</td>'
-                f'<td class="l"><a href="/report/{html.escape(o["ticker"])}">agents</a></td></tr>')
-        body.append("</table></div>")
+        body.append(_book_table(orders, {r["ticker"] for r in rows}))
     else:
         body.append("<p>No sized book yet: run <code>tradingagents size</code>.</p>")
     return _page("Edinburgh positions", "\n".join(body))
+
+
+@app.get("/days", response_class=HTMLResponse)
+def days():
+    rows = snapshots.list_days(_results_dir())
+    body = ['<p class="meta"><a href="/">← positions</a></p><h1>Past days</h1>']
+    if not rows:
+        body.append("<p>No days recorded yet. The worker records one on every pass; "
+                    "<code>tradingagents snapshot</code> records one now.</p>")
+    else:
+        body.append('<div class="wrap"><table><tr><th>Day</th><th>Recorded at</th><th>Positions</th><th>Equity</th><th>Account</th></tr>')
+        for d in rows:
+            body.append(f'<tr><td class="l"><a href="/day/{d["date"]}">{d["date"]}</a></td><td class="l">{html.escape(d["as_of"][11:16])}</td>'
+                        f'<td>{d["positions"]}</td><td>{_num(d["equity"], 0)}</td>'
+                        f'<td class="l">{"paper" if d["paper"] else "LIVE"}</td></tr>')
+        body.append("</table></div>")
+    return _page("Past days", "\n".join(body))
+
+
+@app.get("/day/{day}", response_class=HTMLResponse)
+def day(day: str):
+    record = snapshots.read_day(_results_dir(), day)
+    if record is None:
+        raise HTTPException(404, f"no record of {day}")
+    rows = record.get("positions", [])
+    body = [f'<p class="meta"><a href="/days">← past days</a> · <a href="/">today</a></p>',
+            f"<h1>On {html.escape(day)}</h1>",
+            f'<p class="meta">Recorded at {html.escape(record.get("as_of", "")[11:16])} · '
+            f'{"paper" if record.get("paper") else "LIVE"} account · equity {_num(record.get("equity"), 0)} · '
+            f'cash {_num(record.get("cash"), 0)} · {len(rows)} position(s)</p>']
+    body.append("<h2>Positions held</h2>")
+    body.append(_positions_table(rows) if rows else "<p>No positions were held.</p>")
+    book_path, orders = data.latest_book(_results_dir(), day)
+    if orders:
+        body.append(f"<h2>The book sized for {html.escape(day)}</h2>")
+        body.append(f'<p class="meta">From <code>{html.escape(book_path.name)}</code></p>')
+        body.append(_book_table(orders, {r["ticker"] for r in rows}))
+    return _page(f"On {day}", "\n".join(body))
 
 
 @app.get("/report/{ticker}", response_class=HTMLResponse)

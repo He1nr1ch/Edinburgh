@@ -114,3 +114,45 @@ def test_a_models_raw_html_is_not_rendered(tmp_path, monkeypatch):
     monkeypatch.setattr(web, "_results_dir", lambda: tmp_path)
     page = TestClient(web.app).get("/report/X/2026-11-04").text
     assert "<script>" not in page and "&lt;script&gt;" in page
+
+
+@pytest.mark.unit
+def test_a_days_record_freezes_the_positions_and_the_decision_that_stood_that_day(tmp_path):
+    from datetime import datetime
+
+    from tradingagents.web import snapshots
+
+    _save(tmp_path, "run_a", "COIN", "2026-11-04", COIN)
+    later = COIN | {"final_trade_decision": "**Rating**: Hold\n\n**Price Target**: 150"}
+    _save(tmp_path, "run_b", "COIN", "2026-11-10", later)
+    account = Account(100_000, 60_000, True, (Holding("COIN", -22, -3_200.0, 151.50, "us_equity"),))
+
+    path = snapshots.write_snapshot(tmp_path, account, 2.0, datetime(2026, 11, 6, 16, 5))
+    assert path == tmp_path / "positions" / "2026-11-06.json"
+    record = snapshots.read_day(tmp_path, "2026-11-06")
+    (row,) = record["positions"]
+    assert row["decision_date"] == "2026-11-04" and row["decision"]["target"] == 120   # not the 11-10 Hold
+    assert snapshots.list_days(tmp_path)[0] == {"date": "2026-11-06", "as_of": "2026-11-06T16:05:00",
+                                                "equity": 100_000, "positions": 1, "paper": True}
+    assert data.decisions_as_of(tmp_path, "2026-11-03") == {}
+
+
+@pytest.mark.unit
+def test_the_calendar_and_a_past_day_page(client, tmp_path):
+    from datetime import datetime
+
+    from tradingagents.web import snapshots
+
+    account = Account(100_000, 60_000, True, (Holding("COIN", -22, -3_200.0, 151.50, "us_equity"),))
+    snapshots.write_snapshot(tmp_path, account, 2.0, datetime(2026, 11, 6, 16, 5))
+    (tmp_path / "backtest" / "sizing" / "runs_2026-11-06.csv").write_text(
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target\n"
+        "COIN,short,Underweight,Neutral,3,-3.46,151.5,-22,3333,162.02,Risk Manager,120\n")
+
+    days = client.get("/days").text
+    assert '/day/2026-11-06' in days and "16:05" in days
+    page = client.get("/day/2026-11-06").text
+    assert "On 2026-11-06" in page and "COIN" in page and "/report/COIN/2026-11-04" in page
+    assert "The book sized for 2026-11-06" in page and ">yes<" in page
+    assert client.get("/day/2026-01-01").status_code == 404
+    assert 'href="/days"' in client.get("/").text

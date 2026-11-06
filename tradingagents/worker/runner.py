@@ -19,6 +19,7 @@ from tradingagents.worker.duty import Duty, Finding, WorkerContext
 from tradingagents.worker.notify import send_email
 from tradingagents.worker.policy import refusal
 from tradingagents.worker.state import WorkerState
+from tradingagents.web.snapshots import write_snapshot
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,12 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
             if f.action:
                 _act(f, context, market_open, pending, open_now, dry_run)
         state.save()
+        # The day's record for the positions page: the last pass of the day
+        # leaves the close-of-day picture.
+        try:
+            write_snapshot(Path(config["results_dir"]), trading.get_account(), config.get("default_stop_pct") or 0, now)
+        except Exception as exc:
+            logger.warning("The positions snapshot could not be written: %s", exc)
 
     mode = "paper" if account.paper else "LIVE"
     _log(config, now, f"pass ({mode}, {len(context.watched())} positions watched): {len(findings)} finding(s)")

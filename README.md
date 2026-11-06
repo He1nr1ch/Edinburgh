@@ -140,7 +140,10 @@ PAIR's proxy on Colossus (`http://127.0.0.1:11434`).
 `tradingagents web --port 8010` serves the positions page: every open position
 in the Alpaca account with the desk's rating, stop (the Risk Manager's, the
 Trader's, or the 2% default), target and distance to each, a link per ticker
-to what every agent decided, and the day's sized book. Decisions are read
+to what every agent decided, and the day's sized book. The worker records the
+account on every pass to `positions/<date>.json`, so `/days` lists each day
+and `/day/<date>` shows the positions held that day, frozen with the decision
+that stood for each; `tradingagents snapshot` records a day by hand. Decisions are read
 from the results directory, so `scripts/publish_runs.sh` copies the dev box's
 run states and books to Colossus after a list run. `deploy.sh` runs it there
 as `edinburgh-web` on port 8010, read-only on the worker's data folder:
