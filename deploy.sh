@@ -12,6 +12,8 @@ set -euo pipefail
 IMAGE="thebigduck/edinburgh"
 COLOSSUS="heinrich@192.168.0.98"
 CONTAINER="edinburgh-worker"
+WEB_CONTAINER="edinburgh-web"
+WEB_PORT=8010               # Dublin's logbook has 8000
 # Both live in heinrich's home so deploys never need sudo on Colossus.
 # Provision/update the env with: scp .env heinrich@192.168.0.98:edinburgh/.env
 # (set OLLAMA_BASE_URL in it to PAIR's proxy on Colossus, http://127.0.0.1:11434)
@@ -57,9 +59,20 @@ docker run -d --name $CONTAINER --restart unless-stopped \\
     --env-file $ENV_FILE \\
     -v $DATA_DIR:/home/appuser/.tradingagents:Z \\
     $IMAGE:latest worker
+# The positions page: the same image, read-only on the same data folder.
+docker stop $WEB_CONTAINER 2>/dev/null || true
+docker rm $WEB_CONTAINER 2>/dev/null || true
+docker run -d --name $WEB_CONTAINER --restart unless-stopped \\
+    --network host \\
+    --log-opt max-size=10m --log-opt max-file=5 \\
+    --env-file $ENV_FILE \\
+    -v $DATA_DIR:/home/appuser/.tradingagents:ro,Z \\
+    $IMAGE:latest web --port $WEB_PORT
 echo "--- Last 20 log lines ---"
 sleep 3
 docker logs $CONTAINER --tail 20
+docker logs $WEB_CONTAINER --tail 5
+echo "Positions page: http://192.168.0.98:$WEB_PORT/"
 EOF
 
 echo "==> Deployed $GIT_SHA successfully"

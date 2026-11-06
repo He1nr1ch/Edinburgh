@@ -137,6 +137,15 @@ uncommitted work, so the image tag matches GitHub. Provision the env once with
 `scp .env heinrich@192.168.0.98:edinburgh/.env`, with `OLLAMA_BASE_URL` set to
 PAIR's proxy on Colossus (`http://127.0.0.1:11434`).
 
+`tradingagents web --port 8010` serves the positions page: every open position
+in the Alpaca account with the desk's rating, stop (the Risk Manager's, the
+Trader's, or the 2% default), target and distance to each, a link per ticker
+to what every agent decided, and the day's sized book. Decisions are read
+from the results directory, so `scripts/publish_runs.sh` copies the dev box's
+run states and books to Colossus after a list run. `deploy.sh` runs it there
+as `edinburgh-web` on port 8010, read-only on the worker's data folder:
+http://192.168.0.98:8010/.
+
 To run it on this machine instead, `docker compose --profile worker up -d worker`
 does the same from the compose file; set `TRADINGAGENTS_DATA_DIR` in `.env` to
 the full path of `~/.tradingagents` (Compose does not expand `~`) so the container

@@ -439,5 +439,16 @@ def worker(
         run_forever(config, llm, default_duties(), minutes, dry_run)
 
 
+@app.command()
+def web(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8010, "--port"),
+):
+    """Serve the positions page: every open position, each linked to what the agents decided."""
+    import uvicorn
+
+    uvicorn.run("tradingagents.web.app:app", host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()
