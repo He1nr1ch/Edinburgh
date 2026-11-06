@@ -241,8 +241,12 @@ def size(
         why = (f"every position is at the {cap:g}% cap; more calls or a higher --cap would fill it"
                if at_cap else "whole shares of these prices do not divide it more finely")
         console.print(f"[yellow]Short of the {gross:g}% target: {why}.[/yellow]")
+    # The floor and the top-N cuts are counted above; a line each for a hundred
+    # names is noise. What is left is the odd case worth a look: a stock too
+    # dear for one share, a zero ceiling, a missing price.
+    counted = ("outside the top", "target ", "no price target")
     for ticker, why in book.skipped:
-        if not why.startswith("outside the top"):      # counted above; 160 lines of them is noise
+        if not why.startswith(counted):
             console.print(f"[dim]no position: {ticker}: {why}[/dim]")
 
     plan = None
