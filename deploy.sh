@@ -9,7 +9,7 @@
 # loopback, and a data folder on the host for the worker's state and logs.
 set -euo pipefail
 
-IMAGE="thebigduck/edinburgh"
+IMAGE="mobyius/edinburgh-kilty-machaggis"
 COLOSSUS="heinrich@192.168.0.98"
 CONTAINER="edinburgh-worker"
 WEB_CONTAINER="edinburgh-web"
