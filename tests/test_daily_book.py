@@ -182,13 +182,12 @@ def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
 
     _decision(tmp_path, "run_a", "A", "2026-11-05", "Overweight", 94, 130)
     monkeypatch.setattr(daily, "run_sweep", fake_sweep)
-    monkeypatch.setattr(daily.trading, "last_trading_day", lambda now: "2026-11-05")
     import tradingagents.book as bk
     monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {t: 100.0 for t in tickers})
     watch = tmp_path / "w.txt"; watch.write_text("A,B,C\n")
     cfg = _cfg(tmp_path, daily_watchlist=str(watch), daily_parts=2)
 
-    built = daily.run_daily(cfg, 100_000, refresh_watchlist=False)
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
     t = json.loads(built.timing_path.read_text())
     assert t["tickers"] == 3 and t["orders"] == 1 and t["total_seconds"] >= t["sweep_seconds"] >= 0
     assert t["parts"]["sp500_x_daily_b"]["seconds"] == 45.5
