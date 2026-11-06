@@ -34,6 +34,8 @@ class Call:
     ceiling_pct: float | None       # the Risk Manager's maximum position, % of equity
     risk_level: str | None = None
     target: float | None = None     # the Portfolio Manager's price target
+    stop: float | None = None       # the Risk Manager's stop, else the Trader's
+    stop_from: str = ""             # who gave it: "Risk Manager" or "Trader"
 
     def target_move_pct(self, close: float | None) -> float | None:
         """The move from ``close`` to the target in the position's direction, as a percentage."""
@@ -41,6 +43,20 @@ class Call:
         if not side or not self.target or not close:
             return None
         return side * (self.target / close - 1) * 100
+
+
+def stop_for(call: Call, close: float, default_pct: float) -> tuple[float, str]:
+    """The stop to place, and where it came from.
+
+    The desk's stop when it gave one on the losing side of the close; else, by
+    the user's rule, ``default_pct`` from the close against the position (below
+    for a long, above for a short). A stop on the profit side would never
+    protect anything, so it counts as none.
+    """
+    side = SIDE.get(call.rating, 0)
+    if call.stop and side and (call.stop - close) * side < 0:
+        return call.stop, call.stop_from or "desk"
+    return round(close * (1 - side * default_pct / 100), 2), f"default {default_pct:g}%"
 
 
 def worth_trading(call: Call, close: float | None, min_target_pct: float) -> str | None:
@@ -71,6 +87,9 @@ class Order:
     weight_pct: float               # signed: negative is short
     price: float
     shares: int                     # signed: negative is short
+    stop: float | None = None
+    stop_from: str = ""
+    target: float | None = None
 
     @property
     def side(self) -> str:
@@ -151,7 +170,7 @@ def top_per_side(calls: list[Call], prices: dict[str, float], n: int) -> list[Ca
 
 def size_book(calls: list[Call], prices: dict[str, float], equity: float,
               gross_pct: float = 75.0, cap_pct: float = 10.0, min_target_pct: float = 0.0,
-              names_per_side: int = 0) -> Book:
+              names_per_side: int = 0, default_stop_pct: float = 2.0) -> Book:
     """The book for ``equity`` in whole shares at ``prices``.
 
     Calls whose target is under ``min_target_pct`` from the close are left out
@@ -216,8 +235,9 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
 
     for ticker, weight in weights.items():
         c, price, n = by_ticker[ticker], prices[ticker], counts[ticker]
+        stop, stop_from = stop_for(c, price, default_stop_pct)
         book.orders.append(Order(ticker, c.rating, c.risk_level, c.ceiling_pct, weight, price,
-                                 int(math.copysign(n, weight))))
+                                 int(math.copysign(n, weight)), stop, stop_from, c.target))
     book.orders.sort(key=lambda o: (o.shares < 0, -o.value))
     return book
 
@@ -233,6 +253,11 @@ def load_calls(run_dir: Path, trade_date: str) -> list[Call]:
             ceiling_pct=labelled_number(state.get("risk_assessment") or "", "Maximum Position"),
             risk_level=state.get("final_risk_level") or state.get("risk_level"),
             target=labelled_number(state.get("final_trade_decision") or "", "Price Target"),
+            stop=labelled_number(state.get("risk_assessment") or "", "Stop Loss")
+                 or labelled_number(state.get("trader_investment_plan") or "", "Stop Loss"),
+            stop_from=("Risk Manager" if labelled_number(state.get("risk_assessment") or "", "Stop Loss")
+                       else "Trader" if labelled_number(state.get("trader_investment_plan") or "", "Stop Loss")
+                       else ""),
         ))
     return calls
 

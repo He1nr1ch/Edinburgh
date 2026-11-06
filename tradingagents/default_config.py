@@ -40,6 +40,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
     "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
+    "TRADINGAGENTS_DEFAULT_STOP_PCT":        "default_stop_pct",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -227,6 +228,9 @@ def build_default_config() -> dict:
         # Of the calls that clear the floor, only this many longs and this many
         # shorts, those with the largest expected move, are sized; 0 sizes them all.
         "names_per_side": 10,
+        # When the Risk Manager and the Trader give no usable stop, the stop is this
+        # far from the close against the position: below for a long, above for a short.
+        "default_stop_pct": 2.0,
         # The daily worker (tradingagents worker). It trades by itself within these
         # limits: on a paper account unless worker_allow_live is turned on.
         "worker_trading_enabled": True,

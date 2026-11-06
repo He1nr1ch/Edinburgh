@@ -151,3 +151,39 @@ def test_a_top_name_too_dear_for_one_share_gives_its_place_to_the_next():
     assert sorted(o.ticker for o in book.orders) == ["S0", "S1", "S2"]
     assert any(t == "NVR" and "less than one share" in why for t, why in book.skipped)
     assert ("S3", "outside the top 3 on its side (+6.5% to target)") in book.skipped   # a short's profit, in its own direction
+
+
+@pytest.mark.unit
+def test_a_missing_or_wrong_side_stop_defaults_to_two_percent_against_the_position():
+    """The user's rule: no stop from the desk means a 2% stop; a stop on the profit side is no stop."""
+    from tradingagents.sizing import stop_for
+
+    assert stop_for(Call("A", "Overweight", 5, stop=95.0, stop_from="Risk Manager"), 100.0, 2) == (95.0, "Risk Manager")
+    assert stop_for(Call("A", "Overweight", 5), 100.0, 2) == (98.0, "default 2%")
+    assert stop_for(Call("A", "Overweight", 5, stop=103.0, stop_from="Trader"), 100.0, 2) == (98.0, "default 2%")
+    assert stop_for(Call("B", "Sell", 5, stop=104.0, stop_from="Trader"), 100.0, 2) == (104.0, "Trader")
+    assert stop_for(Call("B", "Underweight", 5), 100.0, 2) == (102.0, "default 2%")
+    assert stop_for(Call("B", "Underweight", 5, stop=97.0, stop_from="Risk Manager"), 100.0, 2) == (102.0, "default 2%")
+
+
+@pytest.mark.unit
+def test_orders_carry_the_stop_its_source_and_the_target():
+    calls = [Call("A", "Buy", 5, target=120.0, stop=94.0, stop_from="Risk Manager"),
+             Call("B", "Sell", 5, target=85.0)]
+    book = size_book(calls, {"A": 100.0, "B": 100.0}, equity=100_000, gross_pct=20, cap_pct=10,
+                     min_target_pct=5, default_stop_pct=2)
+    by = {o.ticker: o for o in book.orders}
+    assert (by["A"].stop, by["A"].stop_from, by["A"].target) == (94.0, "Risk Manager", 120.0)
+    assert (by["B"].stop, by["B"].stop_from, by["B"].target) == (102.0, "default 2%", 85.0)
+
+
+@pytest.mark.unit
+def test_calls_name_who_gave_the_stop(tmp_path):
+    folder = tmp_path / "X" / "TradingAgentsStrategy_logs"
+    folder.mkdir(parents=True)
+    (folder / "full_states_log_2026-11-04.json").write_text(json.dumps({
+        "company_of_interest": "X", "final_rating": "Sell", "risk_assessment": "**Maximum Position**: 3\n**Stop Loss**: not provided\n",
+        "trader_investment_plan": "**Stop Loss**: 31.68\n", "final_trade_decision": "**Price Target**: 25\n",
+    }))
+    (call,) = load_calls(tmp_path, "2026-11-04")
+    assert (call.stop, call.stop_from, call.target) == (31.68, "Trader", 25.0)

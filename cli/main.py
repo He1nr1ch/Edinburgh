@@ -215,7 +215,8 @@ def size(
         raise typer.Exit(code=1)
     floor = DEFAULT_CONFIG["min_target_pct"] if min_target is None else min_target
     per_side = DEFAULT_CONFIG["names_per_side"] if top is None else top
-    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor, per_side)
+    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor, per_side,
+                     DEFAULT_CONFIG["default_stop_pct"])
     outside = sum(1 for _, why in book.skipped if why.startswith("outside the top"))
     if outside:
         console.print(f"[dim]{outside} call(s) cleared the floor but sit outside the top {per_side} on their side[/dim]")
@@ -225,11 +226,15 @@ def size(
                       f"{', '.join(under[:12])}{' …' if len(under) > 12 else ''}[/dim]")
 
     table = Table(title=f"Book for {equity:,.0f} on {date}" + (f": top {per_side} longs and shorts" if per_side else ""))
-    for column in ("Ticker", "Side", "Rating", "Risk", "Ceiling", "Weight", "Price", "Shares", "Value"):
-        table.add_column(column, justify="right" if column not in ("Ticker", "Side", "Rating", "Risk") else "left")
+    for column in ("Ticker", "Side", "Rating", "Risk", "Ceiling", "Weight", "Price", "Shares", "Value", "Stop", "Stop from", "Target"):
+        table.add_column(column, justify="right" if column not in ("Ticker", "Side", "Rating", "Risk", "Stop from") else "left")
     for o in book.orders:
         table.add_row(o.ticker, o.side, o.rating, o.risk_level or "", f"{o.ceiling_pct:g}%",
-                      f"{o.weight_pct:+.2f}%", f"{o.price:,.2f}", f"{o.shares:+,d}", f"{o.value:,.0f}")
+                      f"{o.weight_pct:+.2f}%", f"{o.price:,.2f}", f"{o.shares:+,d}", f"{o.value:,.0f}",
+                      f"{o.stop:,.2f}" if o.stop else "", o.stop_from, f"{o.target:,.2f}" if o.target else "")
+    defaulted = sum(1 for o in book.orders if o.stop_from.startswith("default"))
+    if defaulted:
+        console.print(f"[dim]{defaulted} stop(s) set by default: the desk gave none, or one on the wrong side[/dim]")
     console.print(table)
     console.print(
         f"Long {book.long_value:,.0f} · short {book.short_value:,.0f} · "
@@ -285,13 +290,15 @@ def size(
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value"])
+        writer.writerow(["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value",
+                         "stop", "stop_from", "target"])
         for o in book.orders:
             writer.writerow([o.ticker, o.side, o.rating, o.risk_level or "", o.ceiling_pct,
-                             round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2)])
+                             round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2),
+                             o.stop, o.stop_from, o.target or ""])
         if plan and plan.contracts:
             writer.writerow([plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
-                             plan.quote.ask, plan.contracts, round(plan.cost, 2)])
+                             plan.quote.ask, plan.contracts, round(plan.cost, 2), "", "", ""])
     console.print(f"Orders saved to {out}")
 
 
