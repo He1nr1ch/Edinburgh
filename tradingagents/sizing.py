@@ -133,12 +133,31 @@ def target_weights(calls: list[Call], gross_pct: float, cap_pct: float) -> dict[
     return {c.ticker: SIDE[c.rating] * weights[c.ticker] for c in calls if c.ticker in weights}
 
 
+def top_per_side(calls: list[Call], prices: dict[str, float], n: int) -> list[Call]:
+    """The ``n`` longs and ``n`` shorts with the largest expected move to their target.
+
+    The user's rule: a book of the ten best of each side, not every call that
+    clears the bar. Calls without a measurable move rank last; 0 keeps every call.
+    """
+    if n <= 0:
+        return list(calls)
+    kept = []
+    for side in (1, -1):
+        group = [c for c in calls if SIDE.get(c.rating) == side]
+        group.sort(key=lambda c: (-(c.target_move_pct(prices.get(c.ticker)) or 0.0), c.ticker))
+        kept.extend(group[:n])
+    return kept
+
+
 def size_book(calls: list[Call], prices: dict[str, float], equity: float,
-              gross_pct: float = 75.0, cap_pct: float = 10.0, min_target_pct: float = 0.0) -> Book:
+              gross_pct: float = 75.0, cap_pct: float = 10.0, min_target_pct: float = 0.0,
+              names_per_side: int = 0) -> Book:
     """The book for ``equity`` in whole shares at ``prices``.
 
     Calls whose target is under ``min_target_pct`` from the close are left out
-    (see :func:`worth_trading`); 0 takes every call.
+    (see :func:`worth_trading`); 0 takes every call. Of those left, only the
+    ``names_per_side`` longs and shorts with the largest expected move are
+    sized (see :func:`top_per_side`); 0 sizes them all.
 
     Each position is rounded down to whole shares, then single shares go back
     to the positions furthest below their weight, while the book stays within
@@ -159,7 +178,13 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
             book.skipped.append((c.ticker, "no closing price"))
         else:
             taken.append(c)
-    priced = [c for c in taken if prices.get(c.ticker)]
+    chosen = top_per_side(taken, prices, names_per_side)
+    for c in taken:
+        if c not in chosen:
+            move = c.target_move_pct(prices.get(c.ticker))
+            book.skipped.append((c.ticker, f"outside the top {names_per_side} on its side"
+                                           + (f" ({move:+.1f}% to target)" if move is not None else "")))
+    priced = [c for c in chosen if prices.get(c.ticker)]
     by_ticker = {c.ticker: c for c in priced}
     weights = target_weights(priced, gross_pct, cap_pct)
     counts = {t: math.floor(equity * abs(w) / 100 / prices[t]) for t, w in weights.items()}

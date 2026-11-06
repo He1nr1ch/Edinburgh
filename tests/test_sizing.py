@@ -120,3 +120,21 @@ def test_calls_carry_the_portfolio_managers_target(tmp_path):
     }))
     (call,) = load_calls(tmp_path, "2026-11-04")
     assert call.target == 198.77 and call.target_move_pct(200.13) == pytest.approx(0.68, abs=0.01)
+
+
+@pytest.mark.unit
+def test_the_book_is_the_top_n_longs_and_shorts_by_expected_move():
+    from tradingagents.sizing import top_per_side
+
+    longs = [Call(f"L{i}", "Overweight", 5, target=100 + 6 + i) for i in range(4)]     # +6% .. +9%
+    shorts = [Call(f"S{i}", "Underweight", 5, target=100 - 6 - i) for i in range(4)]  # -6% .. -9%
+    prices = {c.ticker: 100.0 for c in longs + shorts}
+
+    kept = top_per_side(longs + shorts, prices, 2)
+    assert [c.ticker for c in kept] == ["L3", "L2", "S3", "S2"]
+    assert top_per_side(longs + shorts, prices, 0) == longs + shorts
+
+    book = size_book(longs + shorts, prices, equity=100_000, gross_pct=40, cap_pct=10,
+                     min_target_pct=5, names_per_side=2)
+    assert sorted(o.ticker for o in book.orders) == ["L2", "L3", "S2", "S3"]
+    assert ("L0", "outside the top 2 on its side (+6.0% to target)") in book.skipped

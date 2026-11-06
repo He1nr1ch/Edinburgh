@@ -196,6 +196,7 @@ def size(
     gross: float = typer.Option(75.0, "--gross", help="Target gross exposure, longs plus shorts, as % of equity"),
     cap: float = typer.Option(10.0, "--cap", help="Most any one position may be, as % of equity"),
     min_target: float = typer.Option(None, "--min-target", help="Take a call only when its target is more than this % from the close (default min_target_pct)"),
+    top: int = typer.Option(None, "--top", help="Size only this many longs and this many shorts, by expected move (default names_per_side; 0 for all)"),
     hedge: bool = typer.Option(True, "--hedge/--no-hedge", help="Price SPY calls to cover a net-short book"),
     record_hedge: bool = typer.Option(False, "--record-hedge", help="Record the calls this plan buys as bought, so later runs do not hedge again"),
 ):
@@ -213,13 +214,17 @@ def size(
         console.print(f"[red]No calls for {date} under {', '.join(run_ids)} in {root}[/red]")
         raise typer.Exit(code=1)
     floor = DEFAULT_CONFIG["min_target_pct"] if min_target is None else min_target
-    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor)
+    per_side = DEFAULT_CONFIG["names_per_side"] if top is None else top
+    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor, per_side)
+    outside = sum(1 for _, why in book.skipped if why.startswith("outside the top"))
+    if outside:
+        console.print(f"[dim]{outside} call(s) cleared the floor but sit outside the top {per_side} on their side[/dim]")
     under = [t for t, why in book.skipped if "minimum" in why or "no price target" in why or "wrong side" in why]
     if under:
         console.print(f"[dim]{len(under)} call(s) left out for a target under {floor:g}% or missing: "
                       f"{', '.join(under[:12])}{' …' if len(under) > 12 else ''}[/dim]")
 
-    table = Table(title=f"Book for {equity:,.0f} on {date}")
+    table = Table(title=f"Book for {equity:,.0f} on {date}" + (f": top {per_side} longs and shorts" if per_side else ""))
     for column in ("Ticker", "Side", "Rating", "Risk", "Ceiling", "Weight", "Price", "Shares", "Value"):
         table.add_column(column, justify="right" if column not in ("Ticker", "Side", "Rating", "Risk") else "left")
     for o in book.orders:

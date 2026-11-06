@@ -39,6 +39,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
+    "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -223,6 +224,9 @@ def build_default_config() -> dict:
         # A call is sized only when its target is more than this far from the close
         # in its own direction (a long's above, a short's below); 0 takes every call.
         "min_target_pct": 5.0,
+        # Of the calls that clear the floor, only this many longs and this many
+        # shorts, those with the largest expected move, are sized; 0 sizes them all.
+        "names_per_side": 10,
         # The daily worker (tradingagents worker). It trades by itself within these
         # limits: on a paper account unless worker_allow_live is turned on.
         "worker_trading_enabled": True,
