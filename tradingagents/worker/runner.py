@@ -25,9 +25,11 @@ logger = logging.getLogger(__name__)
 
 
 def default_duties() -> list[Duty]:
-    from tradingagents.worker.news import NewsDuty
+    """The Watcher's two guards: the stop first (arithmetic, no model), then the news."""
+    from tradingagents.worker.news import WatcherDuty
+    from tradingagents.worker.stops import StopDuty
 
-    return [NewsDuty()]
+    return [StopDuty(), WatcherDuty()]
 
 
 def _log(config: dict, now: datetime, text: str) -> None:

@@ -154,3 +154,78 @@ def test_the_forever_loop_sleeps_through_the_close_and_survives_errors(monkeypat
     with pytest.raises(Stop):
         runner.run_forever(CONFIG, None, [], 5)
     assert slept == [15 * 60, 60]      # a 15-minute nap toward Monday's open, then the retry wait
+
+
+def _decision(results_dir, ticker, date, **state):
+    folder = results_dir / "backtest" / "run" / ticker / "TradingAgentsStrategy_logs"
+    folder.mkdir(parents=True, exist_ok=True)
+    import json as _json
+    (folder / f"full_states_log_{date}.json").write_text(_json.dumps({"company_of_interest": ticker, **state}))
+
+
+@pytest.mark.unit
+def test_the_stop_guard_closes_a_position_through_its_stop_and_leaves_the_rest(tmp_path):
+    from tradingagents.worker.stops import StopDuty, breached, standing_stop
+
+    _decision(tmp_path, "JPM", "2026-11-04", final_rating="Overweight",
+              risk_assessment="**Maximum Position**: 5\n\n**Stop Loss**: 341.64\n", final_trade_decision="**Price Target**: 385\n")
+    _decision(tmp_path, "T", "2026-11-04", final_rating="Underweight",
+              risk_assessment="**Maximum Position**: 2\n\n**Stop Loss**: 88.09\n", final_trade_decision="**Price Target**: 75\n")
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "default_stop_pct": 2.0}
+    jpm_fine = Holding("JPM", 10, 3_500.0, 352.11, "us_equity")          # 350, above the 341.64 stop
+    jpm_hit = Holding("JPM", 10, 3_400.0, 352.11, "us_equity")           # 340, through it
+    t_hit = Holding("T", -100, -8_900.0, 83.25, "us_equity")             # short at 83.25, price 89 > 88.09
+    orphan = Holding("ZZZ", 50, 4_800.0, 100.0, "us_equity")             # no decision: 2% from entry is 98; price 96
+    ctx = WorkerContext(Account(100_000, 0, True, (jpm_fine, jpm_hit, t_hit, orphan)), datetime.now(UTC), cfg, None)
+
+    from tradingagents.web import data
+    decisions = data.find_decisions(tmp_path)
+    assert standing_stop(jpm_fine, decisions, 2.0) == (341.64, "Risk Manager")
+    assert standing_stop(orphan, decisions, 2.0) == (98.0, "default 2%")
+    assert not breached(jpm_fine, 341.64) and breached(jpm_hit, 341.64) and breached(t_hit, 88.09)
+
+    findings = StopDuty().run(ctx)
+    assert [(f.symbol, f.action.kind, f.action.side, f.action.qty) for f in findings] == [
+        ("JPM", "exit", "sell", 10), ("T", "exit", "buy", 100), ("ZZZ", "exit", "sell", 50)]
+    assert all(f.severity == "urgent" for f in findings)
+    assert "through the stop 341.64 (Risk Manager)" in findings[0].detail
+
+
+@pytest.mark.unit
+def test_the_watcher_judges_news_against_the_desks_case(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from tradingagents.worker import news
+
+    _decision(tmp_path, "JPM", "2026-11-04", final_rating="Overweight",
+              risk_assessment="**Stop Loss**: 341.64\n",
+              final_trade_decision="**Rating**: Overweight\n\n**Executive Summary**: Buy the dip.\n\n"
+                                   "**Investment Thesis**: Net interest income grows; the known risk is the Basel capital rule.\n\n"
+                                   "**Price Target**: 385\n\n**Time Horizon**: 1-3 months",
+              news_report="## JPM News\n\n### Basel III endgame rule lands (Reuters)")
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_news_lookback_hours": 18}
+    article = {"id": "a1", "headline": "JPMorgan CFO resigns abruptly", "summary": "", "source": "WSJ",
+               "created_at": datetime(2026, 11, 6, 15, 0, tzinfo=UTC), "url": "u"}
+    monkeypatch.setattr(news, "articles_since", lambda s, since, limit=20: [article])
+    monkeypatch.setattr(news, "_name", lambda s: "JPMorgan Chase")
+    captured = {}
+    structured = MagicMock()
+    structured.invoke.side_effect = lambda prompt: captured.__setitem__("prompt", prompt) or news.NewsAssessment(
+        materiality="high", direction="adverse", accounted_for=False, summary="CFO out.", rationale="Not in the thesis.")
+    llm = MagicMock(); llm.with_structured_output.return_value = structured
+    state = WorkerState.load(tmp_path / "state.json")
+    ctx = WorkerContext(Account(100_000, 0, True, (LONG,)), datetime(2026, 11, 6, 15, 5, tzinfo=UTC), cfg, state, llm)
+
+    (finding,) = news.WatcherDuty().run(ctx)
+    prompt = captured["prompt"]
+    assert "The desk's case, decided on 2026-11-04 (Overweight, target 385.00, stop 341.64, 1-3 months)" in prompt
+    assert "the known risk is the Basel capital rule" in prompt and "Basel III endgame rule lands" in prompt
+    assert "CFO resigns" in prompt
+    assert finding.severity == "urgent" and finding.action.kind == "exit" and finding.action.qty == 40
+    assert "not accounted for" in finding.headline
+
+    structured.invoke.side_effect = lambda prompt: news.NewsAssessment(
+        materiality="high", direction="adverse", accounted_for=True, summary="Basel rule.", rationale="Known.")
+    state.last_check.clear(); state.seen.clear()
+    (finding,) = news.WatcherDuty().run(ctx)
+    assert finding.action is None and finding.severity == "notable" and "(accounted for)" in finding.headline

@@ -118,12 +118,17 @@ book: the weekly at-the-money call unless the monthly costs less than
 `hedge_monthly_ratio` (2.1) times it. `--record-hedge` records the calls as
 bought, so later runs do not hedge again until they expire.
 
-`tradingagents worker` watches the Alpaca account's equity positions every
-market day and sleeps in between. Each pass reads the news since the last one,
-has the model judge it for the position as held, and acts by fixed rules:
-adverse, unexpected news exits (high) or halves (medium) a position; urgent,
-unexpected good news adds a quarter, up to `worker_position_cap_pct`. A close or
-trim first cancels the symbol's waiting orders. It trades a paper account only,
+`tradingagents worker` runs the Watcher over the Alpaca account's equity
+positions every market day and sleeps in between. Each pass has two guards.
+The stop guard checks every position's price against the stop that stands for
+it (the Risk Manager's, the Trader's, or the 2% default from entry) and closes
+a position that is through it, no model asked. The news guard reads what was
+published since the last pass and has the model judge it against the desk's
+own case, the Portfolio Manager's thesis and the news the desk had read when it
+decided: adverse, material news the case did not account for exits (high) or
+halves (medium) the position; favorable, material, unaccounted-for news adds a
+quarter, up to `worker_position_cap_pct`. A close or trim first cancels the
+symbol's waiting orders. It trades a paper account only,
 unless `worker_allow_live` is on; `--dry-run` sends nothing, `--once` makes one
 pass. Alerts go by email when `TRADINGAGENTS_SMTP_USER` and
 `TRADINGAGENTS_SMTP_PASSWORD` are set (for Gmail, an app password).
