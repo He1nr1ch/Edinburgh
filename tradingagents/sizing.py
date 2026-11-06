@@ -178,16 +178,27 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
             book.skipped.append((c.ticker, "no closing price"))
         else:
             taken.append(c)
-    chosen = top_per_side(taken, prices, names_per_side)
+    # A chosen name whose weight is under one share (a $6,000 stock on a small
+    # book) gives up its place to the next on its side, so the book keeps its
+    # count. Each pass drops such names and refills; the pool only shrinks.
+    pool = [c for c in taken if prices.get(c.ticker)]
+    while True:
+        chosen = top_per_side(pool, prices, names_per_side)
+        weights = target_weights(chosen, gross_pct, cap_pct)
+        counts = {t: math.floor(equity * abs(w) / 100 / prices[t]) for t, w in weights.items()}
+        unbuyable = [t for t, n in counts.items() if n == 0]
+        if not unbuyable:
+            break
+        for t in unbuyable:
+            book.skipped.append((t, f"{abs(weights[t]):.2f}% is less than one share at {prices[t]:,.2f}"))
+        pool = [c for c in pool if c.ticker not in unbuyable]
     for c in taken:
-        if c not in chosen:
+        if c not in chosen and c.ticker not in dict(book.skipped):
             move = c.target_move_pct(prices.get(c.ticker))
             book.skipped.append((c.ticker, f"outside the top {names_per_side} on its side"
                                            + (f" ({move:+.1f}% to target)" if move is not None else "")))
-    priced = [c for c in chosen if prices.get(c.ticker)]
+    priced = chosen
     by_ticker = {c.ticker: c for c in priced}
-    weights = target_weights(priced, gross_pct, cap_pct)
-    counts = {t: math.floor(equity * abs(w) / 100 / prices[t]) for t, w in weights.items()}
 
     budget = equity * gross_pct / 100 - sum(n * prices[t] for t, n in counts.items())
     while True:
@@ -205,9 +216,6 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
 
     for ticker, weight in weights.items():
         c, price, n = by_ticker[ticker], prices[ticker], counts[ticker]
-        if n == 0:
-            book.skipped.append((ticker, f"{abs(weight):.2f}% is less than one share at {price:,.2f}"))
-            continue
         book.orders.append(Order(ticker, c.rating, c.risk_level, c.ceiling_pct, weight, price,
                                  int(math.copysign(n, weight))))
     book.orders.sort(key=lambda o: (o.shares < 0, -o.value))

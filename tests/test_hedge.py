@@ -40,8 +40,9 @@ def test_a_missing_quote_falls_to_the_other_expiry():
 def test_contracts_cover_the_net_short_exposure_and_none_for_a_net_long_book():
     assert contracts_for(-44_809, 759.97) == 1        # 0.59 of a contract
     assert contracts_for(-120_000, 759.97) == 2       # 1.58
-    assert contracts_for(-5_000, 759.97) == 1         # any net short gets at least one
+    assert contracts_for(-5_000, 759.97) == 0         # 0.07: a call would add more long than it covers
     assert contracts_for(30_000, 759.97) == 0
+    assert "under half a contract" in plan_hedge(-5_000, 759.97, WEEKLY, None).reason
 
 
 @pytest.mark.unit

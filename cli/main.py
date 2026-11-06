@@ -242,7 +242,8 @@ def size(
                if at_cap else "whole shares of these prices do not divide it more finely")
         console.print(f"[yellow]Short of the {gross:g}% target: {why}.[/yellow]")
     for ticker, why in book.skipped:
-        console.print(f"[dim]no position: {ticker}: {why}[/dim]")
+        if not why.startswith("outside the top"):      # counted above; 160 lines of them is noise
+            console.print(f"[dim]no position: {ticker}: {why}[/dim]")
 
     plan = None
     if hedge:

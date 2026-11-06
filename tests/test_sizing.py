@@ -138,3 +138,16 @@ def test_the_book_is_the_top_n_longs_and_shorts_by_expected_move():
                      min_target_pct=5, names_per_side=2)
     assert sorted(o.ticker for o in book.orders) == ["L2", "L3", "S2", "S3"]
     assert ("L0", "outside the top 2 on its side (+6.0% to target)") in book.skipped
+
+
+@pytest.mark.unit
+def test_a_top_name_too_dear_for_one_share_gives_its_place_to_the_next():
+    """NVR at $6,377 ranked first among the shorts and got no shares, leaving nine."""
+    shorts = [Call("NVR", "Underweight", 2, target=4_864.0)] + \
+             [Call(f"S{i}", "Underweight", 2, target=100 - 8 + i * 0.5) for i in range(4)]   # -8%, -7.5%, -7%, -6.5%
+    prices = {"NVR": 6_376.82, "S0": 100.0, "S1": 100.0, "S2": 100.0, "S3": 100.0}
+    book = size_book(shorts, prices, equity=100_000, gross_pct=6, cap_pct=10, min_target_pct=5, names_per_side=3)
+
+    assert sorted(o.ticker for o in book.orders) == ["S0", "S1", "S2"]
+    assert any(t == "NVR" and "less than one share" in why for t, why in book.skipped)
+    assert ("S3", "outside the top 3 on its side (+6.5% to target)") in book.skipped   # a short's profit, in its own direction

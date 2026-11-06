@@ -87,10 +87,14 @@ def choose_expiry(weekly: OptionQuote | None, monthly: OptionQuote | None,
 
 
 def contracts_for(exposure: float, spy_price: float) -> int:
-    """Calls to cover a net-short exposure, to the nearest contract; none for a net-long book."""
+    """Calls to cover a net-short exposure, to the nearest whole contract.
+
+    None for a net-long book, and none when the exposure is under half a
+    contract's notional: a call then adds more long exposure than it covers.
+    """
     if exposure >= 0:
         return 0
-    return max(1, round(-exposure / (100 * spy_price)))
+    return round(-exposure / (100 * spy_price))
 
 
 def plan_hedge(exposure: float, spy_price: float, weekly: OptionQuote | None,
@@ -98,8 +102,10 @@ def plan_hedge(exposure: float, spy_price: float, weekly: OptionQuote | None,
                held: tuple[HeldHedge, ...] = ()) -> Hedge:
     contracts = contracts_for(exposure, spy_price)
     if contracts == 0:
-        return Hedge(exposure, spy_price, 0, None, None, weekly, monthly,
-                     "the book is not net short, so a rally does not hurt it", held)
+        why = ("the book is not net short, so a rally does not hurt it" if exposure >= 0 else
+               f"the net-short exposure ({exposure:,.0f}) is under half a contract's {100 * spy_price:,.0f}, "
+               "so a call would add more long exposure than it covers")
+        return Hedge(exposure, spy_price, 0, None, None, weekly, monthly, why, held)
     if held:
         names = ", ".join(f"{h.contracts} {h.symbol} until {h.expiry}" for h in held)
         return Hedge(exposure, spy_price, 0, None, None, weekly, monthly, f"already hedged: {names}", held)
