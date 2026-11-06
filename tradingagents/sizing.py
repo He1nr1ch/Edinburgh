@@ -33,6 +33,33 @@ class Call:
     rating: str
     ceiling_pct: float | None       # the Risk Manager's maximum position, % of equity
     risk_level: str | None = None
+    target: float | None = None     # the Portfolio Manager's price target
+
+    def target_move_pct(self, close: float | None) -> float | None:
+        """The move from ``close`` to the target in the position's direction, as a percentage."""
+        side = SIDE.get(self.rating)
+        if not side or not self.target or not close:
+            return None
+        return side * (self.target / close - 1) * 100
+
+
+def worth_trading(call: Call, close: float | None, min_target_pct: float) -> str | None:
+    """Why ``call`` is not taken, or None when it is.
+
+    The user's rule: a trade needs a target more than ``min_target_pct`` from
+    the close in its own direction. A call with no target, or one on the wrong
+    side, has no expected profit to show and is not taken either.
+    """
+    if min_target_pct <= 0:
+        return None
+    move = call.target_move_pct(close)
+    if move is None:
+        return "no price target" if not call.target else "no closing price"
+    if move <= 0:
+        return f"target on the wrong side of the close ({move:+.1f}%)"
+    if move < min_target_pct:
+        return f"target {move:+.1f}% is under the {min_target_pct:g}% minimum"
+    return None
 
 
 @dataclass(frozen=True)
@@ -107,8 +134,11 @@ def target_weights(calls: list[Call], gross_pct: float, cap_pct: float) -> dict[
 
 
 def size_book(calls: list[Call], prices: dict[str, float], equity: float,
-              gross_pct: float = 75.0, cap_pct: float = 10.0) -> Book:
+              gross_pct: float = 75.0, cap_pct: float = 10.0, min_target_pct: float = 0.0) -> Book:
     """The book for ``equity`` in whole shares at ``prices``.
+
+    Calls whose target is under ``min_target_pct`` from the close are left out
+    (see :func:`worth_trading`); 0 takes every call.
 
     Each position is rounded down to whole shares, then single shares go back
     to the positions furthest below their weight, while the book stays within
@@ -116,14 +146,20 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
     a list of small positions several percent short of the target.
     """
     book = Book(equity=equity, target_gross_pct=gross_pct, cap_pct=cap_pct)
+    taken = []
     for c in calls:
         if not SIDE.get(c.rating):
             continue
-        if not (c.ceiling_pct or 0) > 0:
+        why_not = worth_trading(c, prices.get(c.ticker), min_target_pct)
+        if why_not:
+            book.skipped.append((c.ticker, why_not))
+        elif not (c.ceiling_pct or 0) > 0:
             book.skipped.append((c.ticker, f"{c.rating} with a Risk Manager ceiling of 0%"))
         elif not prices.get(c.ticker):
             book.skipped.append((c.ticker, "no closing price"))
-    priced = [c for c in calls if prices.get(c.ticker)]
+        else:
+            taken.append(c)
+    priced = [c for c in taken if prices.get(c.ticker)]
     by_ticker = {c.ticker: c for c in priced}
     weights = target_weights(priced, gross_pct, cap_pct)
     counts = {t: math.floor(equity * abs(w) / 100 / prices[t]) for t, w in weights.items()}
@@ -163,6 +199,7 @@ def load_calls(run_dir: Path, trade_date: str) -> list[Call]:
             rating=state.get("final_rating") or "",
             ceiling_pct=labelled_number(state.get("risk_assessment") or "", "Maximum Position"),
             risk_level=state.get("final_risk_level") or state.get("risk_level"),
+            target=labelled_number(state.get("final_trade_decision") or "", "Price Target"),
         ))
     return calls
 

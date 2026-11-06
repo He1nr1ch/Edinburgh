@@ -195,6 +195,7 @@ def size(
     equity: float = typer.Option(100_000, "--equity", help="Portfolio equity to size against"),
     gross: float = typer.Option(75.0, "--gross", help="Target gross exposure, longs plus shorts, as % of equity"),
     cap: float = typer.Option(10.0, "--cap", help="Most any one position may be, as % of equity"),
+    min_target: float = typer.Option(None, "--min-target", help="Take a call only when its target is more than this % from the close (default min_target_pct)"),
     hedge: bool = typer.Option(True, "--hedge/--no-hedge", help="Price SPY calls to cover a net-short book"),
     record_hedge: bool = typer.Option(False, "--record-hedge", help="Record the calls this plan buys as bought, so later runs do not hedge again"),
 ):
@@ -211,7 +212,12 @@ def size(
     if not calls:
         console.print(f"[red]No calls for {date} under {', '.join(run_ids)} in {root}[/red]")
         raise typer.Exit(code=1)
-    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap)
+    floor = DEFAULT_CONFIG["min_target_pct"] if min_target is None else min_target
+    book = size_book(calls, last_closes([c.ticker for c in calls], date), equity, gross, cap, floor)
+    under = [t for t, why in book.skipped if "minimum" in why or "no price target" in why or "wrong side" in why]
+    if under:
+        console.print(f"[dim]{len(under)} call(s) left out for a target under {floor:g}% or missing: "
+                      f"{', '.join(under[:12])}{' …' if len(under) > 12 else ''}[/dim]")
 
     table = Table(title=f"Book for {equity:,.0f} on {date}")
     for column in ("Ticker", "Side", "Rating", "Risk", "Ceiling", "Weight", "Price", "Shares", "Value"):

@@ -38,6 +38,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
+    "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -219,6 +220,9 @@ def build_default_config() -> dict:
         # A net-short book is hedged with the one-week at-the-money SPY call,
         # unless the one-month call costs less than this many times the weekly.
         "hedge_monthly_ratio": 2.1,
+        # A call is sized only when its target is more than this far from the close
+        # in its own direction (a long's above, a short's below); 0 takes every call.
+        "min_target_pct": 5.0,
         # The daily worker (tradingagents worker). It trades by itself within these
         # limits: on a paper account unless worker_allow_live is turned on.
         "worker_trading_enabled": True,

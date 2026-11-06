@@ -82,3 +82,41 @@ def test_calls_are_read_from_a_runs_saved_states(tmp_path):
     }))
     assert load_calls(tmp_path, "2026-10-23") == [Call("NVDA", "Underweight", 2.5, "Neutral")]
     assert load_calls(tmp_path, "2026-10-16") == []
+
+
+@pytest.mark.unit
+def test_a_call_needs_a_target_more_than_the_minimum_away_in_its_own_direction():
+    from tradingagents.sizing import worth_trading
+
+    long = Call("A", "Overweight", 5, target=106.0)
+    assert worth_trading(long, 100.0, 5) is None                      # +6%
+    assert "under the 5% minimum" in worth_trading(Call("A", "Overweight", 5, target=104.0), 100.0, 5)
+    assert "wrong side" in worth_trading(Call("A", "Overweight", 5, target=95.0), 100.0, 5)
+    short = Call("B", "Underweight", 5, target=93.0)
+    assert worth_trading(short, 100.0, 5) is None                     # -7% for a short
+    assert "under the 5% minimum" in worth_trading(Call("B", "Sell", 5, target=97.0), 100.0, 5)
+    assert "wrong side" in worth_trading(Call("B", "Sell", 5, target=108.0), 100.0, 5)
+    assert "no price target" in worth_trading(Call("C", "Sell", 5), 100.0, 5)
+    assert worth_trading(Call("C", "Sell", 5), 100.0, 0) is None      # 0 turns the rule off
+
+
+@pytest.mark.unit
+def test_the_book_leaves_out_small_target_calls_and_says_why():
+    calls = [Call("BIG", "Buy", 5, target=120.0), Call("TINY", "Buy", 5, target=101.0), Call("SH", "Sell", 5, target=90.0)]
+    prices = {"BIG": 100.0, "TINY": 100.0, "SH": 100.0}
+    book = size_book(calls, prices, equity=100_000, gross_pct=20, cap_pct=10, min_target_pct=5)
+
+    assert sorted(o.ticker for o in book.orders) == ["BIG", "SH"]
+    assert ("TINY", "target +1.0% is under the 5% minimum") in book.skipped
+
+
+@pytest.mark.unit
+def test_calls_carry_the_portfolio_managers_target(tmp_path):
+    folder = tmp_path / "NVDA" / "TradingAgentsStrategy_logs"
+    folder.mkdir(parents=True)
+    (folder / "full_states_log_2026-11-04.json").write_text(json.dumps({
+        "company_of_interest": "NVDA", "final_rating": "Underweight", "final_risk_level": "Neutral",
+        "risk_assessment": "**Maximum Position**: 2\n", "final_trade_decision": "**Price Target**: 198.77\n",
+    }))
+    (call,) = load_calls(tmp_path, "2026-11-04")
+    assert call.target == 198.77 and call.target_move_pct(200.13) == pytest.approx(0.68, abs=0.01)
