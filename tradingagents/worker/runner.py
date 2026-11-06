@@ -189,7 +189,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
 
 def run_daily_job(config: dict, dry_run: bool = False) -> None:
     """The 4 AM job, once per trading day; its outcome is recorded whatever happens."""
-    from tradingagents.daily import run_daily
+    from tradingagents.daily import describe_timing, run_daily
 
     with run_config(config):
         today = datetime.now(ET).strftime("%Y-%m-%d")
@@ -207,6 +207,7 @@ def run_daily_job(config: dict, dry_run: bool = False) -> None:
             day.update(analysis="done", book_path=str(built.book_path))
             send_email(f"Edinburgh: the book for {today}",
                        f"{len(built.book.orders)} orders and a bench of {len(built.bench)} from {built.date}'s close.\n"
+                       f"Timed: {describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)
         except Exception as exc:

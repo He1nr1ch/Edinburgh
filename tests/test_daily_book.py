@@ -169,3 +169,35 @@ def test_the_sweep_runs_the_parts_as_processes_and_reports_the_ones_that_finishe
     assert done == ["sp500_20261105_daily_a", "sp500_20261105_daily_b"]
     assert launched[0][launched[0].index("backtest") + 1] == "T0,T1,T2,T3" and launched[2][-1] == "sp500_20261105_daily_c"
     assert (tmp_path / "logs" / "sp500_20261105_daily_c.log").exists()
+
+
+@pytest.mark.unit
+def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
+    from tradingagents import daily
+
+    def fake_sweep(tickers, date, parts, log_dir, tag="daily", analysts=None, timing=None):
+        timing["parts"] = {"sp500_x_daily_a": {"tickers": 2, "seconds": 61.0, "exit": 0},
+                           "sp500_x_daily_b": {"tickers": 1, "seconds": 45.5, "exit": 0}}
+        return ["run_a"]
+
+    _decision(tmp_path, "run_a", "A", "2026-11-05", "Overweight", 94, 130)
+    monkeypatch.setattr(daily, "run_sweep", fake_sweep)
+    monkeypatch.setattr(daily.trading, "last_trading_day", lambda now: "2026-11-05")
+    import tradingagents.book as bk
+    monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {t: 100.0 for t in tickers})
+    watch = tmp_path / "w.txt"; watch.write_text("A,B,C\n")
+    cfg = _cfg(tmp_path, daily_watchlist=str(watch), daily_parts=2)
+
+    built = daily.run_daily(cfg, 100_000, refresh_watchlist=False)
+    t = json.loads(built.timing_path.read_text())
+    assert t["tickers"] == 3 and t["orders"] == 1 and t["total_seconds"] >= t["sweep_seconds"] >= 0
+    assert t["parts"]["sp500_x_daily_b"]["seconds"] == 45.5
+    line = daily.describe_timing(t)
+    assert line.startswith("3 tickers in 0:00:") and "a 2 in 0:01:01, b 1 in 0:00:45" in line
+    assert built.timing_path.name.endswith("_2026-11-05_timing.json")
+
+
+@pytest.mark.unit
+def test_the_default_analysis_time_is_three_in_the_morning():
+    assert DEFAULT_CONFIG["daily_analysis_time"] == "03:00"
+    assert DEFAULT_CONFIG["daily_watchlist"].endswith("sp500.txt")

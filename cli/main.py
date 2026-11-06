@@ -443,8 +443,11 @@ def daily(
     from tradingagents.dataflows.vendors.alpaca import trading
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from tradingagents.daily import describe_timing
+
     built = run_daily(DEFAULT_CONFIG, equity or trading.get_account().equity, date, parts)
     console.print(f"{len(built.book.orders)} orders, bench {len(built.bench)}; saved to {built.book_path}")
+    console.print(f"Timed: {describe_timing(built.timing or {})} · {built.timing_path}")
 
 
 @app.command()

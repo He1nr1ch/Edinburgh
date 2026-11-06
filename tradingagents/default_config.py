@@ -249,8 +249,9 @@ def build_default_config() -> dict:
         # The daily job (tradingagents daily; the worker runs it on trading days):
         # analyse the watchlist on the last close at this Eastern time, in this
         # many processes at once, then size the book and the bench. The S&P 500
-        # takes about five hours on three PAIR nodes; the S&P 100 under one.
-        "daily_analysis_time": "04:00",
+        # takes about five hours on three PAIR nodes, so 3 AM leaves an hour and
+        # a half before the open; the S&P 100 takes under one hour.
+        "daily_analysis_time": "03:00",
         "daily_watchlist": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlists", "sp500.txt"),
         "daily_parts": 3,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep

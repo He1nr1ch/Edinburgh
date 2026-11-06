@@ -24,6 +24,8 @@ class BuiltBook:
     bench: list[dict]
     book_path: Path | None = None
     bench_path: Path | None = None
+    timing: dict | None = None
+    timing_path: Path | None = None
 
 
 def build_book(run_ids: list[str], date: str, config: dict, equity: float,
