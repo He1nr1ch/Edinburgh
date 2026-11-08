@@ -19,7 +19,13 @@ WEB_PORT=8010               # Dublin's logbook has 8000
 # (set OLLAMA_BASE_URL in it to PAIR's proxy on Colossus, http://127.0.0.1:11434)
 ENV_FILE="/home/heinrich/edinburgh/.env"
 DATA_DIR="/home/heinrich/edinburgh/data"
+KEEP_IMAGES=3               # tags of $IMAGE kept on each side; older ones go
 GIT_SHA=$(git rev-parse --short HEAD)
+
+# Keep the newest $KEEP_IMAGES tags of $IMAGE (":latest" rides on the newest
+# sha, so it is not counted) and drop the rest with their dangling layers, so
+# a deploy a day does not fill the drive. Runs here and on Colossus.
+PRUNE_IMAGES="docker images $IMAGE --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest\$' | tail -n +$((KEEP_IMAGES + 1)) | xargs -r docker rmi >/dev/null 2>&1 || true; docker image prune -f >/dev/null 2>&1 || true; echo \"images kept: \$(docker images $IMAGE --format '{{.Tag}}' | grep -v '^latest\$' | tr '\\n' ' ')\""
 
 # Refuse to deploy uncommitted work - the image tag must match GitHub
 if [[ -n $(git status --porcelain) ]]; then
@@ -33,6 +39,8 @@ docker build -t "$IMAGE:$GIT_SHA" -t "$IMAGE:latest" .
 echo "==> Pushing to Docker Hub"
 docker push "$IMAGE:$GIT_SHA"
 docker push "$IMAGE:latest"
+echo "==> Pruning local images"
+eval "$PRUNE_IMAGES"
 
 echo "==> Deploying to Colossus"
 ssh "$COLOSSUS" bash -s <<EOF
@@ -72,6 +80,8 @@ echo "--- Last 20 log lines ---"
 sleep 3
 docker logs $CONTAINER --tail 20
 docker logs $WEB_CONTAINER --tail 5
+echo "--- Pruning images on Colossus ---"
+$PRUNE_IMAGES
 echo "Positions page: http://192.168.0.98:$WEB_PORT/"
 EOF
 
