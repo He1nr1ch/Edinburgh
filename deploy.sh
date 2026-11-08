@@ -53,19 +53,25 @@ if [[ ! -f $ENV_FILE ]]; then
     exit 1
 fi
 mkdir -p $DATA_DIR
-docker pull $IMAGE:latest
+# Pull by sha and point :latest at it, so Colossus keeps the last few shas
+# too (a pull of :latest alone leaves the old image untagged) and a rollback
+# is "docker tag $IMAGE:<sha> $IMAGE:latest" and a restart.
+docker pull $IMAGE:$GIT_SHA
+docker tag $IMAGE:$GIT_SHA $IMAGE:latest
 docker stop $CONTAINER 2>/dev/null || true
 docker rm $CONTAINER 2>/dev/null || true
 # --network host: PAIR answers plaintext only on Colossus's own loopback.
 # The data folder keeps worker state, the daily logs and the hedge record
-# across deploys; the image runs as uid 1000, the same as heinrich. The :Z
-# relabels it for the container: Colossus is Fedora, and SELinux refuses a
-# container's writes to a bind mount without it.
+# across deploys; the image runs as uid 1000, the same as heinrich. The :z
+# labels it for containers: Colossus is Fedora, and SELinux refuses a
+# container's access to a bind mount without it. Lower-case z is the shared
+# label; :Z is private, and the second container to mount the folder would
+# relabel it and lock the first out (which happened on the first deploy).
 docker run -d --name $CONTAINER --restart unless-stopped \\
     --network host \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
-    -v $DATA_DIR:/home/appuser/.tradingagents:Z \\
+    -v $DATA_DIR:/home/appuser/.tradingagents:z \\
     $IMAGE:latest worker
 # The positions page: the same image, read-only on the same data folder.
 docker stop $WEB_CONTAINER 2>/dev/null || true
@@ -74,7 +80,7 @@ docker run -d --name $WEB_CONTAINER --restart unless-stopped \\
     --network host \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
-    -v $DATA_DIR:/home/appuser/.tradingagents:ro,Z \\
+    -v $DATA_DIR:/home/appuser/.tradingagents:ro,z \\
     $IMAGE:latest web --port $WEB_PORT
 echo "--- Last 20 log lines ---"
 sleep 3
