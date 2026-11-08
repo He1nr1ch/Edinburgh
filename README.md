@@ -160,7 +160,9 @@ that stood for each; `tradingagents snapshot` records a day by hand. Decisions a
 from the results directory, so `scripts/publish_runs.sh` copies the dev box's
 run states and books to Colossus after a list run. `deploy.sh` runs it there
 as `edinburgh-web` on port 8010, read-only on the worker's data folder:
-http://192.168.0.98:8010/.
+http://192.168.0.98:8010/. Colossus runs firewalld and a host-networked
+container gets no port opened for it, so once, with sudo on Colossus:
+`sudo firewall-cmd --permanent --add-port=8010/tcp && sudo firewall-cmd --reload`.
 
 To run it on this machine instead, `docker compose --profile worker up -d worker`
 does the same from the compose file; set `TRADINGAGENTS_DATA_DIR` in `.env` to
