@@ -195,8 +195,10 @@ def run_daily_job(config: dict, dry_run: bool = False) -> None:
         today = datetime.now(ET).strftime("%Y-%m-%d")
         state = WorkerState.load(config["worker_state_path"])
         day = state.day(today)
-        if day["analysis"]:
+        if day["analysis"] and not day["analysis"].startswith("running"):
             return
+        if day["analysis"].startswith("running"):
+            logger.info("Resuming the daily job interrupted by a restart; finished tickers are kept.")
         day["analysis"] = "running"
         state.save()
         try:
@@ -218,11 +220,14 @@ def run_daily_job(config: dict, dry_run: bool = False) -> None:
 
 
 def daily_job_due(config: dict, now: datetime, state: WorkerState) -> bool:
-    """Whether today's job has not run and its time (ET) has come on a weekday."""
+    """Whether today's job should run now: its time (ET) has come on a weekday and it has
+    not finished. A job a restart interrupted ("running" in the record with no process
+    behind it) is due again; the sweep keeps the tickers it finished."""
     local = now.astimezone(ET)
     hour, minute = (int(x) for x in str(config["daily_analysis_time"]).split(":"))
     due_at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    return local.weekday() < 5 and local >= due_at and not state.day(local.strftime("%Y-%m-%d"))["analysis"]
+    status = state.day(local.strftime("%Y-%m-%d"))["analysis"]
+    return local.weekday() < 5 and local >= due_at and (not status or status.startswith("running"))
 
 
 def summarize_day(config: dict, day: str) -> str:

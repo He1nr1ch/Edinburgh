@@ -200,3 +200,20 @@ def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
 def test_the_default_analysis_time_is_three_in_the_morning():
     assert DEFAULT_CONFIG["daily_analysis_time"] == "03:00"
     assert DEFAULT_CONFIG["daily_watchlist"].endswith("sp500.txt")
+
+
+@pytest.mark.unit
+def test_a_job_a_restart_interrupted_is_due_again_but_a_finished_or_failed_one_is_not(tmp_path):
+    from zoneinfo import ZoneInfo
+
+    from tradingagents.worker.runner import daily_job_due
+
+    cfg = _cfg(tmp_path, daily_analysis_time="03:00")
+    state = WorkerState.load(cfg["worker_state_path"])
+    at = datetime(2026, 11, 9, 5, 0, tzinfo=ZoneInfo("America/New_York"))      # Monday, mid-job time
+    state.day("2026-11-09")["analysis"] = "running"
+    assert daily_job_due(cfg, at, state)
+    state.day("2026-11-09")["analysis"] = "failed: Alpaca down"
+    assert not daily_job_due(cfg, at, state)
+    state.day("2026-11-09")["analysis"] = "done"
+    assert not daily_job_due(cfg, at, state)
