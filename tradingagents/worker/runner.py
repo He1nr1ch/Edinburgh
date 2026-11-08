@@ -219,15 +219,18 @@ def run_daily_job(config: dict, dry_run: bool = False) -> None:
         state.save()
 
 
-def daily_job_due(config: dict, now: datetime, state: WorkerState) -> bool:
-    """Whether today's job should run now: its time (ET) has come on a weekday and it has
-    not finished. A job a restart interrupted ("running" in the record with no process
-    behind it) is due again; the sweep keeps the tickers it finished."""
+def daily_job_due(config: dict, now: datetime, state: WorkerState, next_open: datetime) -> bool:
+    """Whether today's job should run now: its time (ET) has come, the market opens later
+    today (so not a weekend or a holiday, by Alpaca's clock), and it has not finished. A job a
+    restart interrupted ("running" in the record with no process behind it) is due again; the
+    sweep keeps the tickers it finished."""
     local = now.astimezone(ET)
+    if next_open.astimezone(ET).date() != local.date():
+        return False
     hour, minute = (int(x) for x in str(config["daily_analysis_time"]).split(":"))
     due_at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     status = state.day(local.strftime("%Y-%m-%d"))["analysis"]
-    return local.weekday() < 5 and local >= due_at and (not status or status.startswith("running"))
+    return local >= due_at and (not status or status.startswith("running"))
 
 
 def summarize_day(config: dict, day: str) -> str:
@@ -272,7 +275,7 @@ def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dr
             with run_config(config):
                 clock = trading.get_clock()
                 state = WorkerState.load(config["worker_state_path"])
-            if not clock.is_open and daily_job_due(config, clock.now, state):
+            if not clock.is_open and daily_job_due(config, clock.now, state, clock.next_open):
                 logger.info("Running the daily analysis.")
                 run_daily_job(config, dry_run)
                 continue

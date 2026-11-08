@@ -137,19 +137,25 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
 
 
 @pytest.mark.unit
-def test_the_daily_job_is_due_once_after_its_time_on_weekdays(tmp_path):
+def test_the_daily_job_is_due_once_after_its_time_on_a_day_the_market_opens(tmp_path):
     from zoneinfo import ZoneInfo
 
     from tradingagents.worker.runner import daily_job_due
 
-    cfg = _cfg(tmp_path, daily_analysis_time="04:00")
+    cfg = _cfg(tmp_path, daily_analysis_time="03:00")
     state = WorkerState.load(cfg["worker_state_path"])
     et = ZoneInfo("America/New_York")
-    assert not daily_job_due(cfg, datetime(2026, 11, 6, 3, 59, tzinfo=et), state)     # Friday, too early
-    assert daily_job_due(cfg, datetime(2026, 11, 6, 4, 0, tzinfo=et), state)
-    assert not daily_job_due(cfg, datetime(2026, 11, 7, 9, 0, tzinfo=et), state)      # Saturday
+    opens_today = datetime(2026, 11, 6, 9, 30, tzinfo=et)                            # Friday's open
+    assert not daily_job_due(cfg, datetime(2026, 11, 6, 2, 59, tzinfo=et), state, opens_today)   # too early
+    assert daily_job_due(cfg, datetime(2026, 11, 6, 3, 0, tzinfo=et), state, opens_today)
+    monday_open = datetime(2026, 11, 9, 9, 30, tzinfo=et)
+    assert not daily_job_due(cfg, datetime(2026, 11, 7, 9, 0, tzinfo=et), state, monday_open)    # Saturday
+    # Thanksgiving Thursday: a weekday, but the next open is Friday, so no job.
+    friday_open = datetime(2026, 11, 27, 9, 30, tzinfo=et)
+    assert not daily_job_due(cfg, datetime(2026, 11, 26, 3, 0, tzinfo=et), state, friday_open)
+    assert daily_job_due(cfg, datetime(2026, 11, 27, 3, 0, tzinfo=et), state, friday_open)
     state.day("2026-11-06")["analysis"] = "done"
-    assert not daily_job_due(cfg, datetime(2026, 11, 6, 12, 0, tzinfo=et), state)
+    assert not daily_job_due(cfg, datetime(2026, 11, 6, 12, 0, tzinfo=et), state, opens_today)
 
 
 @pytest.mark.unit
@@ -211,9 +217,10 @@ def test_a_job_a_restart_interrupted_is_due_again_but_a_finished_or_failed_one_i
     cfg = _cfg(tmp_path, daily_analysis_time="03:00")
     state = WorkerState.load(cfg["worker_state_path"])
     at = datetime(2026, 11, 9, 5, 0, tzinfo=ZoneInfo("America/New_York"))      # Monday, mid-job time
+    opens = datetime(2026, 11, 9, 9, 30, tzinfo=ZoneInfo("America/New_York"))
     state.day("2026-11-09")["analysis"] = "running"
-    assert daily_job_due(cfg, at, state)
+    assert daily_job_due(cfg, at, state, opens)
     state.day("2026-11-09")["analysis"] = "failed: Alpaca down"
-    assert not daily_job_due(cfg, at, state)
+    assert not daily_job_due(cfg, at, state, opens)
     state.day("2026-11-09")["analysis"] = "done"
-    assert not daily_job_due(cfg, at, state)
+    assert not daily_job_due(cfg, at, state, opens)
