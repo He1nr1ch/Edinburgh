@@ -47,6 +47,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DAILY_ANALYSIS_TIME":     "daily_analysis_time",
     "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
     "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
+    "TRADINGAGENTS_DAILY_HEDGE":             "daily_hedge",
     "TRADINGAGENTS_DAILY_ANALYSTS":          "daily_analysts",
     "TRADINGAGENTS_WORKER_PLACE_BOOK":       "worker_place_book",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
@@ -106,8 +107,9 @@ def build_default_config() -> dict:
         "results_dir": os.getenv("TRADINGAGENTS_RESULTS_DIR") or os.path.join(_TRADINGAGENTS_HOME, "logs"),
         "data_cache_dir": os.getenv("TRADINGAGENTS_CACHE_DIR") or os.path.join(_TRADINGAGENTS_HOME, "cache"),
         "memory_log_path": os.getenv("TRADINGAGENTS_MEMORY_LOG_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "trading_memory.md"),
-        # The SPY calls bought to hedge a book (tradingagents size --record-hedge),
-        # so a book that is already hedged is not hedged again.
+        # The SPY calls bought to hedge a book (by the worker at the open, or by
+        # hand with tradingagents size --record-hedge), so a book that is already
+        # hedged is not hedged again until they expire.
         "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
         "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
         # Optional cap on the number of resolved memory log entries. When set,
@@ -259,6 +261,9 @@ def build_default_config() -> dict:
         "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
         "daily_parts": 3,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
+        # Price the SPY call hedge for a net-short book after sizing, as `size`
+        # does, and write it into the book for the worker to buy at the open.
+        "daily_hedge": True,
         # Whether the worker places the day's book at the open (paper only
         # unless worker_allow_live). Off, it builds the book and watches only.
         "worker_place_book": True,

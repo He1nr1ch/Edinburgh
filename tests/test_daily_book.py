@@ -18,7 +18,19 @@ from tradingagents.worker.state import WorkerState
 
 def _cfg(tmp_path, **more):
     return {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "state.json"),
+            "hedge_ledger_path": str(tmp_path / "hedges.json"),
             "worker_trading_enabled": True, "worker_allow_live": False, **more}
+
+
+def _hedge_plan(contracts=True):
+    from datetime import date
+
+    from tradingagents.dataflows.vendors.alpaca import OptionQuote
+    from tradingagents.hedge import plan_hedge
+
+    weekly = OptionQuote("SPY261113C00680000", date(2026, 11, 13), 680.0, 7.47, 7.52, None)
+    monthly = OptionQuote("SPY261204C00680000", date(2026, 12, 4), 680.0, 14.59, 14.64, None)
+    return plan_hedge(-44_809 if contracts else 30_000, 680.0, weekly, monthly)
 
 
 def _decision(results_dir, run, ticker, date, rating, stop, target, ceiling=5):
@@ -95,11 +107,41 @@ def test_placing_the_book_at_the_open_once_and_only_what_is_not_held(tmp_path, m
     monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
     cfg = _cfg(tmp_path)
 
-    assert runner.place_book(cfg) == ["FIS"]                   # GD is held already; the hedge row is not a stock
-    assert sent == [("FIS", 156, "sell")]
+    assert runner.place_book(cfg) == ["FIS", "SPY261204C00740000"]      # GD is held already; the hedge's calls are bought
+    assert sent == [("FIS", 156, "sell"), ("SPY261204C00740000", 1, "buy")]
     state = WorkerState.load(cfg["worker_state_path"])
     assert state.book["FIS"] == {"placed_on": datetime.now().strftime("%Y-%m-%d"), "side": "short", "value": 4643.0}
+    assert "SPY261204C00740000" not in state.book                       # the Watcher never replaces the hedge
+    ledger = json.loads(Path(cfg["hedge_ledger_path"]).read_text())
+    assert ledger == [{"symbol": "SPY261204C00740000", "contracts": 1, "expiry": "2026-12-04",
+                       "bought_on": datetime.now().strftime("%Y-%m-%d"), "cost": 1652.0}]
     assert runner.place_book(cfg) == []                        # once a day
+
+
+@pytest.mark.unit
+def test_the_hedge_is_not_bought_again_while_the_calls_held_have_not_expired(tmp_path, monkeypatch):
+    from tradingagents.worker import runner
+
+    sizing = tmp_path / "backtest" / "sizing"
+    sizing.mkdir(parents=True)
+    (sizing / "run_a_2026-11-05.csv").write_text(
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target\n"
+        "FIS,short,Sell,Neutral,4,-4.62,29.76,-156,4643,31.68,Risk Manager,25\n"
+        "SPY261204C00740000,call (monthly hedge),,,,,16.52,1,1652,,,\n")
+    cfg = _cfg(tmp_path)
+    Path(cfg["hedge_ledger_path"]).write_text(json.dumps([{"symbol": "SPY261127C00730000", "contracts": 1,
+                                                           "expiry": "2099-11-27", "bought_on": "2026-11-04", "cost": 1500.0}]))
+    sent = []
+    monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 90_000, True, ()))
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
+    monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+
+    assert runner.place_book(cfg) == ["FIS"]
+    assert sent == [("FIS", 156, "sell")]
+    log = (tmp_path / "worker" / f"{datetime.now():%Y-%m-%d}.log").read_text()
+    assert "hedge not bought: still hedged with 1 SPY261127C00730000" in log
 
 
 @pytest.mark.unit
@@ -200,6 +242,59 @@ def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
     line = daily.describe_timing(t)
     assert line.startswith("3 tickers in 0:00:") and "a 2 in 0:01:01, b 1 in 0:00:45" in line
     assert built.timing_path.name.endswith("_2026-11-05_timing.json")
+
+
+@pytest.mark.unit
+def test_the_job_prices_the_hedge_into_the_book_and_stands_unhedged_when_it_cannot(tmp_path, monkeypatch):
+    import tradingagents.book as bk
+    from tradingagents import daily
+    from tradingagents.book import load_rows
+
+    monkeypatch.setattr(daily, "run_sweep", lambda *a, **k: ["run_a"])
+    _decision(tmp_path, "run_a", "A", "2026-11-05", "Sell", 106, 80)
+    monkeypatch.setattr(bk, "last_closes", lambda tickers, date: dict.fromkeys(tickers, 100.0))
+    watch = tmp_path / "w.txt"
+    watch.write_text("A\n")
+    cfg = _cfg(tmp_path, daily_watchlist=str(watch))
+    asked = []
+    monkeypatch.setattr(daily, "price_hedge", lambda built, date, config: asked.append(date) or _hedge_plan())
+
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
+    rows = load_rows(built.book_path)
+    assert asked == ["2026-11-05"] and built.hedge.contracts == 1
+    assert rows[-1]["ticker"] == "SPY261204C00680000" and rows[-1]["side"] == "call (monthly hedge)"
+    assert (rows[-1]["shares"], rows[-1]["value"]) == ("1", "1464.0")
+    assert json.loads(built.timing_path.read_text())["hedge"].startswith("buy 1 SPY261204C00680000 (monthly) at 14.64")
+
+    def broken(built, date, config):
+        raise RuntimeError("Alpaca is down")
+    monkeypatch.setattr(daily, "price_hedge", broken)
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
+    assert built.hedge is None and [r["ticker"] for r in load_rows(built.book_path)] == ["A"]
+    assert json.loads(built.timing_path.read_text())["hedge"] == "not priced"
+
+    monkeypatch.setattr(daily, "price_hedge", lambda *a: pytest.fail("daily_hedge is off"))
+    built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch), daily_hedge=False), 100_000,
+                            date="2026-11-05", refresh_watchlist=False)
+    assert built.hedge is None
+
+
+@pytest.mark.unit
+def test_a_net_long_book_writes_no_hedge_row(tmp_path, monkeypatch):
+    import tradingagents.book as bk
+    from tradingagents import daily
+    from tradingagents.book import load_rows
+
+    monkeypatch.setattr(daily, "run_sweep", lambda *a, **k: ["run_a"])
+    _decision(tmp_path, "run_a", "A", "2026-11-05", "Overweight", 94, 130)
+    monkeypatch.setattr(bk, "last_closes", lambda tickers, date: dict.fromkeys(tickers, 100.0))
+    watch = tmp_path / "w.txt"
+    watch.write_text("A\n")
+    monkeypatch.setattr(daily, "price_hedge", lambda built, date, config: _hedge_plan(contracts=False))
+
+    built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch)), 100_000, date="2026-11-05", refresh_watchlist=False)
+    assert [r["ticker"] for r in load_rows(built.book_path)] == ["A"]
+    assert json.loads(built.timing_path.read_text())["hedge"].startswith("none: the book is not net short")
 
 
 @pytest.mark.unit

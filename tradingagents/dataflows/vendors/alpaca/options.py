@@ -46,6 +46,11 @@ def _expiry(symbol: str) -> date:
     return datetime.strptime(symbol[-15:-9], "%y%m%d").date()
 
 
+def expiry_of(symbol: str) -> date:
+    """The expiry in an OCC option symbol (SPY261120C00680000 expires 2026-11-20)."""
+    return _expiry(symbol)
+
+
 def atm_call(underlying: str, price: float, expiring_on_or_after: date,
              search_days: int = 14, strike_band: float = 0.02) -> OptionQuote | None:
     """The call nearest ``price`` on the first expiry on or after ``expiring_on_or_after``.

@@ -6,7 +6,18 @@ import pandas as pd
 import pytest
 
 from tradingagents.dataflows.vendors.alpaca import OptionQuote
-from tradingagents.hedge import beta, choose_expiry, contracts_for, open_hedges, plan_hedge, record_hedge
+from tradingagents.hedge import (
+    beta,
+    choose_expiry,
+    contracts_for,
+    describe_hedge,
+    hedge_row,
+    held_from_row,
+    is_hedge_row,
+    open_hedges,
+    plan_hedge,
+    record_hedge,
+)
 
 
 def _call(expiry, ask):
@@ -106,3 +117,18 @@ def test_the_strike_follows_spys_live_price_not_the_analysis_close(monkeypatch):
 
     monkeypatch.setattr(alpaca, "latest_price", lambda s: None)   # no live trade: the close stands in
     assert hedge.hedge_book(book, "2026-11-04").spy_price == 766.73
+
+
+@pytest.mark.unit
+def test_the_hedge_row_of_the_book_round_trips_to_a_ledger_entry():
+    plan = plan_hedge(-44_809, 759.97, WEEKLY, _call(date(2026, 11, 20), 14.64))
+    row = hedge_row(plan)
+    assert row[:2] == ["SPY261120C00760000", "call (monthly hedge)"] and row[6:9] == [14.64, 1, 1464.0]
+    as_read = dict(zip(["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares",
+                        "value", "stop", "stop_from", "target"], map(str, row), strict=True))
+    assert is_hedge_row(as_read) and not is_hedge_row({"side": "long"})
+    held = held_from_row(as_read, "2026-11-09")
+    assert (held.symbol, held.contracts, held.expiry, held.cost) == ("SPY261120C00760000", 1, date(2026, 11, 20), 1464.0)
+    assert hedge_row(plan_hedge(30_000, 759.97, WEEKLY, None)) is None
+    assert describe_hedge(plan).startswith("buy 1 SPY261120C00760000 (monthly) at 14.64, 1,464 in all")
+    assert describe_hedge(None) == "not priced"

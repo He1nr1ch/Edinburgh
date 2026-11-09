@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from tradingagents.book import BuiltBook, build_book, save_book
+from tradingagents.hedge import describe_hedge, hedge_row
 
 logger = logging.getLogger(__name__)
 
@@ -99,17 +100,33 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
     if not run_ids:
         raise RuntimeError("every sweep part failed; no book")
     logger.info("Sweep done in %s; sizing the book", timedelta(seconds=int(sweep_seconds)))
-    built = save_book(build_book(run_ids, date, config, equity), config)
+    built = build_book(run_ids, date, config, equity)
+    if config.get("daily_hedge", True):
+        try:
+            built.hedge = price_hedge(built, date, config)
+        except Exception as exc:     # the book stands unhedged; the log and the email say so
+            logger.warning("The hedge could not be priced: %s", exc)
+    built = save_book(built, config, hedge_row(built.hedge) if built.hedge else None)
+    logger.info("Hedge: %s", describe_hedge(built.hedge))
     finished = datetime.now().astimezone()
     timing.update(finished=finished.isoformat(timespec="seconds"),
                   total_seconds=round((finished - started).total_seconds(), 1),
-                  book=str(built.book_path), orders=len(built.book.orders), bench=len(built.bench))
+                  book=str(built.book_path), orders=len(built.book.orders), bench=len(built.bench),
+                  hedge=describe_hedge(built.hedge))
     built.timing = timing
     built.timing_path = built.book_path.with_name(built.book_path.stem + "_timing.json")
     built.timing_path.write_text(json.dumps(timing, indent=2) + "\n", encoding="utf-8")
     logger.info("Book: %d orders, bench %d, in %s all told; %s", len(built.book.orders), len(built.bench),
                 timedelta(seconds=int(timing["total_seconds"])), built.book_path)
     return built
+
+
+def price_hedge(built: BuiltBook, date: str, config: dict):
+    """The SPY call hedge for the sized book, net of the calls the ledger says are still held."""
+    from tradingagents.hedge import hedge_book, open_hedges
+
+    return hedge_book(built.book, date, monthly_ratio=float(config["hedge_monthly_ratio"]),
+                      held=open_hedges(Path(config["hedge_ledger_path"]), date))
 
 
 def describe_timing(timing: dict) -> str:

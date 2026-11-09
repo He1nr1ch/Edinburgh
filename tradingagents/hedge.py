@@ -123,17 +123,58 @@ def open_hedges(ledger: Path, as_of: str) -> tuple[HeldHedge, ...]:
     return tuple(h for h in held if h.expiry >= day)
 
 
-def record_hedge(ledger: Path, plan: Hedge, bought_on: str) -> HeldHedge:
-    """Add the plan's calls to the ledger as bought."""
-    if not plan.contracts:
-        raise ValueError("the plan buys no calls, so there is nothing to record")
-    held = HeldHedge(plan.quote.symbol, plan.contracts, plan.quote.expiry, bought_on, round(plan.cost, 2))
+def record_held(ledger: Path, held: HeldHedge) -> HeldHedge:
+    """Add calls to the ledger as bought."""
     path = Path(ledger)
     entries = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
     entries.append({**asdict(held), "expiry": held.expiry.isoformat()})
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
     return held
+
+
+def record_hedge(ledger: Path, plan: Hedge, bought_on: str) -> HeldHedge:
+    """Add the plan's calls to the ledger as bought."""
+    if not plan.contracts:
+        raise ValueError("the plan buys no calls, so there is nothing to record")
+    return record_held(ledger, HeldHedge(plan.quote.symbol, plan.contracts, plan.quote.expiry, bought_on, round(plan.cost, 2)))
+
+
+HEDGE_SIDE = "call ("      # a book row whose side starts so is the hedge: "call (weekly hedge)"
+
+
+def hedge_row(plan: Hedge) -> list | None:
+    """The hedge as a row of the book CSV, in the book's columns: the OCC symbol
+    as the ticker, the ask as the price, contracts as shares, cost as value.
+    None when the plan buys no calls."""
+    if not plan.contracts:
+        return None
+    return [plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
+            plan.quote.ask, plan.contracts, round(plan.cost, 2), "", "", ""]
+
+
+def is_hedge_row(row: dict) -> bool:
+    return str(row.get("side", "")).startswith(HEDGE_SIDE)
+
+
+def held_from_row(row: dict, bought_on: str) -> HeldHedge:
+    """The ledger entry for a hedge row of the book, once its calls are bought."""
+    from tradingagents.dataflows.vendors.alpaca.options import expiry_of
+
+    contracts = abs(int(float(row["shares"])))
+    return HeldHedge(row["ticker"], contracts, expiry_of(row["ticker"]), bought_on, round(float(row["value"]), 2))
+
+
+def describe_hedge(plan: Hedge | None) -> str:
+    """One line on the hedge, for the log and the morning email."""
+    if plan is None:
+        return "not priced"
+    if plan.contracts:
+        return (f"buy {plan.contracts} {plan.quote.symbol} ({plan.choice}) at {plan.quote.ask:.2f}, "
+                f"{plan.cost:,.0f} in all: {plan.reason}; covers {plan.coverage:.0%} of the "
+                f"{plan.exposure:+,.0f} beta-weighted exposure")
+    return f"none: {plan.reason}" + (f"; the calls held cover {plan.coverage:.0%}" if plan.held else "") \
+        + f" (exposure {plan.exposure:+,.0f}, SPY {plan.spy_price:,.2f})"
 
 
 def hedge_book(book, trade_date: str, monthly_ratio: float = 2.1,

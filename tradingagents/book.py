@@ -26,6 +26,7 @@ class BuiltBook:
     bench_path: Path | None = None
     timing: dict | None = None
     timing_path: Path | None = None
+    hedge: object | None = None        # the hedge.Hedge plan when the daily job priced one
 
 
 def build_book(run_ids: list[str], date: str, config: dict, equity: float,

@@ -257,7 +257,7 @@ def size(
 
     plan = None
     if hedge:
-        from tradingagents.hedge import hedge_book, open_hedges
+        from tradingagents.hedge import hedge_book, hedge_row, open_hedges
         from tradingagents.hedge import record_hedge as record
 
         ledger = Path(DEFAULT_CONFIG["hedge_ledger_path"])
@@ -287,9 +287,7 @@ def size(
                 console.print("  [yellow]The calls held cover less than the exposure now; "
                               "none are added while they are open.[/yellow]")
 
-    hedge_row = ([plan.quote.symbol, f"call ({plan.choice} hedge)", "", "", "", "",
-                  plan.quote.ask, plan.contracts, round(plan.cost, 2), "", "", ""] if plan and plan.contracts else None)
-    save_book(built, DEFAULT_CONFIG, hedge_row)
+    save_book(built, DEFAULT_CONFIG, hedge_row(plan) if plan else None)
     console.print(f"Orders saved to {built.book_path}; bench to {built.bench_path.name}")
 
 

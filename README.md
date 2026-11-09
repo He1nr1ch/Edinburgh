@@ -115,15 +115,20 @@ each lesson with its outcome.
 a long/short book in whole shares (`--equity`, `--gross`, `--cap`), weighted by
 each call's Risk Manager ceiling, and prices a SPY call hedge for a net-short
 book: the weekly at-the-money call unless the monthly costs less than
-`hedge_monthly_ratio` (2.1) times it. `--record-hedge` records the calls as
-bought, so later runs do not hedge again until they expire.
+`hedge_monthly_ratio` (2.1) times it. The hedge goes into the book CSV as a
+row of its own; `--record-hedge` records calls bought by hand in the hedge
+ledger, so later runs do not hedge again until they expire.
 
 `tradingagents worker` is the always-on desk. At `daily_analysis_time` (3 AM ET)
 on days the market opens (by Alpaca's clock, so weekends and holidays are skipped) it runs the daily job (`tradingagents daily` by hand): refresh
 the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from Wikipedia when a month old), analyse it on the last close in `daily_parts` processes, size
 the book and write a bench of `bench_size` next-best calls, long or short
-together; the job times itself, each part and the whole, into a timing file
-beside the book and the morning email. At the open it places the book's orders (`worker_place_book`). Then
+together, and price the SPY call hedge for a net-short book into the same
+CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
+the email says so); the job times itself, each part and the whole, into a timing file
+beside the book and the morning email. At the open it places the book's orders (`worker_place_book`),
+buys the hedge's calls unless the ledger shows calls still held, and records the
+ones it buys in the ledger; the Watcher's guards look at equities only. Then
 the Watcher runs over the account's equity positions until the close, with
 four guards on every pass. The stop guard and the target guard close a
 position through its stop (the Risk Manager's, the Trader's, or the 2% default

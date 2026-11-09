@@ -134,6 +134,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
     left to the Watcher's guards; nothing is closed here.
     """
     from tradingagents.book import load_rows
+    from tradingagents.hedge import held_from_row, is_hedge_row, open_hedges, record_held
     from tradingagents.web.data import latest_book
 
     with run_config(config):
@@ -143,6 +144,8 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         day = state.day(today)
         if day["placed"] or not config.get("worker_place_book", True):
             return []
+        ledger = Path(config["hedge_ledger_path"])
+        hedged = open_hedges(ledger, today)
         book_path = Path(day["book_path"]) if day.get("book_path") else None
         if book_path is None or not book_path.is_file():
             book_path, _ = latest_book(Path(config["results_dir"]))
@@ -156,7 +159,37 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         pending = set(trading.open_orders().values())
         placed = []
         for o in load_rows(book_path):
-            if o["side"] not in ("long", "short") or o["ticker"].upper() in held | pending:
+            if o["ticker"].upper() in held | pending:
+                continue
+            if is_hedge_row(o):
+                # The SPY calls the job priced for a net-short book. They are the
+                # hedge ledger's business, not the Watcher's: it never adds them
+                # to its book, and its guards look at equities only.
+                contracts = abs(int(float(o["shares"])))
+                if hedged:
+                    _log(config, now, "  hedge not bought: still hedged with "
+                         + ", ".join(f"{h.contracts} {h.symbol} until {h.expiry}" for h in hedged))
+                    continue
+                action = Action(o["ticker"], "open", "buy", contracts, f"the day's book ({book_path.name}): its SPY call hedge")
+                why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
+                if why_not:
+                    _log(config, now, f"  hedge not bought: {why_not}")
+                    continue
+                if dry_run:
+                    _log(config, now, f"  dry run: would buy {contracts} {o['ticker']} (hedge)")
+                    placed.append(o["ticker"])
+                    continue
+                try:
+                    order_id = trading.submit_market_order(o["ticker"], contracts, "buy")
+                except Exception as exc:
+                    _log(config, now, f"  hedge failed: {o['ticker']}: {exc}")
+                    continue
+                state.record_order(o["ticker"], "open", "buy", contracts, order_id, now, action.reason)
+                record_held(ledger, held_from_row(o, today))
+                placed.append(o["ticker"])
+                _log(config, now, f"  bought {contracts} {o['ticker']} (hedge, order {order_id}); recorded in {ledger.name}")
+                continue
+            if o["side"] not in ("long", "short"):
                 continue
             qty = abs(int(float(o["shares"])))
             action = Action(o["ticker"], "open", "buy" if o["side"] == "long" else "sell", qty,
@@ -190,6 +223,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
 def run_daily_job(config: dict, dry_run: bool = False) -> None:
     """The 4 AM job, once per trading day; its outcome is recorded whatever happens."""
     from tradingagents.daily import describe_timing, run_daily
+    from tradingagents.hedge import describe_hedge
 
     with run_config(config):
         today = datetime.now(ET).strftime("%Y-%m-%d")
@@ -209,6 +243,7 @@ def run_daily_job(config: dict, dry_run: bool = False) -> None:
             day.update(analysis="done", book_path=str(built.book_path))
             send_email(f"Edinburgh: the book for {today}",
                        f"{len(built.book.orders)} orders and a bench of {len(built.bench)} from {built.date}'s close.\n"
+                       f"Hedge: {describe_hedge(built.hedge)}\n"
                        f"Timed: {describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)
