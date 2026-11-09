@@ -121,12 +121,16 @@ ledger, so later runs do not hedge again until they expire.
 
 `tradingagents worker` is the always-on desk. At `daily_analysis_time` (1 AM ET)
 on days the market opens (by Alpaca's clock, so weekends and holidays are skipped) it runs the daily job (`tradingagents daily` by hand): refresh
-the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from Wikipedia when a month old), analyse it on the last close in `daily_parts` processes, size
-the book and write a bench of `bench_size` next-best calls, long or short
+the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from Wikipedia when a month old) and analyse on the last close, qwen thinking on, in `daily_parts`
+processes: the held positions first, then the watchlist least recently analysed first, until
+`daily_deadline` (9 AM), so each night picks up where the last stopped (~11 minutes a ticker
+thinking; the S&P 500 is about four nights). Size the book from every decision under
+`decision_max_age_days` old and write a bench of `bench_size` next-best calls, long or short
 together, and price the SPY call hedge for a net-short book into the same
 CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
 the email says so); the job times itself, each part and the whole, into a timing file
-beside the book and the morning email. At the open it places the book's orders (`worker_place_book`),
+beside the book and the morning email. At the open it first closes any holding whose newest decision no longer backs its side, then
+places the book's orders within the gross target, counting what is still held (`worker_place_book`),
 buys the hedge's calls unless the ledger shows calls still held, and records the
 ones it buys in the ledger; the Watcher's guards look at equities only. Then
 the Watcher runs over the account's equity positions until the close, with
