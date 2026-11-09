@@ -169,6 +169,21 @@ does the same from the compose file; set `TRADINGAGENTS_DATA_DIR` in `.env` to
 the full path of `~/.tradingagents` (Compose does not expand `~`) so the container
 shares its state, logs and hedge record with runs on the host.
 
+## The dev box as a PAIR node
+
+PAIR spreads the model calls over every node that is up, and this box
+(InfinitiDev, the RTX 5090) takes about half of them when it is. The 3 AM
+analysis runs on Colossus, so for it to use this box the box must be awake,
+with PAIR running, at 3 AM ET. PAIR here is the desktop app (`/opt/PAIR/nvpair`),
+which survives suspend and rejoins the mesh within seconds of a resume, but it
+starts only with the desktop session and the box is usually suspended by hand
+at night. `scripts/pair-node/install.sh` fixes both: it puts a PAIR entry in
+`~/.config/autostart`, and installs `edinburgh-wake.timer`, a system timer with
+`WakeSystem` that wakes the box from suspend at 02:50 ET on weekdays (sudo
+once). GNOME's idle suspend on AC is off on this box, so after the wake it stays
+up until suspended again; a market holiday just means a wake for nothing. A
+reboot still needs a login before PAIR is up.
+
 ## The P and B range model
 
 `tradingagents pb-range NVDA` reads the 15-minute chart the way Patrick Nill

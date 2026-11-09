@@ -1,0 +1,14 @@
+[Unit]
+Description=Wake this machine before Edinburgh's 3 AM ET analysis so PAIR can use it
+
+[Timer]
+# Edinburgh's worker on Colossus starts the daily analysis at daily_analysis_time
+# (03:00 ET, trading days). PAIR spreads the model calls over every node that is
+# up, so this box must be awake by then. WakeSystem arms the RTC alarm while the
+# box is suspended; if it is already awake the timer just runs the marker.
+OnCalendar=Mon..Fri *-*-* 02:50:00 America/New_York
+WakeSystem=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,6 @@
+[Unit]
+Description=Mark that this machine is awake for Edinburgh's 3 AM analysis
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/logger -t edinburgh-wake "awake for Edinburgh's 3 AM ET analysis; PAIR node available"

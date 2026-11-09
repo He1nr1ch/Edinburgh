@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=NVIDIA PAIR
+Comment=Start the PAIR node with the desktop session so this box is in the cluster for Edinburgh's 3 AM analysis
+Exec=/opt/PAIR/nvpair
+Icon=nvpair
+Terminal=false
+StartupWMClass=PAIR
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=10
