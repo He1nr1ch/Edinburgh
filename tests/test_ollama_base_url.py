@@ -76,7 +76,7 @@ def test_thinking_is_off_by_default_and_switchable():
     from tradingagents.default_config import DEFAULT_CONFIG
     from tradingagents.llm_clients import build_llm_kwargs
 
-    assert DEFAULT_CONFIG["ollama_thinking"] is False
+    assert DEFAULT_CONFIG["ollama_thinking"] is True
     assert build_llm_kwargs({"llm_provider": "ollama", "ollama_thinking": True})["reasoning"] is True
     assert "reasoning" not in build_llm_kwargs({"llm_provider": "ollama", "ollama_thinking": None})
 

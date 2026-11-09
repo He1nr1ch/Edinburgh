@@ -256,24 +256,25 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
     return book
 
 
+def call_from_state(state: dict, ticker: str = "") -> Call:
+    """The desk's call in a saved run state."""
+    rm_stop = labelled_number(state.get("risk_assessment") or "", "Stop Loss")
+    tr_stop = labelled_number(state.get("trader_investment_plan") or "", "Stop Loss")
+    return Call(
+        ticker=state.get("company_of_interest") or ticker,
+        rating=state.get("final_rating") or "",
+        ceiling_pct=labelled_number(state.get("risk_assessment") or "", "Maximum Position"),
+        risk_level=state.get("final_risk_level") or state.get("risk_level"),
+        target=labelled_number(state.get("final_trade_decision") or "", "Price Target"),
+        stop=rm_stop or tr_stop,
+        stop_from="Risk Manager" if rm_stop else ("Trader" if tr_stop else ""),
+    )
+
+
 def load_calls(run_dir: Path, trade_date: str) -> list[Call]:
     """Every ticker's final call on ``trade_date`` from a run's saved states."""
-    calls = []
-    for path in sorted(Path(run_dir).glob(f"*/TradingAgentsStrategy_logs/full_states_log_{trade_date}.json")):
-        state = json.loads(path.read_text(encoding="utf-8"))
-        calls.append(Call(
-            ticker=state.get("company_of_interest") or path.parts[-3],
-            rating=state.get("final_rating") or "",
-            ceiling_pct=labelled_number(state.get("risk_assessment") or "", "Maximum Position"),
-            risk_level=state.get("final_risk_level") or state.get("risk_level"),
-            target=labelled_number(state.get("final_trade_decision") or "", "Price Target"),
-            stop=labelled_number(state.get("risk_assessment") or "", "Stop Loss")
-                 or labelled_number(state.get("trader_investment_plan") or "", "Stop Loss"),
-            stop_from=("Risk Manager" if labelled_number(state.get("risk_assessment") or "", "Stop Loss")
-                       else "Trader" if labelled_number(state.get("trader_investment_plan") or "", "Stop Loss")
-                       else ""),
-        ))
-    return calls
+    return [call_from_state(json.loads(path.read_text(encoding="utf-8")), path.parts[-3])
+            for path in sorted(Path(run_dir).glob(f"*/TradingAgentsStrategy_logs/full_states_log_{trade_date}.json"))]
 
 
 def last_closes(tickers: list[str], trade_date: str) -> dict[str, float]:

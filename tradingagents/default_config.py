@@ -45,6 +45,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_POSITION_CAP_PCT":        "position_cap_pct",
     "TRADINGAGENTS_BENCH_SIZE":              "bench_size",
     "TRADINGAGENTS_DAILY_ANALYSIS_TIME":     "daily_analysis_time",
+    "TRADINGAGENTS_DAILY_DEADLINE":          "daily_deadline",
+    "TRADINGAGENTS_DECISION_MAX_AGE_DAYS":   "decision_max_age_days",
     "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
     "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
     "TRADINGAGENTS_DAILY_HEDGE":             "daily_hedge",
@@ -152,11 +154,12 @@ def build_default_config() -> dict:
         # which drops the user message and fails the call; the analysts need
         # tens of thousands of tokens. Lower it if the model does not fit.
         "ollama_num_ctx": 32768,
-        # Whether an Ollama model that can think (gemma4, qwen3.x) does so. Off by default:
-        # the agents' work is reading reports and writing them, where hidden
-        # reasoning adds minutes per call for little gain. Turn it on for the
-        # deep tier by running that tier on its own provider settings.
-        "ollama_thinking": False,
+        # Whether an Ollama model that can think (qwen3.x) does so: on or off, no
+        # levels. On, as the user chose on 2026-11-09: on qwen3.8:27b a call takes
+        # about 27 s instead of 3-6 s and writes ~1,500 tokens instead of ~90, and
+        # the reasoning checks the debaters' figures against the reports (it caught
+        # a misquoted RSI that the fast mode passed over). It applies to every agent.
+        "ollama_thinking": True,
         # Sampling temperature, forwarded to every provider when set. None leaves
         # each provider at its own default. Lower values reduce run-to-run
         # variation on models that honor it; reasoning models largely ignore it
@@ -250,14 +253,22 @@ def build_default_config() -> dict:
         "bench_size": 10,
         # The daily job (tradingagents daily; the worker runs it on trading days):
         # analyse the watchlist on the last close at this Eastern time, in this
-        # many processes at once, then size the book and the bench. The S&P 500
-        # takes about five hours on three PAIR nodes, so 3 AM leaves an hour and
-        # a half before the open; the S&P 100 takes under one hour. The watchlist
+        # many processes at once, then size the book and the bench. The user
+        # chose 1 AM with thinking on (2026-11-09). The watchlist
         # lives in the data folder, where the job can refresh it: the repo's copy
         # is not there when the package is installed (the container), and its
         # folder is not writable then either. A missing file is seeded from the
         # repo's copy when that exists, else fetched.
-        "daily_analysis_time": "03:00",
+        "daily_analysis_time": "01:00",
+        # With thinking on, a ticker takes about 11 minutes, so the S&P 500 is
+        # some 30 hours on three nodes: the sweep stops at this Eastern time,
+        # whatever it reached, so the book is ready for the open. It reviews the
+        # held positions first, then the watchlist least recently analysed first,
+        # so each night picks up where the last stopped (about four nights a
+        # full pass), and the book draws on every decision under
+        # decision_max_age_days old.
+        "daily_deadline": "09:00",
+        "decision_max_age_days": 5,
         "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
         "daily_parts": 3,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep

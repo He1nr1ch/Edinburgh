@@ -209,13 +209,14 @@ def test_the_sweep_runs_the_parts_as_processes_and_reports_the_ones_that_finishe
     class Proc:
         def __init__(self, cmd, **kw):
             launched.append(cmd); self.rc = 1 if "c" in cmd[cmd.index("--run-id") + 1][-1:] else 0
-        def wait(self):
+        def wait(self, timeout=None):
             return self.rc
 
     monkeypatch.setattr(daily.subprocess, "Popen", Proc)
     done = daily.run_sweep([f"T{i}" for i in range(10)], "2026-11-05", 3, tmp_path / "logs")
     assert done == ["sp500_20261105_daily_a", "sp500_20261105_daily_b"]
-    assert launched[0][launched[0].index("backtest") + 1] == "T0,T1,T2,T3" and launched[2][-1] == "sp500_20261105_daily_c"
+    # Dealt round-robin, so every part starts with the front of the list (the held positions).
+    assert launched[0][launched[0].index("backtest") + 1] == "T0,T3,T6,T9" and launched[2][-1] == "sp500_20261105_daily_c"
     assert (tmp_path / "logs" / "sp500_20261105_daily_c.log").exists()
 
 
@@ -223,7 +224,7 @@ def test_the_sweep_runs_the_parts_as_processes_and_reports_the_ones_that_finishe
 def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
     from tradingagents import daily
 
-    def fake_sweep(tickers, date, parts, log_dir, tag="daily", analysts=None, timing=None):
+    def fake_sweep(tickers, date, parts, log_dir, tag="daily", analysts=None, timing=None, deadline=None):
         timing["parts"] = {"sp500_x_daily_a": {"tickers": 2, "seconds": 61.0, "exit": 0},
                            "sp500_x_daily_b": {"tickers": 1, "seconds": 45.5, "exit": 0}}
         return ["run_a"]
@@ -235,12 +236,13 @@ def test_the_job_times_itself_by_part_and_in_all(tmp_path, monkeypatch):
     watch = tmp_path / "w.txt"; watch.write_text("A,B,C\n")
     cfg = _cfg(tmp_path, daily_watchlist=str(watch), daily_parts=2)
 
-    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False, holdings=[])
     t = json.loads(built.timing_path.read_text())
     assert t["tickers"] == 3 and t["orders"] == 1 and t["total_seconds"] >= t["sweep_seconds"] >= 0
     assert t["parts"]["sp500_x_daily_b"]["seconds"] == 45.5
     line = daily.describe_timing(t)
-    assert line.startswith("3 tickers in 0:00:") and "a 2 in 0:01:01, b 1 in 0:00:45" in line
+    assert line.startswith("1 of 3 tickers analysed in 0:00:") and "book from 1 fresh decisions" in line
+    assert "a 2 in 0:01:01, b 1 in 0:00:45" in line
     assert built.timing_path.name.endswith("_2026-11-05_timing.json")
 
 
@@ -259,7 +261,7 @@ def test_the_job_prices_the_hedge_into_the_book_and_stands_unhedged_when_it_cann
     asked = []
     monkeypatch.setattr(daily, "price_hedge", lambda built, date, config: asked.append(date) or _hedge_plan())
 
-    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False, holdings=[])
     rows = load_rows(built.book_path)
     assert asked == ["2026-11-05"] and built.hedge.contracts == 1
     assert rows[-1]["ticker"] == "SPY261204C00680000" and rows[-1]["side"] == "call (monthly hedge)"
@@ -269,13 +271,13 @@ def test_the_job_prices_the_hedge_into_the_book_and_stands_unhedged_when_it_cann
     def broken(built, date, config):
         raise RuntimeError("Alpaca is down")
     monkeypatch.setattr(daily, "price_hedge", broken)
-    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False)
+    built = daily.run_daily(cfg, 100_000, date="2026-11-05", refresh_watchlist=False, holdings=[])
     assert built.hedge is None and [r["ticker"] for r in load_rows(built.book_path)] == ["A"]
     assert json.loads(built.timing_path.read_text())["hedge"] == "not priced"
 
     monkeypatch.setattr(daily, "price_hedge", lambda *a: pytest.fail("daily_hedge is off"))
     built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch), daily_hedge=False), 100_000,
-                            date="2026-11-05", refresh_watchlist=False)
+                            date="2026-11-05", refresh_watchlist=False, holdings=[])
     assert built.hedge is None
 
 
@@ -292,14 +294,14 @@ def test_a_net_long_book_writes_no_hedge_row(tmp_path, monkeypatch):
     watch.write_text("A\n")
     monkeypatch.setattr(daily, "price_hedge", lambda built, date, config: _hedge_plan(contracts=False))
 
-    built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch)), 100_000, date="2026-11-05", refresh_watchlist=False)
+    built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch)), 100_000, date="2026-11-05", refresh_watchlist=False, holdings=[])
     assert [r["ticker"] for r in load_rows(built.book_path)] == ["A"]
     assert json.loads(built.timing_path.read_text())["hedge"].startswith("none: the book is not net short")
 
 
 @pytest.mark.unit
 def test_the_default_analysis_time_is_three_in_the_morning():
-    assert DEFAULT_CONFIG["daily_analysis_time"] == "03:00"
+    assert DEFAULT_CONFIG["daily_analysis_time"] == "01:00"
     assert DEFAULT_CONFIG["daily_watchlist"].endswith("sp500.txt")
 
 
@@ -319,3 +321,80 @@ def test_a_job_a_restart_interrupted_is_due_again_but_a_finished_or_failed_one_i
     assert not daily_job_due(cfg, at, state, opens)
     state.day("2026-11-09")["analysis"] = "done"
     assert not daily_job_due(cfg, at, state, opens)
+
+
+@pytest.mark.unit
+def test_the_night_reviews_the_holdings_first_then_the_least_recently_analysed():
+    from tradingagents.daily import order_tickers
+
+    watchlist = ["AAPL", "MSFT", "GD", "JPM", "XOM"]
+    last = {"AAPL": "2026-11-06", "MSFT": "2026-11-04", "JPM": "2026-11-05"}      # GD and XOM never analysed
+    assert order_tickers(watchlist, ["jpm", "NVDA"], last) == ["JPM", "NVDA", "GD", "XOM", "MSFT", "AAPL"]
+
+
+@pytest.mark.unit
+def test_the_sweep_stops_at_the_deadline_and_keeps_what_it_finished(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from tradingagents import daily
+
+    terminated = []
+
+    class Endless:
+        def __init__(self, cmd, **kw):
+            self.run_id = cmd[cmd.index("--run-id") + 1]
+        def poll(self):
+            return None if self.run_id not in terminated else -15
+        def terminate(self):
+            terminated.append(self.run_id)
+        def wait(self, timeout=None):
+            return -15
+
+    monkeypatch.setattr(daily.subprocess, "Popen", Endless)
+    monkeypatch.setattr(daily.time, "sleep", lambda s: None)
+    timing = {}
+    past = datetime.now(UTC) - timedelta(seconds=1)
+    done = daily.run_sweep(["A", "B", "C"], "2026-11-06", 3, tmp_path, timing=timing, deadline=past)
+    assert sorted(terminated) == done == ["sp500_20261106_daily_a", "sp500_20261106_daily_b", "sp500_20261106_daily_c"]
+    assert timing["stopped_at_deadline"] is True
+
+
+@pytest.mark.unit
+def test_the_book_draws_on_every_decision_still_fresh(tmp_path):
+    from tradingagents.book import recent_calls
+
+    _decision(tmp_path, "night_1", "GD", "2026-11-02", "Overweight", 344, 480)          # 7 days old: stale
+    _decision(tmp_path, "night_2", "GD", "2026-11-05", "Overweight", 350, 470)          # fresh: the newest wins
+    _decision(tmp_path, "night_3", "COIN", "2026-11-06", "Underweight", 162, 120)
+    _decision(tmp_path, "later", "JPM", "2026-11-10", "Overweight", 340, 385)           # after the date: not yet
+    calls = {c.ticker: c for c in recent_calls(tmp_path, "2026-11-06", 5)}
+    assert sorted(calls) == ["COIN", "GD"] and calls["GD"].target == 470
+
+
+@pytest.mark.unit
+def test_the_open_closes_holdings_the_review_no_longer_backs_and_keeps_the_book_within_its_gross(tmp_path, monkeypatch):
+    from tradingagents.worker import runner
+
+    _decision(tmp_path, "night", "GD", "2026-11-06", "Hold", 344, 480)        # held long, now Hold: close it
+    _decision(tmp_path, "night", "JPM", "2026-11-06", "Overweight", 340, 385)  # held long, still backed: keep it
+    sizing = tmp_path / "backtest" / "sizing"
+    sizing.mkdir(parents=True)
+    (sizing / "night_2026-11-06.csv").write_text(
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target\n"
+        "AAA,long,Overweight,Neutral,10,10,100,400,40000,95,Risk Manager,120\n"
+        "BBB,long,Overweight,Neutral,10,10,100,300,30000,95,Risk Manager,120\n"
+        "CCC,short,Underweight,Neutral,10,-10,100,-100,10000,105,Risk Manager,80\n")
+    holdings = (Holding("GD", 16, 5_800.0, 364.87, "us_equity"), Holding("JPM", 100, 35_000.0, 340.0, "us_equity"))
+    sent, cancelled = [], []
+    monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 60_000, True, holdings))
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
+    monkeypatch.setattr(runner.trading, "open_orders", lambda: {"tp-1": "GD"})
+    monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, o: cancelled.append(s) or 1)
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+    cfg = _cfg(tmp_path, gross_pct=75.0)
+
+    placed = runner.place_book(cfg)
+    assert sent[0] == ("GD", 16, "sell") and cancelled == ["GD"]                # the review's exit, its bracket cancelled first
+    # JPM's 35,000 is still held: AAA's 40,000 fits (75,000), BBB's 30,000 would not; CCC's 10,000 would not either.
+    assert placed == ["AAA"] and [s for s in sent[1:]] == [("AAA", 400, "buy")]

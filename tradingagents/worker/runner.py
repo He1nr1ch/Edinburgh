@@ -126,12 +126,36 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
     return findings
 
 
-def place_book(config: dict, dry_run: bool = False) -> list[str]:
-    """Open the day's book at the open: every order not yet held, once per day.
+def review_exits(holdings, decisions) -> list[tuple]:
+    """Held positions whose newest decision no longer backs their side, with the rating that says so.
 
-    The book is the one the daily job built this morning (or the newest saved
-    one, with a note). Positions already held that are not in the new book are
-    left to the Watcher's guards; nothing is closed here.
+    The nightly sweep reviews the holdings first; a long now rated Hold, Underweight
+    or Sell, or a short now rated Hold, Overweight or Buy, is closed at the open.
+    """
+    from tradingagents.sizing import SIDE
+    from tradingagents.web.data import load_decision
+
+    out = []
+    for h in holdings:
+        if h.asset_class != "us_equity":
+            continue
+        ref = decisions.get(h.symbol.upper())
+        if ref is None:
+            continue
+        rating = load_decision(ref).get("final_rating") or ""
+        if SIDE.get(rating, 0) != (1 if h.qty > 0 else -1):
+            out.append((h, rating or "no rating", ref.date))
+    return out
+
+
+def place_book(config: dict, dry_run: bool = False) -> list[str]:
+    """Open the day's book at the open, once per day, after the holdings review.
+
+    First the review: a held position whose newest decision no longer backs its
+    side is closed. Then the book's orders (the one the daily job built this
+    morning, or the newest saved, with a note) are opened, skipping names held,
+    and only while the gross exposure, counting what is still held, stays within
+    ``gross_pct`` of equity.
     """
     from tradingagents.book import load_rows
     from tradingagents.hedge import held_from_row, is_hedge_row, open_hedges, record_held
@@ -153,13 +177,45 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 _log(config, now, "no book to place")
                 return []
             _log(config, now, f"today's job left no book; placing the newest, {book_path.name}")
+        from tradingagents.web.data import find_decisions
+
         account = trading.get_account()
         market_open = trading.get_clock().is_open
-        held = {h.symbol.upper() for h in account.holdings}
-        pending = set(trading.open_orders().values())
+        open_now = trading.open_orders()
+        # Only the worker's own unfilled orders hold a name back (a bracket's
+        # take-profit does not); the review cancels those before it closes.
+        mine = {o["order_id"] for o in state.orders}
+        pending = {sym for oid, sym in open_now.items() if oid in mine}
+        closed = set()
+        for h, rating, decided in review_exits(account.holdings, find_decisions(Path(config["results_dir"]))):
+            qty, side = abs(int(h.qty)), "sell" if h.qty > 0 else "buy"
+            action = Action(h.symbol, "exit", side, qty, f"review on {decided}: rated {rating}, no longer {h.side}")
+            why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
+            if why_not:
+                _log(config, now, f"  review exit not sent: {h.symbol}: {why_not}")
+                continue
+            if dry_run:
+                _log(config, now, f"  dry run: would close {h.side} {h.symbol} ({action.reason})")
+                closed.add(h.symbol.upper())
+                continue
+            try:
+                trading.cancel_orders_for(h.symbol, open_now)
+                order_id = trading.submit_market_order(h.symbol, qty, side)
+            except Exception as exc:
+                _log(config, now, f"  review exit failed: {h.symbol}: {exc}")
+                continue
+            state.record_order(h.symbol, "exit", side, qty, order_id, now, action.reason)
+            state.book.pop(h.symbol.upper(), None)     # the book refills it, not the bench
+            closed.add(h.symbol.upper())
+            _log(config, now, f"  closed {h.side} {h.symbol}: {action.reason} (order {order_id})")
+        held = {h.symbol.upper() for h in account.holdings} - closed
+        gross = sum(abs(h.market_value) for h in account.holdings
+                    if h.symbol.upper() in held and h.asset_class == "us_equity")
+        gross_cap = account.equity * float(config["gross_pct"]) / 100
         placed = []
+        waiting = set(open_now.values()) - closed
         for o in load_rows(book_path):
-            if o["ticker"].upper() in held | pending:
+            if o["ticker"].upper() in held | waiting:
                 continue
             if is_hedge_row(o):
                 # The SPY calls the job priced for a net-short book. They are the
@@ -191,6 +247,10 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 continue
             if o["side"] not in ("long", "short"):
                 continue
+            if gross + float(o["value"]) > gross_cap:
+                _log(config, now, f"  not placed: {o['ticker']}: the book is at its {config['gross_pct']:g}% gross "
+                                  f"({gross:,.0f} of {gross_cap:,.0f}) with what is still held")
+                continue
             qty = abs(int(float(o["shares"])))
             action = Action(o["ticker"], "open", "buy" if o["side"] == "long" else "sell", qty,
                             f"the day's book ({book_path.name})")
@@ -201,6 +261,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             if dry_run:
                 _log(config, now, f"  dry run: would open {o['side']} {qty} {o['ticker']}")
                 placed.append(o["ticker"])
+                gross += float(o["value"])
                 continue
             try:
                 order_id = trading.submit_market_order(o["ticker"], qty, action.side)
@@ -209,6 +270,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 continue
             state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason)
             state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": float(o["value"])}
+            gross += float(o["value"])
             placed.append(o["ticker"])
             _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} (order {order_id})")
         day["placed"] = placed

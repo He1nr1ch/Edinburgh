@@ -29,12 +29,35 @@ class BuiltBook:
     hedge: object | None = None        # the hedge.Hedge plan when the daily job priced one
 
 
+def recent_calls(results_dir: Path, as_of: str, max_age_days: int) -> list[Call]:
+    """Each ticker's newest call dated within ``max_age_days`` of ``as_of``.
+
+    The nightly sweep covers part of the index each night (thinking makes it
+    slow), so the book draws on every decision still fresh, not one night's.
+    """
+    import json
+    from datetime import date as _date, timedelta
+
+    from tradingagents.sizing import call_from_state
+    from tradingagents.web.data import all_decisions
+
+    oldest = (_date.fromisoformat(as_of) - timedelta(days=max_age_days)).isoformat()
+    calls = []
+    for ticker, refs in all_decisions(Path(results_dir)).items():
+        fresh = next((r for r in refs if oldest <= r.date <= as_of), None)
+        if fresh is not None:
+            calls.append(call_from_state(json.loads(fresh.path.read_text(encoding="utf-8")), ticker))
+    return calls
+
+
 def build_book(run_ids: list[str], date: str, config: dict, equity: float,
                gross_pct: float | None = None, cap_pct: float | None = None,
-               min_target_pct: float | None = None, names_per_side: int | None = None) -> BuiltBook:
-    """Size the calls of ``run_ids`` on ``date`` into a book and a bench, by the config's rules."""
+               min_target_pct: float | None = None, names_per_side: int | None = None,
+               calls: list[Call] | None = None) -> BuiltBook:
+    """Size the calls of ``run_ids`` on ``date`` (or the ``calls`` given) into a book and a bench."""
     root = Path(config["results_dir"]) / "backtest"
-    calls = [c for run_id in run_ids for c in load_calls(root / run_id, date)]
+    if calls is None:
+        calls = [c for run_id in run_ids for c in load_calls(root / run_id, date)]
     if not calls:
         raise ValueError(f"no calls for {date} under {', '.join(run_ids)} in {root}")
     floor = config["min_target_pct"] if min_target_pct is None else min_target_pct

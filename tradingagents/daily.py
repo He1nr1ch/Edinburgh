@@ -32,21 +32,50 @@ def run_ids_for(date: str, parts: int, tag: str = "daily") -> list[str]:
     return [f"sp500_{date.replace('-', '')}_{tag}_{chr(97 + i)}" for i in range(parts)]
 
 
+def order_tickers(watchlist: list[str], holdings: list[str], last_analysed: dict[str, str]) -> list[str]:
+    """The night's order: the held positions first, then the watchlist least recently analysed first.
+
+    A ticker never analysed comes before any that has been; ties keep the
+    watchlist's order. Each night's sweep then picks up where the last stopped.
+    """
+    held = [t for t in dict.fromkeys(h.upper() for h in holdings)]
+    rest = [t for t in watchlist if t.upper() not in held]
+    position = {t: i for i, t in enumerate(rest)}
+    rest.sort(key=lambda t: (last_analysed.get(t.upper(), ""), position[t]))
+    return held + rest
+
+
+def _parse_deadline(text: str | None, now: datetime) -> datetime | None:
+    """Today's (or, past it, tomorrow's) ``HH:MM`` in Eastern time."""
+    if not text:
+        return None
+    from zoneinfo import ZoneInfo
+
+    et = now.astimezone(ZoneInfo("America/New_York"))
+    hour, minute = (int(x) for x in str(text).split(":"))
+    at = et.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    return at if at > et else at + timedelta(days=1)
+
+
 def run_sweep(tickers: list[str], date: str, parts: int, log_dir: Path, tag: str = "daily",
-              analysts: str | None = None, timing: dict | None = None) -> list[str]:
+              analysts: str | None = None, timing: dict | None = None,
+              deadline: datetime | None = None) -> list[str]:
     """Analyse ``tickers`` on ``date`` in ``parts`` processes at once; returns the run ids.
 
     A part that fails is logged, not fatal: the others' calls still make a
     book, and a rerun with the same run ids resumes the cells left undone.
     ``timing``, when given, collects each part's ticker count, seconds and exit.
+    The tickers are dealt round-robin, so every part starts with the front of
+    the list (the held positions). At ``deadline`` the parts still running are
+    stopped: the tickers they finished stand, the ticker in progress is lost,
+    and the rest wait for the next night.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
-    per = -(-len(tickers) // parts)
     run_ids = run_ids_for(date, parts, tag)
     procs = []
     started = time.monotonic()
     for i, run_id in enumerate(run_ids):
-        slice_ = tickers[i * per:(i + 1) * per]
+        slice_ = tickers[i::parts]
         if not slice_:
             continue
         cmd = [sys.executable, "-m", "cli.main", "backtest", ",".join(slice_),
@@ -56,24 +85,41 @@ def run_sweep(tickers: list[str], date: str, parts: int, log_dir: Path, tag: str
         log = (log_dir / f"{run_id}.log").open("w", encoding="utf-8")
         procs.append((run_id, len(slice_), subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL), log))
         logger.info("Sweep part %s: %d tickers", run_id, len(slice_))
+    if deadline is not None:
+        while any(proc.poll() is None for _, _, proc, _ in procs):
+            if datetime.now(deadline.tzinfo) >= deadline:
+                for run_id, _, proc, _ in procs:
+                    if proc.poll() is None:
+                        logger.info("Sweep part %s stopped at the deadline, %s", run_id, deadline.strftime("%H:%M"))
+                        proc.terminate()
+                if timing is not None:
+                    timing["stopped_at_deadline"] = True
+                break
+            time.sleep(15)
     done = []
     for run_id, count, proc, log in procs:
-        rc = proc.wait()
+        try:
+            rc = proc.wait(timeout=120)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            rc = proc.wait()
         log.close()
+        stopped = deadline is not None and (timing or {}).get("stopped_at_deadline")
         seconds = round(time.monotonic() - started, 1)
         if timing is not None:
             timing.setdefault("parts", {})[run_id] = {"tickers": count, "seconds": seconds, "exit": rc}
-        if rc == 0:
-            done.append(run_id)
-            logger.info("Sweep part %s done: %d tickers in %s", run_id, count, timedelta(seconds=int(seconds)))
+        if rc == 0 or stopped:
+            done.append(run_id)       # a part stopped at the deadline still has its finished tickers
+            logger.info("Sweep part %s %s: %d tickers given, in %s", run_id,
+                        "done" if rc == 0 else "stopped", count, timedelta(seconds=int(seconds)))
         else:
             logger.error("Sweep part %s exited %d after %s; see %s", run_id, rc, timedelta(seconds=int(seconds)), log.name)
     return done
 
 
 def run_daily(config: dict, equity: float, date: str | None = None, parts: int | None = None,
-              refresh_watchlist: bool = True) -> BuiltBook:
-    """The whole job: watchlist, sweep, book, bench. Returns the saved book."""
+              refresh_watchlist: bool = True, holdings: list[str] | None = None) -> BuiltBook:
+    """The whole job: holdings and watchlist, sweep to the deadline, book, bench. Returns the saved book."""
     from tradingagents import sp500
     from tradingagents.dataflows.vendors.alpaca import trading
 
@@ -89,18 +135,32 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
             sp500.refresh_if_stale(path=watchlist)
         except Exception as exc:     # a stale list still runs; a missing one cannot
             logger.warning("The watchlist could not be refreshed: %s", exc)
-    tickers = watchlist_tickers(watchlist)
+    from tradingagents.web.data import all_decisions
+
+    if holdings is None:
+        holdings = [h.symbol for h in trading.get_account().holdings if h.asset_class == "us_equity"]
+    last = {t: refs[0].date for t, refs in all_decisions(Path(config["results_dir"])).items()}
+    tickers = order_tickers(watchlist_tickers(watchlist), holdings, last)
     started = datetime.now().astimezone()
-    timing = {"date": date, "tickers": len(tickers), "parts": {}, "started": started.isoformat(timespec="seconds")}
-    logger.info("Daily analysis of %d tickers on %s in %d parts", len(tickers), date, parts)
+    deadline = _parse_deadline(config.get("daily_deadline"), started)
+    timing = {"date": date, "tickers": len(tickers), "holdings": len(holdings), "parts": {},
+              "started": started.isoformat(timespec="seconds"),
+              "deadline": deadline.isoformat(timespec="minutes") if deadline else None}
+    logger.info("Daily analysis on %s: %d held positions first, then %d of the watchlist, in %d parts, until %s",
+                date, len(holdings), len(tickers) - len(holdings), parts, deadline.strftime("%H:%M") if deadline else "done")
     run_ids = run_sweep(tickers, date, parts, Path(config["results_dir"]) / "daily",
-                        analysts=config.get("daily_analysts") or None, timing=timing)
+                        analysts=config.get("daily_analysts") or None, timing=timing, deadline=deadline)
     sweep_seconds = (datetime.now().astimezone() - started).total_seconds()
     timing["sweep_seconds"] = round(sweep_seconds, 1)
     if not run_ids:
         raise RuntimeError("every sweep part failed; no book")
     logger.info("Sweep done in %s; sizing the book", timedelta(seconds=int(sweep_seconds)))
-    built = build_book(run_ids, date, config, equity)
+    from tradingagents.book import recent_calls
+
+    calls = recent_calls(Path(config["results_dir"]), date, int(config.get("decision_max_age_days") or 0))
+    timing["analysed_tonight"] = sum(1 for t in tickers if last_analysed_on(Path(config["results_dir"]), t, date))
+    timing["calls_in_window"] = len(calls)
+    built = build_book(run_ids, date, config, equity, calls=calls or None)
     if config.get("daily_hedge", True):
         try:
             built.hedge = price_hedge(built, date, config)
@@ -121,6 +181,10 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
     return built
 
 
+def last_analysed_on(results_dir: Path, ticker: str, date: str) -> bool:
+    return any(Path(results_dir).glob(f"backtest/*/{ticker}/TradingAgentsStrategy_logs/full_states_log_{date}.json"))
+
+
 def price_hedge(built: BuiltBook, date: str, config: dict):
     """The SPY call hedge for the sized book, net of the calls the ledger says are still held."""
     from tradingagents.hedge import hedge_book, open_hedges
@@ -134,5 +198,9 @@ def describe_timing(timing: dict) -> str:
     total = timedelta(seconds=int(timing.get("total_seconds") or 0))
     parts = ", ".join(f"{rid.rsplit('_', 1)[-1]} {p['tickers']} in {timedelta(seconds=int(p['seconds']))}"
                       for rid, p in timing.get("parts", {}).items())
-    return (f"{timing.get('tickers')} tickers in {total} ({timing.get('started', '')[11:16]} to "
-            f"{timing.get('finished', '')[11:16]}); parts: {parts}")
+    covered = (f"{timing.get('analysed_tonight')} of {timing.get('tickers')} tickers analysed"
+               if "analysed_tonight" in timing else f"{timing.get('tickers')} tickers")
+    stop = ", stopped at the deadline" if timing.get("stopped_at_deadline") else ""
+    window = f"; book from {timing['calls_in_window']} fresh decisions" if "calls_in_window" in timing else ""
+    return (f"{covered} in {total} ({timing.get('started', '')[11:16]} to "
+            f"{timing.get('finished', '')[11:16]}{stop}){window}; parts: {parts}")
