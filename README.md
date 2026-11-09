@@ -120,7 +120,7 @@ bought, so later runs do not hedge again until they expire.
 
 `tradingagents worker` is the always-on desk. At `daily_analysis_time` (3 AM ET)
 on days the market opens (by Alpaca's clock, so weekends and holidays are skipped) it runs the daily job (`tradingagents daily` by hand): refresh
-the watchlist, analyse it on the last close in `daily_parts` processes, size
+the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from Wikipedia when a month old), analyse it on the last close in `daily_parts` processes, size
 the book and write a bench of `bench_size` next-best calls, long or short
 together; the job times itself, each part and the whole, into a timing file
 beside the book and the morning email. At the open it places the book's orders (`worker_place_book`). Then

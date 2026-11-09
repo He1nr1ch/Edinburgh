@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import sys
 import time
@@ -78,6 +79,10 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
     date = date or trading.last_trading_day(datetime.now().astimezone())
     parts = parts or int(config["daily_parts"])
     watchlist = Path(config["daily_watchlist"])
+    if not watchlist.is_file() and sp500.WATCHLIST.is_file():
+        watchlist.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sp500.WATCHLIST, watchlist)   # the repo's copy seeds the data folder's
+        logger.info("Seeded %s from %s", watchlist, sp500.WATCHLIST)
     if refresh_watchlist:
         try:
             sp500.refresh_if_stale(path=watchlist)

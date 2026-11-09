@@ -250,9 +250,13 @@ def build_default_config() -> dict:
         # analyse the watchlist on the last close at this Eastern time, in this
         # many processes at once, then size the book and the bench. The S&P 500
         # takes about five hours on three PAIR nodes, so 3 AM leaves an hour and
-        # a half before the open; the S&P 100 takes under one hour.
+        # a half before the open; the S&P 100 takes under one hour. The watchlist
+        # lives in the data folder, where the job can refresh it: the repo's copy
+        # is not there when the package is installed (the container), and its
+        # folder is not writable then either. A missing file is seeded from the
+        # repo's copy when that exists, else fetched.
         "daily_analysis_time": "03:00",
-        "daily_watchlist": os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "watchlists", "sp500.txt"),
+        "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
         "daily_parts": 3,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
         # Whether the worker places the day's book at the open (paper only
