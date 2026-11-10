@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from tradingagents.daily import order_tickers, watchlist_tickers
+from tradingagents.daily import ensure_watchlist, order_tickers, watchlist_tickers
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +112,7 @@ class Sweep:
     # --- cycles and rounds -----------------------------------------------
 
     def _start_cycle(self, date: str, holdings: list[str], last_analysed: dict[str, str]) -> None:
-        watchlist = watchlist_tickers(Path(self.config["daily_watchlist"]))
-        if self.date and self.date == date:
-            # The same close, the list exhausted: go round again, holdings first.
-            pass
+        watchlist = watchlist_tickers(ensure_watchlist(self.config))
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
         self.queue = order_tickers(watchlist, holdings, last_analysed, date)
         logger.info("Sweep cycle %d on %s's close: %d held positions first, then %d of the watchlist.",

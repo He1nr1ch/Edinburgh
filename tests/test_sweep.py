@@ -152,3 +152,25 @@ def test_the_morning_book_is_built_from_the_fresh_decisions(tmp_path, monkeypatc
     assert "book from 2 decisions dated 2026-11-09 to 2026-11-09" in daily.describe_timing(built.timing)
     with pytest.raises(RuntimeError):
         daily.build_morning_book({**cfg, "decision_max_age_days": 0}, 100_000, date="2026-10-01")
+
+
+@pytest.mark.unit
+def test_the_watchlist_default_exists_and_the_sweep_seeds_the_file_when_missing(tmp_path, monkeypatch):
+    """The first deploy of the continuous sweep stalled on a missing 'daily_watchlist' key."""
+    assert DEFAULT_CONFIG["daily_watchlist"].endswith("/watchlists/sp500.txt")
+    from tradingagents import daily, sp500
+
+    repo_copy = tmp_path / "repo" / "sp500.txt"
+    repo_copy.parent.mkdir()
+    repo_copy.write_text("AAA,BBB\n")
+    monkeypatch.setattr(sp500, "WATCHLIST", repo_copy)
+    monkeypatch.setattr(sp500, "refresh_if_stale", lambda path=None: None)
+    FakeProc.live = []
+    monkeypatch.setattr(sw.subprocess, "Popen", FakeProc)
+    cfg = {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "sweep_state_path": str(tmp_path / "sweep.json"),
+           "daily_watchlist": str(tmp_path / "data" / "sp500.txt"), "daily_parts": 1, "sweep_round_size": 4}
+    s = sw.Sweep(cfg)
+    s.tick("2026-11-10", market_open=False, holdings=[], last_analysed={})
+    assert (tmp_path / "data" / "sp500.txt").read_text() == "AAA,BBB\n"
+    assert FakeProc.live[0].tickers() == ["AAA", "BBB"]
+    assert daily.ensure_watchlist(cfg, refresh=False) == tmp_path / "data" / "sp500.txt"

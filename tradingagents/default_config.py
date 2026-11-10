@@ -265,6 +265,7 @@ def build_default_config() -> dict:
         # refresh it; a missing file is seeded from the repo's copy.
         "daily_book_time": "09:00",
         "decision_max_age_days": 5,
+        "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
         "daily_parts_market_hours": 1,
         "sweep_round_size": 4,
         "daily_parts": 3,

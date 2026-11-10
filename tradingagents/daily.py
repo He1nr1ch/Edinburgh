@@ -120,6 +120,27 @@ def run_sweep(tickers: list[str], date: str, parts: int, log_dir: Path, tag: str
     return done
 
 
+def ensure_watchlist(config: dict, refresh: bool = True) -> Path:
+    """The watchlist file ready to read: seeded from the repo's copy when missing, refreshed when stale.
+
+    Used by the continuous sweep at each cycle and by the hand-run job. A stale
+    list still runs; a missing one that cannot be seeded or fetched cannot.
+    """
+    from tradingagents import sp500
+
+    watchlist = Path(config["daily_watchlist"])
+    if not watchlist.is_file() and sp500.WATCHLIST.is_file():
+        watchlist.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sp500.WATCHLIST, watchlist)   # the repo's copy seeds the data folder's
+        logger.info("Seeded %s from %s", watchlist, sp500.WATCHLIST)
+    if refresh:
+        try:
+            sp500.refresh_if_stale(path=watchlist)
+        except Exception as exc:     # a stale list still runs; a missing one cannot
+            logger.warning("The watchlist could not be refreshed: %s", exc)
+    return watchlist
+
+
 def run_daily(config: dict, equity: float, date: str | None = None, parts: int | None = None,
               refresh_watchlist: bool = True, holdings: list[str] | None = None) -> BuiltBook:
     """The whole job: holdings and watchlist, sweep to the deadline, book, bench. Returns the saved book."""
@@ -128,16 +149,7 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
 
     date = date or trading.last_trading_day(datetime.now().astimezone())
     parts = parts or int(config["daily_parts"])
-    watchlist = Path(config["daily_watchlist"])
-    if not watchlist.is_file() and sp500.WATCHLIST.is_file():
-        watchlist.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(sp500.WATCHLIST, watchlist)   # the repo's copy seeds the data folder's
-        logger.info("Seeded %s from %s", watchlist, sp500.WATCHLIST)
-    if refresh_watchlist:
-        try:
-            sp500.refresh_if_stale(path=watchlist)
-        except Exception as exc:     # a stale list still runs; a missing one cannot
-            logger.warning("The watchlist could not be refreshed: %s", exc)
+    watchlist = ensure_watchlist(config, refresh_watchlist)
     from tradingagents.web.data import all_decisions
 
     if holdings is None:
