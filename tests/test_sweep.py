@@ -54,6 +54,7 @@ def test_a_cycle_starts_with_the_holdings_then_the_least_recently_analysed_in_ro
     assert set(first_round) == {"T05", "XYZ", "T02", "T03", "T04", "T06"}        # holdings first, never-analysed next; T01, T00 later
     assert FakeProc.live[0].tickers()[0] == "T05"                                 # every process starts on a holding
     assert FakeProc.live[0].kw["preexec_fn"] is not None                         # the sweep yields the CPU to the worker
+    assert FakeProc.live[0].kw["env"]["TRADINGAGENTS_RESULTS_DIR"] == cfg["results_dir"]   # the child writes where the worker reads
     assert FakeProc.live[0].cmd[FakeProc.live[0].cmd.index("--run-id") + 1] == "sp500_20261109_c1r1_a"
     assert len(s.queue) == 7 and s.queue[-2:] == ["T01", "T00"]                   # least recent first, newest last
 

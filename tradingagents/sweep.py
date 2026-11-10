@@ -140,8 +140,12 @@ class Sweep:
             if self.config.get("daily_analysts"):
                 cmd += ["--analysts", self.config["daily_analysts"]]
             log = (self.log_dir / f"{run_id}.log").open("w", encoding="utf-8")
+            # The child reads its config from the environment; the folders the
+            # worker uses go with it, so both write the same results.
+            env = {**os.environ, "TRADINGAGENTS_RESULTS_DIR": str(self.config["results_dir"]),
+                   "TRADINGAGENTS_CACHE_DIR": str(self.config["data_cache_dir"])}
             proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                    preexec_fn=lambda: os.nice(NICE))
+                                    preexec_fn=lambda: os.nice(NICE), env=env)
             self.round.procs.append((run_id, proc, log))
         logger.info("Sweep round %s: %d tickers in %d process(es)%s; %d left in the cycle.",
                     tag, len(tickers), parts, " (market hours: the Watcher has the other nodes)" if market_open else "",
