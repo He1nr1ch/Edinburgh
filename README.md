@@ -125,8 +125,10 @@ the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seede
 processes: the held positions first, then the watchlist least recently analysed first, until
 `daily_deadline` (9 AM), so each night picks up where the last stopped (~11 minutes a ticker
 thinking; the S&P 500 is about four nights). Size the book from every decision under
-`decision_max_age_days` old and write a bench of `bench_size` next-best calls, long or short
-together, and price the SPY call hedge for a net-short book into the same
+`decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together
+(the score, in `ranking.py`, is reward to risk × conviction × stance × freshness × balance,
+recomputed at live prices wherever a waiting call is chosen: the bench, the opening placement
+when the gross target has room for only some, and the Watcher's replacement), and price the SPY call hedge for a net-short book into the same
 CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
 the email says so); the job times itself, each part and the whole, into a timing file
 beside the book and the morning email. At the open it first closes any holding whose newest decision no longer backs its side, then
