@@ -157,7 +157,10 @@ It is deployed to Colossus as an always-on container, the same way as Dublin:
 and restarts `edinburgh-worker` on Colossus with `--env-file ~/edinburgh/.env`,
 host networking (PAIR answers only on each machine's own loopback) and
 `~/edinburgh/data` mounted as the worker's data folder. It refuses to deploy
-uncommitted work, so the image tag matches GitHub. Provision the env once with
+uncommitted work. Builds are numbered as Dublin's are, `1.YYYY.MM.DD.HH` (major 1 =
+Edinburgh, then the build's date and hour on the builder's clock), stamped into the image
+and used as its tag, so `docker ps` on Colossus names the running build; a checkout reports
+`1.dev` plus its git sha (`tradingagents/build.py`). The page's footer and `/health` show it. Provision the env once with
 `scp .env heinrich@192.168.0.98:edinburgh/.env`, with `OLLAMA_BASE_URL` set to
 PAIR's proxy on Colossus (`http://127.0.0.1:11434`).
 
