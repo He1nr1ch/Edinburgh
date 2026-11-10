@@ -116,6 +116,9 @@ def build_default_config() -> dict:
         "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
         "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
         "sweep_state_path": os.getenv("TRADINGAGENTS_SWEEP_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "sweep_state.json"),
+        # The lessons the daily and weekly reviews teach, read back by the deciding
+        # agents and the Watcher before each call (see lessons.py).
+        "lessons_path": os.getenv("TRADINGAGENTS_LESSONS_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "lessons.json"),
         # Optional cap on the number of resolved memory log entries. When set,
         # the oldest resolved entries are pruned once this limit is exceeded.
         # Pending entries are never pruned. None disables rotation entirely.

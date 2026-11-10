@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 from tradingagents.dataflows.vendors.alpaca import articles_since, get_asset_profile
 from tradingagents.dataflows.vendors.alpaca.trading import Holding
+from tradingagents.lessons import desk_lessons
 from tradingagents.web import data
 from tradingagents.worker.duty import Finding, WorkerContext
 from tradingagents.worker.policy import action_for
@@ -111,7 +112,7 @@ def _prompt(h: Holding, articles: list[dict], name: str = "", case: dict | None 
         "already names, or the desk had already read, is accounted for; what it did not have is "
         "not. A feed sometimes tags an article with this ticker when it is about a different "
         "company or fund: such news has materiality none. Most news is routine: say so plainly "
-        "rather than inflating it. " + NO_EXTERNAL_TOOLS
+        "rather than inflating it. " + desk_lessons("Watcher", before="\n\n", after="\n\n") + NO_EXTERNAL_TOOLS
     )
     return text
 

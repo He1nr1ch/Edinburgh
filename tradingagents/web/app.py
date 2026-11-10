@@ -276,7 +276,7 @@ def index():
     today = days[0] if days and days[0]["date"] == data.now_text()[:10] else None
     recorded = (f' · today recorded at {today["as_of"][11:16]}' if today else " · no record of today yet")
     body = [f"<h1>Edinburgh positions</h1><p class=\"meta\">{account_line} · as of {data.now_text()}{recorded} · "
-            f'<a href="/days">past days</a> · <a href="/transactions">transactions</a></p>']
+            f'<a href="/days">past days</a> · <a href="/transactions">transactions</a> · <a href="/reports">reports</a></p>']
     body.append("<h2>Open positions</h2>")
     body.append(_positions_table(rows) if rows else "<p>No open positions.</p>")
 
@@ -355,6 +355,56 @@ def day(day: str):
         body.append(f'<p class="meta">From <code>{html.escape(book_path.name)}</code></p>')
         body.append(_book_table(orders, {r["ticker"] for r in rows}))
     return _page(f"On {day}", "\n".join(body))
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def reports_index():
+    from tradingagents.lessons import Lessons
+    from tradingagents.reports.daily import report_dir
+    from tradingagents.reports.weekly import weekly_dir
+
+    cfg = get_config()
+    dailies = sorted((p.stem for p in report_dir(cfg).glob("????-??-??.md")), reverse=True) if report_dir(cfg).is_dir() else []
+    weeklies = sorted((p.stem for p in weekly_dir(cfg).glob("????-??-??.md")), reverse=True) if weekly_dir(cfg).is_dir() else []
+    lessons = Lessons(cfg["lessons_path"])
+    body = ['<p class="meta"><a href="/">← positions</a></p><h1>Reports</h1>']
+    body.append("<h2>Weekly</h2>" + ("<p>" + " · ".join(f'<a href="/reports/week/{w}">week ending {w}</a>' for w in weeklies) + "</p>" if weeklies else "<p>None yet.</p>"))
+    body.append("<h2>Daily</h2>" + ("<p>" + " · ".join(f'<a href="/reports/{d}">{d}</a>' for d in dailies) + "</p>" if dailies else "<p>None yet.</p>"))
+    body.append("<h2>Standing lessons the agents read</h2>")
+    if lessons.standing:
+        body.append("<ul>" + "".join(f"<li><b>{html.escape(l['agent'])}</b>: {html.escape(l['lesson'])} "
+                                     f'<span class="meta">({html.escape(l.get("evidence", ""))}; since {html.escape(l.get("since", ""))})</span></li>'
+                                     for l in lessons.standing) + "</ul>")
+    else:
+        body.append("<p>None yet: the first weekly review sets them.</p>")
+    recent = lessons.daily[-15:]
+    if recent:
+        body.append("<h2>Recent daily lessons</h2><ul>" + "".join(
+            f"<li>{html.escape(l['date'])} <b>{html.escape(l['agent'])}</b>: {html.escape(l['lesson'])} "
+            f'<span class="meta">({html.escape(l.get("evidence", ""))})</span></li>' for l in reversed(recent)) + "</ul>")
+    return _page("Reports", "\n".join(body))
+
+
+@app.get("/reports/{day}", response_class=HTMLResponse)
+def report_day(day: str):
+    from tradingagents.reports.daily import report_dir
+
+    path = report_dir(get_config()) / f"{day}.md"
+    if not path.is_file():
+        raise HTTPException(404, f"no daily report for {day}")
+    return _page(f"Daily report {day}", '<p class="meta"><a href="/reports">← reports</a> · '
+                 f'<a href="/day/{html.escape(day)}">positions that day</a> · <a href="/transactions/{html.escape(day)}">transactions</a></p>'
+                 + _md.render(path.read_text(encoding="utf-8")))
+
+
+@app.get("/reports/week/{day}", response_class=HTMLResponse)
+def report_week(day: str):
+    from tradingagents.reports.weekly import weekly_dir
+
+    path = weekly_dir(get_config()) / f"{day}.md"
+    if not path.is_file():
+        raise HTTPException(404, f"no weekly report for the week ending {day}")
+    return _page(f"Weekly report {day}", '<p class="meta"><a href="/reports">← reports</a></p>' + _md.render(path.read_text(encoding="utf-8")))
 
 
 @app.get("/report/{ticker}", response_class=HTMLResponse)

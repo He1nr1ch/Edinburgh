@@ -10,6 +10,7 @@ from tradingagents.agents.context import (
     get_portfolio_context_from_state,
 )
 from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
+from tradingagents.lessons import desk_lessons
 from tradingagents.agents.structured import (
     NO_EXTERNAL_TOOLS,
     bind_structured,
@@ -61,6 +62,7 @@ def create_trader(llm):
                     "instrument's quote currency (for example 189.5), never a percentage "
                     "or a range; convert a percentage distance to the price level it "
                     "implies, or omit the field if you cannot state a number. "
+                    + desk_lessons("Trader", before=" ", after=" ")
                     + NO_EXTERNAL_TOOLS
                     + brevity
                 ),

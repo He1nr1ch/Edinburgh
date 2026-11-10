@@ -258,6 +258,25 @@ cannot confirm, not as a system to size up. The breakout with confirmation
 fired 27 times and lost; the range trade was flat; the against-impulse fake
 breakout lost in every cut.
 
+## Daily and weekly reports, and what they teach
+
+After the close the worker writes the daily report (`reports/daily/<date>.md`; `tradingagents
+report --date` by hand): equity and the day's realised and unrealised result, every transaction
+with its cause and P/L, the open positions against their stops and targets, the Watcher's
+findings, the book, the sweep's coverage and the feedback scorecard, then the deep model's
+review in the voice of the desk's reflections: what happened, what worked, what did not, up to
+five lessons each addressed to one agent or to the desk's rules, and any rule changes the day
+argues for (listed, never applied). On the week's last session the weekly report follows
+(`reports/weekly/<week-ending>.md`; `--weekly`): the week by day, side and exit cause, the
+agents' record, and the standing lessons the desk carries forward.
+
+The lessons feed back (`lessons.py`, `memory/lessons.json`): each day's lessons are kept for
+thirty days and the weekly review consolidates them with the standing ones into a short list
+that holds until a later week rewrites it. Before every call the Research Manager, Trader, Risk
+Manager and Portfolio Manager read the standing lessons addressed to them or to the desk plus
+the last week's daily ones for them, and the Watcher reads its own in its news judgment and its
+replacement choice. The page lists the reports and the lessons at `/reports`.
+
 ## LLM providers
 
 `ollama` (local or LAN, no key), `anthropic`, `openai`, or any OpenAI-compatible

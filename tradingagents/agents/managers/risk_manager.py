@@ -15,6 +15,7 @@ from tradingagents.agents.context import (
 )
 from tradingagents.agents.rating import parse_risk_level
 from tradingagents.agents.schemas import RiskAssessment, render_risk_assessment
+from tradingagents.lessons import desk_lessons
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 
 
@@ -65,7 +66,7 @@ Write these sections, in this order, starting with the risk level on its own lin
 - **Stop Loss**: an absolute price, above the price for a short and below it for a long, or not provided
 - **Rationale**: the risks that decided the stance and bound the size
 
-{brevity}{NO_EXTERNAL_TOOLS}"""
+{desk_lessons("Risk Manager")}{brevity}{NO_EXTERNAL_TOOLS}"""
 
         assessment = invoke_structured(structured_llm, prompt, "Risk Manager")
         if assessment is not None:

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 from tradingagents.book import latest_bench
 from tradingagents.dataflows.vendors.alpaca import latest_price, trading
+from tradingagents.lessons import desk_lessons
 from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
 from tradingagents.worker.duty import Action, Finding, WorkerContext
 
@@ -82,7 +83,7 @@ def _prompt(departed: dict, options: list[dict]) -> str:
         "book; it already prefers the larger move, the wider stop and the balancing side, so the first "
         "is the default:\n" + "\n".join(lines) + "\n\n"
         "Take the first unless you see a reason in the numbers to prefer another (say which and why), "
-        "or NONE if none is worth opening. " + NO_EXTERNAL_TOOLS
+        "or NONE if none is worth opening. " + desk_lessons("Watcher", before="\n\n", after="\n\n") + NO_EXTERNAL_TOOLS
     )
 
 

@@ -479,6 +479,27 @@ def transactions(
 
 
 @app.command()
+def report(
+    date: str = typer.Option(None, "--date", help="The day, YYYY-MM-DD (default today)"),
+    weekly: bool = typer.Option(False, "--weekly", help="Also the weekly report for the week ending that day"),
+):
+    """Write the daily report (and the lessons it teaches), and with --weekly the week's."""
+    import logging
+    from datetime import datetime as _dt
+
+    from tradingagents.reports import daily as daily_report
+    from tradingagents.reports import weekly as weekly_report
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    day = date or _dt.now().strftime("%Y-%m-%d")
+    path, rev = daily_report.run(DEFAULT_CONFIG, day)
+    console.print(f"Daily report: {path} ({len(rev.lessons) if rev else 0} lesson(s))")
+    if weekly:
+        wpath, wrev = weekly_report.run(DEFAULT_CONFIG, day)
+        console.print(f"Weekly report: {wpath} ({len(wrev.standing_lessons) if wrev else 0} standing lesson(s))")
+
+
+@app.command()
 def snapshot():
     """Record today's open positions for the positions page's day-by-day view."""
     from pathlib import Path

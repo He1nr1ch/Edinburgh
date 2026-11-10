@@ -396,6 +396,31 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
         time.sleep(interval_minutes * 60)
     day = datetime.now().strftime("%Y-%m-%d")
     send_email(f"Edinburgh worker: summary for {day}", summarize_day(config, day), config)
+    run_reports(config, day)
+
+
+def run_reports(config: dict, day: str) -> None:
+    """The daily report after the close, and the weekly one on the week's last session; never fatal."""
+    from tradingagents.reports import daily, weekly
+
+    with run_config(config):
+        try:
+            path, rev = daily.run(config, day)
+            send_email(f"Edinburgh daily report, {day}", path.read_text(encoding="utf-8"), config)
+        except Exception:
+            logger.exception("The daily report failed")
+            return
+        try:
+            next_open = trading.get_clock().next_open
+        except Exception as exc:
+            logger.warning("Could not tell whether the week ended: %s", exc)
+            return
+        if daily.is_week_end(day, next_open):
+            try:
+                wpath, _ = weekly.run(config, day)
+                send_email(f"Edinburgh weekly report, week ending {day}", wpath.read_text(encoding="utf-8"), config)
+            except Exception:
+                logger.exception("The weekly report failed")
 
 
 def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False) -> None:

@@ -222,3 +222,6 @@ __marimo__/
 .env.enterprise
 reports/
 .idea/
+
+# The report generators are source; generated reports live under ~/.tradingagents, not here.
+!tradingagents/reports/

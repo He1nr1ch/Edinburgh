@@ -17,6 +17,7 @@ from tradingagents.agents.context import (
 )
 from tradingagents.agents.rating import parse_rating, parse_risk_level
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
+from tradingagents.lessons import desk_lessons
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 
 
@@ -91,7 +92,7 @@ Write these sections, in this order, starting with the rating on its own line:
 - **Price Target**: an absolute price, e.g. 231.5; not provided only for a Hold with no position
 - **Time Horizon**: e.g. 2-4 weeks
 
-{brevity}{NO_EXTERNAL_TOOLS}"""
+{desk_lessons("Portfolio Manager")}{brevity}{NO_EXTERNAL_TOOLS}"""
 
         # The typed rating is the decision; the rendered text only carries it.
         # Read back from text, a rating the thesis quotes could replace it.
