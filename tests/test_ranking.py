@@ -20,11 +20,13 @@ def test_the_score_is_reward_to_risk_scaled_by_conviction_stance_freshness_and_b
 
 
 @pytest.mark.unit
-def test_a_stop_under_one_percent_away_counts_as_one_percent():
-    """A stop that close is noise waiting to fire, not less risk, so it must not inflate the score."""
-    assert score_call(10.0, 0.2, "Overweight", "Neutral").reward_to_risk == 10.0
-    assert score_call(10.0, 1.0, "Overweight", "Neutral").reward_to_risk == 10.0
-    assert score_call(10.0, 1.8, "Overweight", "Neutral").reward_to_risk == pytest.approx(5.556, abs=0.001)
+def test_a_stop_nearer_than_the_default_distance_counts_as_the_default():
+    """A stop that close is noise waiting to fire (LEN's 2% went in a morning), not less risk."""
+    assert score_call(10.0, 0.2, "Overweight", "Neutral").reward_to_risk == 5.0
+    assert score_call(10.0, 1.8, "Overweight", "Neutral").reward_to_risk == 5.0
+    assert score_call(10.0, 2.0, "Overweight", "Neutral").reward_to_risk == 5.0
+    assert score_call(10.0, 4.0, "Overweight", "Neutral").reward_to_risk == 2.5
+    assert score_call(10.0, 0.5, "Overweight", "Neutral", min_risk_pct=1.0).reward_to_risk == 10.0
 
 
 @pytest.mark.unit
@@ -63,8 +65,8 @@ def test_the_bench_is_best_score_first_and_the_book_rows_carry_a_score(tmp_path,
     built = bk.build_book(["r"], "2026-11-09", cfg, 100_000)
     assert sorted(o.ticker for o in built.book.orders) == ["SHORT", "TOP"]       # the top long and the only short
     assert all(o.score for o in built.book.orders)
-    assert [b["ticker"] for b in built.bench] == ["TIGHT", "WIDE"]                # 10 over the 1% floor beats 2
-    assert built.bench[0]["score"] == 10.0 and "over 1.0% to stop" in built.bench[0]["score_parts"]
+    assert [b["ticker"] for b in built.bench] == ["TIGHT", "WIDE"]                # 10 over the 2% floor (5) still beats 16 over 8 (2)
+    assert built.bench[0]["score"] == 5.0 and "over 2.0% to stop" in built.bench[0]["score_parts"]
 
 
 @pytest.mark.unit

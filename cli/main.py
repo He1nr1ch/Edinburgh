@@ -252,8 +252,8 @@ def size(
         if not why.startswith(counted):
             console.print(f"[dim]no position: {ticker}: {why}[/dim]")
     if built.bench:
-        console.print("[bold]Bench[/bold] (replacements, by move to target): "
-                      + ", ".join(f"{b['ticker']} {b['side']} {b['expected_move_pct']:+.1f}%" for b in built.bench))
+        console.print("[bold]Bench[/bold] (replacements, best score first): "
+                      + ", ".join(f"{b['ticker']} {b['side']} {b['score']:.1f} ({b['expected_move_pct']:+.1f}%)" for b in built.bench))
 
     plan = None
     if hedge:

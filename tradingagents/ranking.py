@@ -7,8 +7,9 @@ means and none of them has to weigh it in prose.
     score = reward-to-risk × conviction × stance × freshness × balance
 
 - reward-to-risk: the expected move to the target over the distance to the
-  stop, both in percent of the current price. A stop under 1% away counts as
-  1%: that close, it is noise waiting to fire, not less risk.
+  stop, both in percent of the current price. A stop nearer than the desk's
+  default stop distance (2%) counts as that distance: that close, it is noise
+  waiting to fire, not less risk, and must not outrank a stop placed sensibly.
 - conviction: 1.25 for a Buy or a Sell, 1.0 for an Overweight or Underweight.
 - stance: 1.1 Aggressive, 1.0 Neutral, 0.9 Conservative.
 - freshness: minus 10% a day since the decision, down to half.
@@ -26,7 +27,7 @@ from datetime import date
 
 STRONG = {"Buy", "Sell"}
 STANCE = {"Aggressive": 1.1, "Neutral": 1.0, "Conservative": 0.9}
-MIN_RISK_PCT = 1.0
+MIN_RISK_PCT = 2.0      # the default stop distance; a nearer stop earns no more
 FRESHNESS_PER_DAY = 0.10
 FRESHNESS_FLOOR = 0.5
 BALANCE_BONUS = 1.15
@@ -61,9 +62,9 @@ def age_days(decided: str | None, as_of: str | None) -> float:
 
 
 def score_call(reward_pct: float, risk_pct: float | None, rating: str, risk_level: str | None,
-               days_old: float = 0.0, balances: bool = False) -> Score:
+               days_old: float = 0.0, balances: bool = False, min_risk_pct: float = MIN_RISK_PCT) -> Score:
     """The score of a call with ``reward_pct`` to its target and ``risk_pct`` to its stop."""
-    risk = max(float(risk_pct or 0.0), MIN_RISK_PCT)
+    risk = max(float(risk_pct or 0.0), min_risk_pct)
     rr = max(0.0, reward_pct) / risk
     conviction = STRONG_BONUS if rating in STRONG else 1.0
     stance = STANCE.get(risk_level or "", 1.0)

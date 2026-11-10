@@ -94,7 +94,8 @@ def scored(call: Call, price: float, as_of: str, default_stop_pct: float, net_va
     side = SIDE.get(call.rating, 0)
     stop, _ = stop_for(call, price, default_stop_pct)
     reward, risk = levels_pct(side, price, call.target, stop, default_stop_pct)
-    return score_call(reward, risk, call.rating, call.risk_level, age_days(call.decided, as_of), balances_book(side, net_value))
+    return score_call(reward, risk, call.rating, call.risk_level, age_days(call.decided, as_of),
+                      balances_book(side, net_value), min_risk_pct=default_stop_pct)
 
 
 BOOK_COLUMNS = ["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value",

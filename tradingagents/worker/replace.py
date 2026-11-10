@@ -60,7 +60,7 @@ def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct
             continue        # already through its stop
         reward, risk = levels_pct(side, price, target, stop, default_stop_pct)
         s = score_call(reward, risk, row.get("rating", ""), row.get("risk_level"),
-                       age_days(row.get("decided"), today), balances_book(side, net_value))
+                       age_days(row.get("decided"), today), balances_book(side, net_value), min_risk_pct=default_stop_pct)
         out.append({**row, "live_price": price, "live_move_pct": round(move, 2), "live_score": s.score, "live_parts": s.parts()})
     out.sort(key=lambda o: (-o["live_score"], o["ticker"]))
     return out
