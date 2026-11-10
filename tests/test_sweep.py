@@ -121,6 +121,8 @@ def test_the_book_is_due_at_its_time_on_a_day_the_market_opens_and_once(tmp_path
     assert not book_due(cfg, datetime(2026, 11, 10, 9, 5, tzinfo=et), state, opens)
     state.day("2026-11-10")["analysis"] = "failed: Alpaca down"
     assert book_due(cfg, datetime(2026, 11, 10, 9, 5, tzinfo=et), state, opens)      # a failure is retried
+    state.day("2026-11-10")["analysis"] = "running"                                    # the old nightly job's marker
+    assert book_due(cfg, datetime(2026, 11, 10, 9, 5, tzinfo=et), state, opens)
 
 
 @pytest.mark.unit

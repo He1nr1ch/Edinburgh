@@ -298,7 +298,7 @@ def build_book_job(config: dict) -> None:
         today = datetime.now(ET).strftime("%Y-%m-%d")
         state = WorkerState.load(config["worker_state_path"])
         day = state.day(today)
-        if day["analysis"] and not day["analysis"].startswith("failed"):
+        if day["analysis"].startswith("book built"):
             return
         try:
             equity = trading.get_account().equity
@@ -324,8 +324,11 @@ def book_due(config: dict, now: datetime, state: WorkerState, next_open: datetim
         return False
     hour, minute = (int(x) for x in str(config["daily_book_time"]).split(":"))
     due_at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    # Anything but a built book counts as not built: a failure is retried, and
+    # the old nightly job's "running" or "done" marker (a record from before the
+    # sweep ran around the clock) does not stand in for today's book.
     status = state.day(local.strftime("%Y-%m-%d"))["analysis"]
-    return local >= due_at and (not status or status.startswith("failed"))
+    return local >= due_at and not status.startswith("book built")
 
 
 def tick_sweep(sweep, config: dict, market_open: bool) -> None:
