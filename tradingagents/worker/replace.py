@@ -83,7 +83,8 @@ def _prompt(departed: dict, options: list[dict]) -> str:
         "book; it already prefers the larger move, the wider stop and the balancing side, so the first "
         "is the default:\n" + "\n".join(lines) + "\n\n"
         "Take the first unless you see a reason in the numbers to prefer another (say which and why), "
-        "or NONE if none is worth opening. " + desk_lessons("Watcher", before="\n\n", after="\n\n") + NO_EXTERNAL_TOOLS
+        "or NONE if none is worth opening. The side of the departed position does not matter: the desk "
+        "takes the most attractive call, long or short, and an uneven book is fine. " + desk_lessons("Watcher", before="\n\n", after="\n\n") + NO_EXTERNAL_TOOLS
     )
 
 
