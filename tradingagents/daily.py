@@ -32,13 +32,16 @@ def run_ids_for(date: str, parts: int, tag: str = "daily") -> list[str]:
     return [f"sp500_{date.replace('-', '')}_{tag}_{chr(97 + i)}" for i in range(parts)]
 
 
-def order_tickers(watchlist: list[str], holdings: list[str], last_analysed: dict[str, str]) -> list[str]:
-    """The night's order: the held positions first, then the watchlist least recently analysed first.
+def order_tickers(watchlist: list[str], holdings: list[str], last_analysed: dict[str, str],
+                  date: str | None = None) -> list[str]:
+    """The cycle's order: the held positions first, then the watchlist least recently analysed first.
 
-    A ticker never analysed comes before any that has been; ties keep the
-    watchlist's order. Each night's sweep then picks up where the last stopped.
+    A holding already analysed on ``date`` (this cycle's close) is not reviewed
+    again; it takes its place by recency with the rest. A ticker never analysed
+    comes before any that has been; ties keep the watchlist's order.
     """
-    held = [t for t in dict.fromkeys(h.upper() for h in holdings)]
+    held = [t for t in dict.fromkeys(h.upper() for h in holdings)
+            if not (date and last_analysed.get(t) == date)]
     rest = [t for t in watchlist if t.upper() not in held]
     position = {t: i for i, t in enumerate(rest)}
     rest.sort(key=lambda t: (last_analysed.get(t.upper(), ""), position[t]))

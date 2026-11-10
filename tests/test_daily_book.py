@@ -286,6 +286,8 @@ def test_the_night_reviews_the_holdings_first_then_the_least_recently_analysed()
     watchlist = ["AAPL", "MSFT", "GD", "JPM", "XOM"]
     last = {"AAPL": "2026-11-06", "MSFT": "2026-11-04", "JPM": "2026-11-05"}      # GD and XOM never analysed
     assert order_tickers(watchlist, ["jpm", "NVDA"], last) == ["JPM", "NVDA", "GD", "XOM", "MSFT", "AAPL"]
+    # A holding already analysed on this close is not reviewed again; it queues by recency.
+    assert order_tickers(watchlist, ["jpm", "NVDA"], last, date="2026-11-05") == ["NVDA", "GD", "XOM", "MSFT", "JPM", "AAPL"]
 
 
 @pytest.mark.unit

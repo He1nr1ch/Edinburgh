@@ -117,7 +117,7 @@ class Sweep:
             # The same close, the list exhausted: go round again, holdings first.
             pass
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
-        self.queue = order_tickers(watchlist, holdings, last_analysed)
+        self.queue = order_tickers(watchlist, holdings, last_analysed, date)
         logger.info("Sweep cycle %d on %s's close: %d held positions first, then %d of the watchlist.",
                     self.cycle, date, len(holdings), len(self.queue) - len(holdings))
         self._save()
