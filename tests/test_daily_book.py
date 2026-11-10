@@ -181,28 +181,6 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
 
 
 @pytest.mark.unit
-def test_the_daily_job_is_due_once_after_its_time_on_a_day_the_market_opens(tmp_path):
-    from zoneinfo import ZoneInfo
-
-    from tradingagents.worker.runner import daily_job_due
-
-    cfg = _cfg(tmp_path, daily_analysis_time="03:00")
-    state = WorkerState.load(cfg["worker_state_path"])
-    et = ZoneInfo("America/New_York")
-    opens_today = datetime(2026, 11, 6, 9, 30, tzinfo=et)                            # Friday's open
-    assert not daily_job_due(cfg, datetime(2026, 11, 6, 2, 59, tzinfo=et), state, opens_today)   # too early
-    assert daily_job_due(cfg, datetime(2026, 11, 6, 3, 0, tzinfo=et), state, opens_today)
-    monday_open = datetime(2026, 11, 9, 9, 30, tzinfo=et)
-    assert not daily_job_due(cfg, datetime(2026, 11, 7, 9, 0, tzinfo=et), state, monday_open)    # Saturday
-    # Thanksgiving Thursday: a weekday, but the next open is Friday, so no job.
-    friday_open = datetime(2026, 11, 27, 9, 30, tzinfo=et)
-    assert not daily_job_due(cfg, datetime(2026, 11, 26, 3, 0, tzinfo=et), state, friday_open)
-    assert daily_job_due(cfg, datetime(2026, 11, 27, 3, 0, tzinfo=et), state, friday_open)
-    state.day("2026-11-06")["analysis"] = "done"
-    assert not daily_job_due(cfg, datetime(2026, 11, 6, 12, 0, tzinfo=et), state, opens_today)
-
-
-@pytest.mark.unit
 def test_the_sweep_runs_the_parts_as_processes_and_reports_the_ones_that_finished(tmp_path, monkeypatch):
     from tradingagents import daily
 
@@ -299,30 +277,6 @@ def test_a_net_long_book_writes_no_hedge_row(tmp_path, monkeypatch):
     built = daily.run_daily(_cfg(tmp_path, daily_watchlist=str(watch)), 100_000, date="2026-11-05", refresh_watchlist=False, holdings=[])
     assert [r["ticker"] for r in load_rows(built.book_path)] == ["A"]
     assert json.loads(built.timing_path.read_text())["hedge"].startswith("none: the book is not net short")
-
-
-@pytest.mark.unit
-def test_the_default_analysis_time_is_three_in_the_morning():
-    assert DEFAULT_CONFIG["daily_analysis_time"] == "01:00"
-    assert DEFAULT_CONFIG["daily_watchlist"].endswith("sp500.txt")
-
-
-@pytest.mark.unit
-def test_a_job_a_restart_interrupted_is_due_again_but_a_finished_or_failed_one_is_not(tmp_path):
-    from zoneinfo import ZoneInfo
-
-    from tradingagents.worker.runner import daily_job_due
-
-    cfg = _cfg(tmp_path, daily_analysis_time="03:00")
-    state = WorkerState.load(cfg["worker_state_path"])
-    at = datetime(2026, 11, 9, 5, 0, tzinfo=ZoneInfo("America/New_York"))      # Monday, mid-job time
-    opens = datetime(2026, 11, 9, 9, 30, tzinfo=ZoneInfo("America/New_York"))
-    state.day("2026-11-09")["analysis"] = "running"
-    assert daily_job_due(cfg, at, state, opens)
-    state.day("2026-11-09")["analysis"] = "failed: Alpaca down"
-    assert not daily_job_due(cfg, at, state, opens)
-    state.day("2026-11-09")["analysis"] = "done"
-    assert not daily_job_due(cfg, at, state, opens)
 
 
 @pytest.mark.unit

@@ -124,7 +124,7 @@ def test_a_close_cancels_the_symbols_waiting_orders_and_only_the_workers_own_ord
 
 @pytest.mark.unit
 def test_the_forever_loop_sleeps_through_the_close_and_survives_errors(monkeypatch):
-    """Closed: sleep toward the open. An error: log it, wait a minute, carry on."""
+    """Closed: nap five minutes at a time so the sweep's rounds keep turning. An error: log it, wait a minute, carry on."""
     from datetime import timedelta
 
     from tradingagents.dataflows.vendors.alpaca.trading import Clock
@@ -153,7 +153,7 @@ def test_the_forever_loop_sleeps_through_the_close_and_survives_errors(monkeypat
     monkeypatch.setattr(runner.time, "sleep", sleep)
     with pytest.raises(Stop):
         runner.run_forever(CONFIG, None, [], 5)
-    assert slept == [15 * 60, 60]      # a 15-minute nap toward Monday's open, then the retry wait
+    assert slept == [300, 60]          # a five-minute nap (the sweep keeps turning), then the retry wait
 
 
 def _decision(results_dir, ticker, date, **state):

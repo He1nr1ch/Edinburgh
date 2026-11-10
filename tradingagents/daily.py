@@ -181,6 +181,48 @@ def run_daily(config: dict, equity: float, date: str | None = None, parts: int |
     return built
 
 
+def build_morning_book(config: dict, equity: float, date: str | None = None) -> BuiltBook:
+    """The day's book from every decision still fresh, however it was analysed.
+
+    The continuous sweep leaves decisions behind as it goes; this sizes the
+    book from those under ``decision_max_age_days`` old, prices the hedge and
+    saves book, bench and a coverage note. The run ids name the book after the
+    newest decisions it drew on.
+    """
+    from tradingagents.book import recent_calls
+    from tradingagents.dataflows.vendors.alpaca import trading
+    from tradingagents.web.data import all_decisions
+
+    date = date or trading.last_trading_day(datetime.now().astimezone())
+    results = Path(config["results_dir"])
+    calls = recent_calls(results, date, int(config.get("decision_max_age_days") or 0))
+    if not calls:
+        raise RuntimeError(f"no decision under {config.get('decision_max_age_days')} days old to build a book from")
+    newest = sorted({r[0].date for r in all_decisions(results).values()}, reverse=True)[:1]
+    run_ids = [f"fresh_{(newest or [date])[0].replace('-', '')}"]
+    started = datetime.now().astimezone()
+    built = build_book(run_ids, date, config, equity, calls=calls)
+    if config.get("daily_hedge", True):
+        try:
+            built.hedge = price_hedge(built, date, config)
+        except Exception as exc:
+            logger.warning("The hedge could not be priced: %s", exc)
+    built = save_book(built, config, hedge_row(built.hedge) if built.hedge else None)
+    fresh_days = sorted({c.decided for c in calls if c.decided})
+    timing = {"date": date, "started": started.isoformat(timespec="seconds"),
+              "finished": datetime.now().astimezone().isoformat(timespec="seconds"),
+              "total_seconds": round((datetime.now().astimezone() - started).total_seconds(), 1),
+              "calls_in_window": len(calls), "decided_between": [fresh_days[0], fresh_days[-1]] if fresh_days else [],
+              "book": str(built.book_path), "orders": len(built.book.orders), "bench": len(built.bench),
+              "hedge": describe_hedge(built.hedge)}
+    built.timing = timing
+    built.timing_path = built.book_path.with_name(built.book_path.stem + "_timing.json")
+    built.timing_path.write_text(json.dumps(timing, indent=2) + "\n", encoding="utf-8")
+    logger.info("Morning book: %d orders, bench %d, from %d decisions dated %s; %s",
+                len(built.book.orders), len(built.bench), len(calls), " to ".join(timing["decided_between"]), built.book_path)
+    return built
+
+
 def last_analysed_on(results_dir: Path, ticker: str, date: str) -> bool:
     return any(Path(results_dir).glob(f"backtest/*/{ticker}/TradingAgentsStrategy_logs/full_states_log_{date}.json"))
 
@@ -198,6 +240,9 @@ def describe_timing(timing: dict) -> str:
     total = timedelta(seconds=int(timing.get("total_seconds") or 0))
     parts = ", ".join(f"{rid.rsplit('_', 1)[-1]} {p['tickers']} in {timedelta(seconds=int(p['seconds']))}"
                       for rid, p in timing.get("parts", {}).items())
+    if "decided_between" in timing:
+        span = " to ".join(timing["decided_between"]) or "-"
+        return f"book from {timing.get('calls_in_window')} decisions dated {span}, built in {timing.get('total_seconds')}s"
     covered = (f"{timing.get('analysed_tonight')} of {timing.get('tickers')} tickers analysed"
                if "analysed_tonight" in timing else f"{timing.get('tickers')} tickers")
     stop = ", stopped at the deadline" if timing.get("stopped_at_deadline") else ""

@@ -289,52 +289,58 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         return placed
 
 
-def run_daily_job(config: dict, dry_run: bool = False) -> None:
-    """The 4 AM job, once per trading day; its outcome is recorded whatever happens."""
-    from tradingagents.daily import describe_timing, run_daily
+def build_book_job(config: dict) -> None:
+    """The morning book, once per trading day, from the decisions the sweep has left; recorded whatever happens."""
+    from tradingagents.daily import build_morning_book, describe_timing
     from tradingagents.hedge import describe_hedge
 
     with run_config(config):
         today = datetime.now(ET).strftime("%Y-%m-%d")
         state = WorkerState.load(config["worker_state_path"])
         day = state.day(today)
-        if day["analysis"] and not day["analysis"].startswith("running"):
+        if day["analysis"] and not day["analysis"].startswith("failed"):
             return
-        if day["analysis"].startswith("running"):
-            logger.info("Resuming the daily job interrupted by a restart; finished tickers are kept.")
-        day["analysis"] = "running"
-        state.save()
         try:
             equity = trading.get_account().equity
-            built = run_daily(config, equity)
-            state = WorkerState.load(config["worker_state_path"])   # the sweep took hours; passes may have run
-            day = state.day(today)
-            day.update(analysis="done", book_path=str(built.book_path))
+            built = build_morning_book(config, equity)
+            day.update(analysis=f"book built {datetime.now(ET).strftime('%H:%M')}", book_path=str(built.book_path))
             send_email(f"Edinburgh: the book for {today}",
-                       f"{len(built.book.orders)} orders and a bench of {len(built.bench)} from {built.date}'s close.\n"
+                       f"{len(built.book.orders)} orders and a bench of {len(built.bench)} on {built.date}'s close.\n"
                        f"Hedge: {describe_hedge(built.hedge)}\n"
-                       f"Timed: {describe_timing(built.timing or {})}\n"
+                       f"{describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)
         except Exception as exc:
-            logger.exception("The daily job failed")
-            state = WorkerState.load(config["worker_state_path"])
-            state.day(today)["analysis"] = f"failed: {exc}"
+            logger.exception("The morning book could not be built")
+            day["analysis"] = f"failed: {exc}"
         state.save()
 
 
-def daily_job_due(config: dict, now: datetime, state: WorkerState, next_open: datetime) -> bool:
-    """Whether today's job should run now: its time (ET) has come, the market opens later
-    today (so not a weekend or a holiday, by Alpaca's clock), and it has not finished. A job a
-    restart interrupted ("running" in the record with no process behind it) is due again; the
-    sweep keeps the tickers it finished."""
+def book_due(config: dict, now: datetime, state: WorkerState, next_open: datetime) -> bool:
+    """Whether today's book should be built now: its time (ET) has come on a day the market opens
+    (by Alpaca's clock, so not a weekend or a holiday) and it is not built yet."""
     local = now.astimezone(ET)
     if next_open.astimezone(ET).date() != local.date():
         return False
-    hour, minute = (int(x) for x in str(config["daily_analysis_time"]).split(":"))
+    hour, minute = (int(x) for x in str(config["daily_book_time"]).split(":"))
     due_at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
     status = state.day(local.strftime("%Y-%m-%d"))["analysis"]
-    return local >= due_at and (not status or status.startswith("running"))
+    return local >= due_at and (not status or status.startswith("failed"))
+
+
+def tick_sweep(sweep, config: dict, market_open: bool) -> None:
+    """Advance the continuous sweep; a failure here is logged, never the loop's."""
+    from tradingagents.web.data import all_decisions
+
+    try:
+        with run_config(config):
+            now = datetime.now().astimezone()
+            date = trading.last_trading_day(now)
+            holdings = [h.symbol for h in trading.get_account().holdings if h.asset_class == "us_equity"]
+        last = {t: refs[0].date for t, refs in all_decisions(Path(config["results_dir"])).items()}
+        sweep.tick(date, market_open, holdings, last)
+    except Exception as exc:
+        logger.warning("The sweep could not be advanced: %s", exc)
 
 
 def summarize_day(config: dict, day: str) -> str:
@@ -361,8 +367,12 @@ def _sleep_until(target: datetime, now: datetime, chunk_minutes: int = 15) -> No
     time.sleep(max(1.0, min((target - now).total_seconds(), chunk_minutes * 60)))
 
 
-def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False) -> None:
-    """Passes from now until the close, then the day's summary. Call while the market is open."""
+def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False, sweep=None) -> None:
+    """Passes from now until the close, then the day's summary. Call while the market is open.
+
+    The Watcher's pass runs first on every turn and the sweep is advanced after
+    it; during market hours the sweep runs on one node, so the Watcher's calls
+    find the others free."""
     # The build again at the top of the trading day: this process may have been
     # running since a deploy days ago, and the day's record is what later answers
     # "which build traded on this date".
@@ -374,6 +384,8 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
     place_book(config, dry_run)
     while True:
         run_pass(config, llm, duties, dry_run)
+        if sweep is not None:
+            tick_sweep(sweep, config, market_open=True)
         with run_config(config):
             clock = trading.get_clock()
         if not clock.is_open:
@@ -384,27 +396,33 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
 
 
 def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False) -> None:
-    """The container's loop: each market day from the open to the close, asleep in between.
+    """The container's loop: the sweep around the clock, the book at its time, the Watcher through each session.
 
     Weekends and holidays follow Alpaca's clock. A failure (the broker or the
     model unreachable) is logged and retried a minute later, never fatal.
     """
+    from tradingagents.sweep import Sweep
+
     build.log_banner("worker start")
+    sweep = Sweep(config)
+    logger.info("Sweep: %s", sweep.status())
     while True:
         try:
             with run_config(config):
                 clock = trading.get_clock()
                 state = WorkerState.load(config["worker_state_path"])
-            if not clock.is_open and daily_job_due(config, clock.now, state, clock.next_open):
-                logger.info("Running the daily analysis.")
-                run_daily_job(config, dry_run)
+            tick_sweep(sweep, config, clock.is_open)
+            if not clock.is_open and book_due(config, clock.now, state, clock.next_open):
+                logger.info("Building the morning book.")
+                build_book_job(config)
                 continue
             if clock.is_open:
                 logger.info("The market is open; watching until the close.")
-                run_day(config, llm, duties, interval_minutes, dry_run)
+                run_day(config, llm, duties, interval_minutes, dry_run, sweep)
                 continue
-            logger.info("The market is closed; the next open is %s.", clock.next_open)
-            _sleep_until(clock.next_open, clock.now)
+            # Closed: sleep a short while so the sweep's rounds keep turning and
+            # the book is built on the minute.
+            time.sleep(min(300, max(1.0, (clock.next_open - clock.now).total_seconds())))
         except Exception:
             logger.exception("The worker hit an error; trying again in a minute.")
             time.sleep(60)

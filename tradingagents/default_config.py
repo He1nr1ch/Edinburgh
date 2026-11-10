@@ -44,8 +44,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_GROSS_PCT":               "gross_pct",
     "TRADINGAGENTS_POSITION_CAP_PCT":        "position_cap_pct",
     "TRADINGAGENTS_BENCH_SIZE":              "bench_size",
-    "TRADINGAGENTS_DAILY_ANALYSIS_TIME":     "daily_analysis_time",
-    "TRADINGAGENTS_DAILY_DEADLINE":          "daily_deadline",
+    "TRADINGAGENTS_DAILY_BOOK_TIME":         "daily_book_time",
+    "TRADINGAGENTS_DAILY_PARTS_MARKET_HOURS": "daily_parts_market_hours",
+    "TRADINGAGENTS_SWEEP_ROUND_SIZE":        "sweep_round_size",
     "TRADINGAGENTS_DECISION_MAX_AGE_DAYS":   "decision_max_age_days",
     "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
     "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
@@ -114,6 +115,7 @@ def build_default_config() -> dict:
         # hedged is not hedged again until they expire.
         "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
         "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
+        "sweep_state_path": os.getenv("TRADINGAGENTS_SWEEP_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "sweep_state.json"),
         # Optional cap on the number of resolved memory log entries. When set,
         # the oldest resolved entries are pruned once this limit is exceeded.
         # Pending entries are never pruned. None disables rotation entirely.
@@ -251,25 +253,20 @@ def build_default_config() -> dict:
         # The bench: the next-best calls after the book, long or short together,
         # for the Watcher to replace a position that sells out during the day.
         "bench_size": 10,
-        # The daily job (tradingagents daily; the worker runs it on trading days):
-        # analyse the watchlist on the last close at this Eastern time, in this
-        # many processes at once, then size the book and the bench. The user
-        # chose 1 AM with thinking on (2026-11-09). The watchlist
-        # lives in the data folder, where the job can refresh it: the repo's copy
-        # is not there when the package is installed (the container), and its
-        # folder is not writable then either. A missing file is seeded from the
-        # repo's copy when that exists, else fetched.
-        "daily_analysis_time": "01:00",
-        # With thinking on, a ticker takes about 11 minutes, so the S&P 500 is
-        # some 30 hours on three nodes: the sweep stops at this Eastern time,
-        # whatever it reached, so the book is ready for the open. It reviews the
-        # held positions first, then the watchlist least recently analysed first,
-        # so each night picks up where the last stopped (about four nights a
-        # full pass), and the book draws on every decision under
-        # decision_max_age_days old.
-        "daily_deadline": "09:00",
+        # The sweep runs around the clock (see sweep.py): the held positions first,
+        # then the watchlist least recently analysed first, in rounds of
+        # sweep_round_size tickers per process, in daily_parts processes outside
+        # market hours and daily_parts_market_hours during them, so the Watcher
+        # has the other PAIR nodes to itself while the market is open. With
+        # thinking on a ticker takes about eleven minutes; the S&P 500 is under
+        # two days. The book is built at daily_book_time (ET) on a day the market
+        # opens, from every decision under decision_max_age_days old. The
+        # watchlist lives in the data folder, where the sweep can read and
+        # refresh it; a missing file is seeded from the repo's copy.
+        "daily_book_time": "09:00",
         "decision_max_age_days": 5,
-        "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
+        "daily_parts_market_hours": 1,
+        "sweep_round_size": 4,
         "daily_parts": 3,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
         # Price the SPY call hedge for a net-short book after sizing, as `size`

@@ -119,12 +119,16 @@ book: the weekly at-the-money call unless the monthly costs less than
 row of its own; `--record-hedge` records calls bought by hand in the hedge
 ledger, so later runs do not hedge again until they expire.
 
-`tradingagents worker` is the always-on desk. At `daily_analysis_time` (1 AM ET)
-on days the market opens (by Alpaca's clock, so weekends and holidays are skipped) it runs the daily job (`tradingagents daily` by hand): refresh
-the watchlist (`daily_watchlist`, `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from Wikipedia when a month old) and analyse on the last close, qwen thinking on, in `daily_parts`
-processes: the held positions first, then the watchlist least recently analysed first, until
-`daily_deadline` (9 AM), so each night picks up where the last stopped (~11 minutes a ticker
-thinking; the S&P 500 is about four nights). Size the book from every decision under
+`tradingagents worker` is the always-on desk. Its sweep runs around the clock
+(`sweep.py`): the held positions first, then the watchlist (`daily_watchlist`,
+`~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from
+Wikipedia when a month old) least recently analysed first, in rounds of `sweep_round_size`
+tickers per process, `daily_parts` processes outside market hours and
+`daily_parts_market_hours` (one) during them, so the Watcher has the other PAIR nodes to
+itself while the market is open; the sweep's processes also run at a lower CPU priority
+than the worker. With qwen's thinking on a ticker takes about eleven minutes and the S&P 500
+under two days; when the session closes the cycle restarts on the holdings against the new
+close. At `daily_book_time` (9 AM ET) on a day the market opens it builds the book. Size the book from every decision under
 `decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together
 (the score, in `ranking.py`, is reward to risk × conviction × stance × freshness × balance,
 recomputed at live prices wherever a waiting call is chosen: the bench, the opening placement
