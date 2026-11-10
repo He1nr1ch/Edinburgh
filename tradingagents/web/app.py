@@ -22,6 +22,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from markdown_it import MarkdownIt
 
+from tradingagents import build
 from tradingagents.dataflows.config import get_config
 from tradingagents.web import data, snapshots, transactions
 from tradingagents.worker.state import WorkerState
@@ -63,10 +64,12 @@ _PAGE = """<!doctype html>
   .card {{ background: #242833; border: 1px solid #3a3f4b; border-radius: 6px; padding: .5rem .8rem; }}
   .card .k {{ color: #9aa3b2; font-size: .8rem; }} .card .v {{ font-size: 1.15rem; }}
   code {{ background: #2a2f3a; padding: .1rem .3rem; border-radius: 3px; }}
+  footer {{ margin-top: 3rem; color: #9aa3b2; font-size: .8rem; border-top: 1px solid #3a3f4b; padding-top: .6rem; }}
 </style>
 </head>
 <body>
 {body}
+<footer>Edinburgh build {build}</footer>
 </body>
 </html>"""
 
@@ -80,7 +83,8 @@ def _default_stop() -> float:
 
 
 def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
-    return HTMLResponse(_PAGE.format(title=html.escape(title), body=body), status_code=status_code)
+    return HTMLResponse(_PAGE.format(title=html.escape(title), body=body, build=html.escape(build.describe())),
+                        status_code=status_code)
 
 
 def _num(value, digits=2, suffix="", signed=False) -> str:
@@ -204,7 +208,8 @@ def transactions_day(day: str):
 @app.get("/health")
 def health():
     decisions = data.find_decisions(_results_dir())
-    return {"ok": True, "decisions": len(decisions), "results_dir": str(_results_dir())}
+    return {"ok": True, "build": build.BUILD_VERSION, "git_sha": build.git_sha(), "decisions": len(decisions),
+            "results_dir": str(_results_dir())}
 
 
 @app.get("/api/positions")

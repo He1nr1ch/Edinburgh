@@ -31,4 +31,14 @@ WORKDIR /home/appuser/app
 
 COPY --from=builder --chown=appuser:appuser /build .
 
+# Build stamp (see tradingagents/build.py). deploy.sh passes both; declared last
+# on purpose: they change on every build, and anything below an ARG/ENV is
+# rebuilt, so keeping them here leaves the install layers cached. Left empty
+# for an unstamped build (plain `docker compose up`), which build.py then
+# reports as 1.dev rather than inventing a build number.
+ARG BUILD_VERSION=""
+ARG GIT_SHA=""
+ENV EDINBURGH_BUILD=$BUILD_VERSION
+ENV EDINBURGH_GIT_SHA=$GIT_SHA
+
 ENTRYPOINT ["tradingagents"]

@@ -407,7 +407,10 @@ def worker(
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = DEFAULT_CONFIG
     llm = create_tier_client(config, "quick").get_llm()
+    from tradingagents import build
+
     mode = "paper" if paper_trading() else "LIVE"
+    console.print(f"Edinburgh build {build.describe()}")
     trading = ("off" if not config["worker_trading_enabled"] else
                "dry run" if dry_run else
                "on" if mode == "paper" or config["worker_allow_live"] else "blocked (live account)")
@@ -489,6 +492,9 @@ def web(
     """Serve the positions page: every open position, each linked to what the agents decided."""
     import uvicorn
 
+    from tradingagents import build
+
+    console.print(f"Edinburgh build {build.describe()}")
     uvicorn.run("tradingagents.web.app:app", host=host, port=port, log_level="info")
 
 

@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from tradingagents import build
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
@@ -360,6 +361,14 @@ def _sleep_until(target: datetime, now: datetime, chunk_minutes: int = 15) -> No
 
 def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False) -> None:
     """Passes from now until the close, then the day's summary. Call while the market is open."""
+    # The build again at the top of the trading day: this process may have been
+    # running since a deploy days ago, and the day's record is what later answers
+    # "which build traded on this date".
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    _log(config, datetime.now(UTC).astimezone(), build.log_banner(f"trading day {today}"))
+    state = WorkerState.load(config["worker_state_path"])
+    state.day(today)["build"] = build.describe()
+    state.save()
     place_book(config, dry_run)
     while True:
         run_pass(config, llm, duties, dry_run)
@@ -378,6 +387,7 @@ def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dr
     Weekends and holidays follow Alpaca's clock. A failure (the broker or the
     model unreachable) is logged and retried a minute later, never fatal.
     """
+    build.log_banner("worker start")
     while True:
         try:
             with run_config(config):

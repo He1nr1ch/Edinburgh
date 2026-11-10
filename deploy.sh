@@ -19,8 +19,14 @@ WEB_PORT=8010               # Dublin's logbook has 8000
 # (set OLLAMA_BASE_URL in it to PAIR's proxy on Colossus, http://127.0.0.1:11434)
 ENV_FILE="/home/heinrich/edinburgh/.env"
 DATA_DIR="/home/heinrich/edinburgh/data"
-KEEP_IMAGES=3               # tags of $IMAGE kept on each side; older ones go
+KEEP_IMAGES=3               # builds of $IMAGE kept on each side; older ones go
 GIT_SHA=$(git rev-parse --short HEAD)
+# Build version, Dublin's scheme: major . year . month . day . hour-of-build,
+# major 1 = Edinburgh (Dublin is 4); see tradingagents/build.py. One build an
+# hour is distinguishable, which is plenty for a hand-run deploy. Baked into
+# the image AND used as its tag, so `docker ps` on Colossus names the build it
+# is running instead of the uninformative "latest".
+BUILD_VERSION="1.$(date +%Y.%m.%d.%H)"
 
 # Keep the newest $KEEP_IMAGES tags of $IMAGE (":latest" rides on the newest
 # sha, so it is not counted) and drop the rest with their dangling layers, so
@@ -33,11 +39,14 @@ if [[ -n $(git status --porcelain) ]]; then
     exit 1
 fi
 
-echo "==> Building $IMAGE:$GIT_SHA"
-docker build -t "$IMAGE:$GIT_SHA" -t "$IMAGE:latest" .
+echo "==> Building $IMAGE:$BUILD_VERSION ($GIT_SHA)"
+docker build \
+    --build-arg BUILD_VERSION="$BUILD_VERSION" \
+    --build-arg GIT_SHA="$GIT_SHA" \
+    -t "$IMAGE:$BUILD_VERSION" -t "$IMAGE:latest" .
 
 echo "==> Pushing to Docker Hub"
-docker push "$IMAGE:$GIT_SHA"
+docker push "$IMAGE:$BUILD_VERSION"
 docker push "$IMAGE:latest"
 echo "==> Pruning local images"
 eval "$PRUNE_IMAGES"
@@ -53,11 +62,11 @@ if [[ ! -f $ENV_FILE ]]; then
     exit 1
 fi
 mkdir -p $DATA_DIR
-# Pull by sha and point :latest at it, so Colossus keeps the last few shas
-# too (a pull of :latest alone leaves the old image untagged) and a rollback
-# is "docker tag $IMAGE:<sha> $IMAGE:latest" and a restart.
-docker pull $IMAGE:$GIT_SHA
-docker tag $IMAGE:$GIT_SHA $IMAGE:latest
+# Pull the build and point :latest at it, so Colossus keeps the last few
+# builds too (a pull of :latest alone leaves the old image untagged) and a
+# rollback is a rerun of these lines with an earlier build's tag.
+docker pull $IMAGE:$BUILD_VERSION
+docker tag $IMAGE:$BUILD_VERSION $IMAGE:latest
 docker stop $CONTAINER 2>/dev/null || true
 docker rm $CONTAINER 2>/dev/null || true
 # --network host: PAIR answers plaintext only on Colossus's own loopback.
@@ -72,7 +81,7 @@ docker run -d --name $CONTAINER --restart unless-stopped \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
     -v $DATA_DIR:/home/appuser/.tradingagents:z \\
-    $IMAGE:latest worker
+    $IMAGE:$BUILD_VERSION worker
 # The positions page: the same image, read-only on the same data folder.
 docker stop $WEB_CONTAINER 2>/dev/null || true
 docker rm $WEB_CONTAINER 2>/dev/null || true
@@ -81,7 +90,7 @@ docker run -d --name $WEB_CONTAINER --restart unless-stopped \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
     -v $DATA_DIR:/home/appuser/.tradingagents:ro,z \\
-    $IMAGE:latest web --port $WEB_PORT
+    $IMAGE:$BUILD_VERSION web --port $WEB_PORT
 echo "--- Last 20 log lines ---"
 sleep 3
 docker logs $CONTAINER --tail 20
@@ -91,4 +100,4 @@ $PRUNE_IMAGES
 echo "Positions page: http://192.168.0.98:$WEB_PORT/"
 EOF
 
-echo "==> Deployed $GIT_SHA successfully"
+echo "==> Deployed build $BUILD_VERSION ($GIT_SHA) successfully"
