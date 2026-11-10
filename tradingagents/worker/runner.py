@@ -335,11 +335,18 @@ def daily_job_due(config: dict, now: datetime, state: WorkerState, next_open: da
 
 
 def summarize_day(config: dict, day: str) -> str:
+    """The close-of-day email: the transactions with their reasons, then the day's notable findings."""
+    from tradingagents.web.transactions import summarize, transactions_on
+
     state = WorkerState.load(config["worker_state_path"])
-    orders = state.orders_on(day)
+    try:
+        with run_config(config):
+            fills = trading.fills_on(day)
+    except Exception as exc:      # the list still goes out, without fill prices
+        logger.warning("Fill prices for %s could not be read: %s", day, exc)
+        fills = {}
+    lines = [summarize(transactions_on(state, day, fills), day)]
     log = Path(config["results_dir"]) / "worker" / f"{day}.log"
-    lines = [f"Edinburgh worker, {day}: {len(orders)} order(s)."]
-    lines += [f"- {o['at'][11:16]} {o['kind']} {o['side']} {o['qty']} {o['symbol']} (order {o['order_id']})" for o in orders]
     if log.is_file():
         notable = [line for line in log.read_text(encoding="utf-8").splitlines() if "[urgent]" in line or "[notable]" in line]
         lines += ["", f"{len(notable)} notable or urgent finding(s):"] + notable

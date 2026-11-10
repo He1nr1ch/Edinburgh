@@ -23,7 +23,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from markdown_it import MarkdownIt
 
 from tradingagents.dataflows.config import get_config
-from tradingagents.web import data, snapshots
+from tradingagents.web import data, snapshots, transactions
+from tradingagents.worker.state import WorkerState
 
 app = FastAPI(title="Edinburgh positions", docs_url=None, redoc_url=None)
 
@@ -145,6 +146,61 @@ def _book_table(orders: list[dict], held: set[str]) -> str:
     return "\n".join(out)
 
 
+def _transactions_rows(day: str) -> list[dict]:
+    state = WorkerState.load(get_config()["worker_state_path"])
+    try:
+        from tradingagents.dataflows.vendors.alpaca import trading
+
+        fills = trading.fills_on(day) if state.orders_on(day) else {}
+    except Exception:
+        fills = {}
+    return transactions.transactions_on(state, day, fills)
+
+
+def _transactions_table(rows: list[dict]) -> str:
+    if not rows:
+        return "<p>No orders were sent.</p>"
+    out = ['<div class="wrap"><table><tr><th>Time</th><th>Action</th><th>Ticker</th><th>Side</th><th>Shares</th>'
+           '<th>Fill</th><th>Value</th><th class="l">Why</th><th>Report</th></tr>']
+    for r in rows:
+        cls = "neg" if r["flow"] == "out" else "pos"
+        out.append(
+            f'<tr><td class="l">{r["time"]}</td><td class="l {cls}">{html.escape(r["action"])}</td>'
+            f'<td><b>{html.escape(r["ticker"])}</b></td><td class="{r["position"]}">{r["position"]}</td>'
+            f'<td>{r["qty"]:,}</td><td>{_num(r["price"])}</td><td>{_num(r["value"], 0)}</td>'
+            f'<td class="l" style="white-space:normal;max-width:48rem">{html.escape(r["reason"])}</td>'
+            f'<td class="l"><a href="/report/{html.escape(r["ticker"])}">agents</a></td></tr>')
+    out.append("</table></div>")
+    return "\n".join(out)
+
+
+@app.get("/transactions", response_class=HTMLResponse)
+def transactions_index():
+    state = WorkerState.load(get_config()["worker_state_path"])
+    days = transactions.days_with_transactions(state)
+    body = ['<p class="meta"><a href="/">← positions</a></p><h1>Transactions</h1>']
+    if not days:
+        body.append("<p>No orders sent yet.</p>")
+    else:
+        body.append('<div class="wrap"><table><tr><th>Day</th><th>Exits</th><th>Entries</th></tr>')
+        body += [f'<tr><td class="l"><a href="/transactions/{d}">{d}</a></td><td>{outs}</td><td>{ins}</td></tr>'
+                 for d, outs, ins in days]
+        body.append("</table></div>")
+    return _page("Transactions", "\n".join(body))
+
+
+@app.get("/transactions/{day}", response_class=HTMLResponse)
+def transactions_day(day: str):
+    rows = _transactions_rows(day)
+    outs, ins = sum(r["flow"] == "out" for r in rows), sum(r["flow"] == "in" for r in rows)
+    body = [f'<p class="meta"><a href="/transactions">← transactions</a> · <a href="/day/{html.escape(day)}">positions that day</a></p>',
+            f"<h1>Transactions on {html.escape(day)}</h1>",
+            f'<p class="meta">{outs} exit(s), {ins} entr{"y" if ins == 1 else "ies"}. Fill prices are Alpaca\'s; '
+            "the reason is the Watcher's own record of why it sent the order.</p>",
+            _transactions_table(rows)]
+    return _page(f"Transactions {day}", "\n".join(body))
+
+
 @app.get("/health")
 def health():
     decisions = data.find_decisions(_results_dir())
@@ -198,9 +254,13 @@ def index():
     today = days[0] if days and days[0]["date"] == data.now_text()[:10] else None
     recorded = (f' · today recorded at {today["as_of"][11:16]}' if today else " · no record of today yet")
     body = [f"<h1>Edinburgh positions</h1><p class=\"meta\">{account_line} · as of {data.now_text()}{recorded} · "
-            f'<a href="/days">past days</a></p>']
+            f'<a href="/days">past days</a> · <a href="/transactions">transactions</a></p>']
     body.append("<h2>Open positions</h2>")
     body.append(_positions_table(rows) if rows else "<p>No open positions.</p>")
+
+    today_rows = _transactions_rows(data.now_text()[:10])
+    body.append(f'<h2>Today\'s transactions <span class="meta">· <a href="/transactions">all days</a></span></h2>')
+    body.append(_transactions_table(today_rows))
 
     book_path, orders = data.latest_book(_results_dir())
     body.append("<h2>The day's book</h2>")
@@ -265,6 +325,8 @@ def day(day: str):
             f'cash {_num(record.get("cash"), 0)} · {len(rows)} position(s)</p>']
     body.append("<h2>Positions held</h2>")
     body.append(_positions_table(rows) if rows else "<p>No positions were held.</p>")
+    body.append(f'<h2>Transactions that day <span class="meta">· <a href="/transactions/{html.escape(day)}">full page</a></span></h2>')
+    body.append(_transactions_table(_transactions_rows(day)))
     book_path, orders = data.latest_book(_results_dir(), day)
     if orders:
         body.append(f"<h2>The book sized for {html.escape(day)}</h2>")

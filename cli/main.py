@@ -449,6 +449,27 @@ def daily(
 
 
 @app.command()
+def transactions(
+    date: str = typer.Option(None, "--date", help="The day, YYYY-MM-DD (default today)"),
+):
+    """List the day's transactions: what was exited and why, what was entered."""
+    from datetime import datetime as _dt
+
+    from tradingagents.dataflows.vendors.alpaca import trading
+    from tradingagents.web.transactions import summarize, transactions_on
+    from tradingagents.worker.state import WorkerState
+
+    day = date or _dt.now().strftime("%Y-%m-%d")
+    state = WorkerState.load(DEFAULT_CONFIG["worker_state_path"])
+    try:
+        fills = trading.fills_on(day)
+    except Exception as exc:
+        console.print(f"[dim]fill prices unavailable: {exc}[/dim]")
+        fills = {}
+    console.print(summarize(transactions_on(state, day, fills), day))
+
+
+@app.command()
 def snapshot():
     """Record today's open positions for the positions page's day-by-day view."""
     from pathlib import Path

@@ -86,6 +86,27 @@ def last_trading_day(before: datetime) -> str:
     return closed[-1].date.isoformat()
 
 
+def fills_on(day: str) -> dict[str, dict]:
+    """Alpaca's record of every order placed on ``day`` (a date), by order id: fill price, quantity, status."""
+    from zoneinfo import ZoneInfo
+
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    start = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo("America/New_York"))
+    request = GetOrdersRequest(status=QueryOrderStatus.ALL, after=start, until=start.replace(hour=23, minute=59),
+                               limit=500, nested=True)
+    orders = common.call(lambda: _client().get_orders(filter=request), f"orders on {day}") or []
+    found = {}
+    for o in orders:
+        for order in (o, *(getattr(o, "legs", None) or ())):
+            price = getattr(order, "filled_avg_price", None)
+            found[str(order.id)] = {"filled_avg_price": float(price) if price else None,
+                                    "filled_qty": float(order.filled_qty or 0),
+                                    "status": str(getattr(order.status, "value", order.status))}
+    return found
+
+
 def open_orders() -> dict[str, str]:
     """Every order sent but not yet filled or cancelled, by order id: its symbol."""
     from alpaca.trading.enums import QueryOrderStatus
