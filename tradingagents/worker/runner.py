@@ -64,7 +64,9 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
         try:
             cancelled = trading.cancel_orders_for(a.symbol, open_now) if a.kind in ("exit", "trim") else 0
             order_id = trading.submit_market_order(a.symbol, a.qty, a.side)
-            context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason)
+            held = next((h for h in context.account.holdings if h.symbol.upper() == a.symbol.upper()), None)
+            context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason,
+                                       entry_price=held.avg_entry_price if held and a.kind in ("exit", "trim") else None)
             if a.kind == "replace":
                 context.state.book[a.symbol.upper()] = {"placed_on": context.now.strftime("%Y-%m-%d"),
                                                         "side": "long" if a.side == "buy" else "short",
@@ -205,7 +207,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             except Exception as exc:
                 _log(config, now, f"  review exit failed: {h.symbol}: {exc}")
                 continue
-            state.record_order(h.symbol, "exit", side, qty, order_id, now, action.reason)
+            state.record_order(h.symbol, "exit", side, qty, order_id, now, action.reason, entry_price=h.avg_entry_price)
             state.book.pop(h.symbol.upper(), None)     # the book refills it, not the bench
             closed.add(h.symbol.upper())
             _log(config, now, f"  closed {h.side} {h.symbol}: {action.reason} (order {order_id})")

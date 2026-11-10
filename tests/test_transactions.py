@@ -69,3 +69,45 @@ def test_the_pages_list_the_transactions(tmp_path, monkeypatch):
     assert "Exited" in page and "TROW" in page and "through the stop 111.36" in page and "Entered (replacement)" in page
     assert "1 exit(s), 4 entries" in page
     assert client.get("/").status_code == 200
+
+
+@pytest.mark.unit
+def test_an_exit_states_its_result_from_the_recorded_entry_or_the_entry_orders_fill(tmp_path):
+    s = WorkerState.load(tmp_path / "state.json")
+    at = lambda d, h, m: datetime(2026, 11, d, h, m, tzinfo=UTC)  # noqa: E731
+    s.record_order("TROW", "open", "sell", 18, "in1", at(9, 14, 30), "the day's book")
+    s.record_order("TROW", "exit", "buy", 18, "out1", at(9, 15, 50), "stop")                     # no entry recorded: from in1's fill
+    s.record_order("GD", "open", "buy", 16, "in2", at(6, 14, 30), "the day's book")              # entered on an earlier day
+    s.record_order("GD", "exit", "sell", 16, "out2", at(9, 16, 0), "target", entry_price=358.05)  # entry recorded with the exit
+    today = {"in1": {"filled_avg_price": 109.10, "filled_qty": 18, "status": "filled"},
+             "out1": {"filled_avg_price": 111.50, "filled_qty": 18, "status": "filled"},
+             "out2": {"filled_avg_price": 380.00, "filled_qty": 16, "status": "filled"}}
+    asked = []
+    rows = transactions.transactions_on(s, "2026-11-09", today, lambda d: asked.append(d) or {})
+
+    trow = next(r for r in rows if r["ticker"] == "TROW" and r["flow"] == "out")
+    assert (trow["entry_price"], trow["pnl"], trow["pnl_pct"]) == (109.10, -43.2, pytest.approx(-2.2, abs=0.01))   # a short: bought back higher
+    gd = next(r for r in rows if r["ticker"] == "GD" and r["flow"] == "out")
+    assert (gd["entry_price"], gd["pnl"], gd["pnl_pct"]) == (358.05, 351.2, pytest.approx(6.13, abs=0.01))
+    assert asked == []                                       # GD's entry was recorded, so no other day's fills were needed
+    assert transactions.realised(rows) == 308.0
+    text = transactions.summarize(rows, "2026-11-09")
+    assert "realised +308.00." in text and "entered 109.10, P/L -43.20 (-2.2%)" in text
+
+
+@pytest.mark.unit
+def test_an_exit_sent_by_the_watcher_records_the_positions_entry_price(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from tradingagents.dataflows.vendors.alpaca.trading import Account, Holding
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.worker import runner
+    from tradingagents.worker.duty import Action, Finding, WorkerContext
+
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: "ord-x")
+    monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, o: 0)
+    state = WorkerState.load(tmp_path / "s.json")
+    cfg = {**DEFAULT_CONFIG, "worker_trading_enabled": True, "worker_allow_live": False}
+    ctx = WorkerContext(Account(100_000, 0, True, (Holding("LEN", -54, -4_950.0, 90.08, "us_equity"),)), datetime.now(UTC), cfg, state)
+    runner._act(Finding("stops", "LEN", "urgent", "h", "d", Action("LEN", "exit", "buy", 54, "stop")), ctx, True, set(), {}, False)
+    assert state.orders[-1]["entry_price"] == 90.08

@@ -464,12 +464,18 @@ def transactions(
 
     day = date or _dt.now().strftime("%Y-%m-%d")
     state = WorkerState.load(DEFAULT_CONFIG["worker_state_path"])
-    try:
-        fills = trading.fills_on(day)
-    except Exception as exc:
-        console.print(f"[dim]fill prices unavailable: {exc}[/dim]")
-        fills = {}
-    console.print(summarize(transactions_on(state, day, fills), day))
+    cache: dict = {}
+
+    def fills_for(d):
+        if d not in cache:
+            try:
+                cache[d] = trading.fills_on(d)
+            except Exception as exc:
+                console.print(f"[dim]fill prices for {d} unavailable: {exc}[/dim]")
+                cache[d] = {}
+        return cache[d]
+
+    console.print(summarize(transactions_on(state, day, fills_for(day), fills_for), day))
 
 
 @app.command()
