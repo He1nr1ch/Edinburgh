@@ -214,7 +214,11 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         gross_cap = account.equity * float(config["gross_pct"]) / 100
         placed = []
         waiting = set(open_now.values()) - closed
-        for o in load_rows(book_path):
+        rows = load_rows(book_path)
+        # Best first: when the gross target leaves room for only some of the
+        # book, the highest-scored calls take it (see ranking.py).
+        rows.sort(key=lambda o: -float(o["score"]) if o.get("score") not in (None, "") else 0.0)
+        for o in rows:
             if o["ticker"].upper() in held | waiting:
                 continue
             if is_hedge_row(o):

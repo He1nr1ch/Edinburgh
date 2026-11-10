@@ -12,7 +12,8 @@ import csv
 from dataclasses import dataclass
 from pathlib import Path
 
-from tradingagents.sizing import Book, Call, bench_for, last_closes, load_calls, size_book, stop_for
+from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
+from tradingagents.sizing import SIDE, Book, Call, bench_for, last_closes, load_calls, size_book, stop_for
 
 
 @dataclass
@@ -46,7 +47,7 @@ def recent_calls(results_dir: Path, as_of: str, max_age_days: int) -> list[Call]
     for ticker, refs in all_decisions(Path(results_dir)).items():
         fresh = next((r for r in refs if oldest <= r.date <= as_of), None)
         if fresh is not None:
-            calls.append(call_from_state(json.loads(fresh.path.read_text(encoding="utf-8")), ticker))
+            calls.append(call_from_state(json.loads(fresh.path.read_text(encoding="utf-8")), ticker, fresh.date))
     return calls
 
 
@@ -67,21 +68,39 @@ def build_book(run_ids: list[str], date: str, config: dict, equity: float,
                      config["position_cap_pct"] if cap_pct is None else cap_pct, floor, per_side,
                      config["default_stop_pct"])
     chosen = {o.ticker for o in book.orders}
+    by_ticker = {c.ticker: c for c in calls}
+    net = sum(o.value * (1 if o.shares > 0 else -1) for o in book.orders)
+    for o in book.orders:
+        o.score = scored(by_ticker[o.ticker], o.price, date, config["default_stop_pct"], net).score
+    # The bench: every call that clears the rules and is not in the book, the
+    # best-scored bench_size of them, so the wings are ranked the same way the
+    # morning placement and the Watcher rank them.
     bench = []
-    for c in bench_for(calls, prices, chosen, floor, config["bench_size"]):
+    for c in bench_for(calls, prices, chosen, floor, len(calls)):
         price = prices[c.ticker]
         stop, stop_from = stop_for(c, price, config["default_stop_pct"])
+        s = scored(c, price, date, config["default_stop_pct"], net)
         bench.append({"ticker": c.ticker, "side": "long" if c.rating in ("Buy", "Overweight") else "short",
                       "rating": c.rating, "risk_level": c.risk_level or "", "ceiling_pct": c.ceiling_pct,
                       "price": price, "stop": stop, "stop_from": stop_from, "target": c.target,
-                      "expected_move_pct": round(c.target_move_pct(price) or 0.0, 2)})
-    return BuiltBook(date, list(run_ids), equity, book, bench)
+                      "expected_move_pct": round(c.target_move_pct(price) or 0.0, 2),
+                      "decided": c.decided, "score": s.score, "score_parts": s.parts()})
+    bench.sort(key=lambda b: (-b["score"], b["ticker"]))
+    return BuiltBook(date, list(run_ids), equity, book, bench[:config["bench_size"]])
+
+
+def scored(call: Call, price: float, as_of: str, default_stop_pct: float, net_value: float = 0.0):
+    """The call's score at ``price``: reward and risk from its own levels (the sizing rules' stop)."""
+    side = SIDE.get(call.rating, 0)
+    stop, _ = stop_for(call, price, default_stop_pct)
+    reward, risk = levels_pct(side, price, call.target, stop, default_stop_pct)
+    return score_call(reward, risk, call.rating, call.risk_level, age_days(call.decided, as_of), balances_book(side, net_value))
 
 
 BOOK_COLUMNS = ["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value",
-                "stop", "stop_from", "target"]
+                "stop", "stop_from", "target", "score"]
 BENCH_COLUMNS = ["ticker", "side", "rating", "risk_level", "ceiling_pct", "price", "stop", "stop_from", "target",
-                 "expected_move_pct"]
+                 "expected_move_pct", "decided", "score", "score_parts"]
 
 
 def save_book(built: BuiltBook, config: dict, hedge_row: list | None = None) -> BuiltBook:
@@ -96,9 +115,9 @@ def save_book(built: BuiltBook, config: dict, hedge_row: list | None = None) -> 
         for o in built.book.orders:
             writer.writerow([o.ticker, o.side, o.rating, o.risk_level or "", o.ceiling_pct,
                              round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2),
-                             o.stop, o.stop_from, o.target or ""])
+                             o.stop, o.stop_from, o.target or "", getattr(o, "score", "")])
         if hedge_row:
-            writer.writerow(hedge_row)
+            writer.writerow(list(hedge_row) + [""] * (len(BOOK_COLUMNS) - len(hedge_row)))
     built.bench_path = folder / f"{stem}_bench.csv"
     with built.bench_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=BENCH_COLUMNS)

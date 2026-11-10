@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
 from tradingagents.book import latest_bench
 from tradingagents.dataflows.vendors.alpaca import latest_price, trading
+from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
 from tradingagents.worker.duty import Action, Finding, WorkerContext
 
 logger = logging.getLogger(__name__)
@@ -30,8 +31,14 @@ class ReplacementChoice(BaseModel):
     reason: str = Field(description="One or two sentences: why this one over the others, for the position that left.")
 
 
-def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct: float) -> list[dict]:
-    """Bench rows still worth opening now: not held, not used, target still over the floor from the live price."""
+def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct: float,
+               net_value: float = 0.0, today: str | None = None, default_stop_pct: float = 2.0) -> list[dict]:
+    """Bench rows still worth opening now, best first.
+
+    Not held, not used, the target still over the floor from the live price and
+    the stop not yet reached; then ranked by the score at live prices (see
+    ranking.py), with the balance bonus against the book's current net.
+    """
     out = []
     for row in bench:
         t = row["ticker"].upper()
@@ -51,13 +58,18 @@ def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct
             continue
         if stop and (stop - price) * side >= 0:
             continue        # already through its stop
-        out.append({**row, "live_price": price, "live_move_pct": round(move, 2)})
+        reward, risk = levels_pct(side, price, target, stop, default_stop_pct)
+        s = score_call(reward, risk, row.get("rating", ""), row.get("risk_level"),
+                       age_days(row.get("decided"), today), balances_book(side, net_value))
+        out.append({**row, "live_price": price, "live_move_pct": round(move, 2), "live_score": s.score, "live_parts": s.parts()})
+    out.sort(key=lambda o: (-o["live_score"], o["ticker"]))
     return out
 
 
 def _prompt(departed: dict, options: list[dict]) -> str:
-    lines = [f"- {o['ticker']}: {o['side']} ({o['rating']}, {o['risk_level'] or 'risk n/a'}), price {o['live_price']:,.2f}, "
-             f"target {float(o['target']):,.2f} ({o['live_move_pct']:+.1f}% to go), stop {float(o['stop']):,.2f}"
+    lines = [f"- {o['ticker']}: score {o['live_score']:.2f} — {o['side']} ({o['rating']}, {o['risk_level'] or 'risk n/a'}), "
+             f"price {o['live_price']:,.2f}, target {float(o['target']):,.2f} ({o['live_move_pct']:+.1f}% to go), "
+             f"stop {float(o['stop']):,.2f}; {o['live_parts']}"
              for o in options]
     return (
         "You are the Watcher on a long/short trading desk. A book position has just closed and its "
@@ -65,10 +77,12 @@ def _prompt(departed: dict, options: list[dict]) -> str:
         "made this morning.\n\n"
         f"The position that left: {departed['side']} {departed['ticker']}, {departed['value']:,.0f} of equity, "
         f"closed because {departed['why']}.\n\n"
-        "Candidates (all still clear the desk's rules at today's prices):\n" + "\n".join(lines) + "\n\n"
-        "Prefer the larger move still to go, a stop not too near the price, and a side that keeps the "
-        "book balanced after this one left. Answer with one ticker from the list, or NONE if none is "
-        "worth opening. " + NO_EXTERNAL_TOOLS
+        "Candidates, best score first (all still clear the desk's rules at today's prices). The score is "
+        "reward to risk, times conviction, stance, freshness and a bonus for the side that balances the "
+        "book; it already prefers the larger move, the wider stop and the balancing side, so the first "
+        "is the default:\n" + "\n".join(lines) + "\n\n"
+        "Take the first unless you see a reason in the numbers to prefer another (say which and why), "
+        "or NONE if none is worth opening. " + NO_EXTERNAL_TOOLS
     )
 
 
@@ -93,7 +107,9 @@ class ReplacementDuty:
             departed = state.book.pop(ticker)
             closed_by = next((o for o in reversed(state.orders) if o["symbol"] == ticker and o["kind"] == "exit"), None)
             departed = {**departed, "ticker": ticker, "why": (closed_by or {}).get("reason", "it is no longer held")}
-            options = candidates(bench, held | set(state.book), used, float(context.config["min_target_pct"]))
+            net = sum(h.market_value for h in context.account.holdings if h.asset_class == "us_equity")
+            options = candidates(bench, held | set(state.book), used, float(context.config["min_target_pct"]),
+                                 net, today, float(context.config.get("default_stop_pct") or 2.0))
             if not options:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; no replacement on the bench",
                                         f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"))
@@ -103,7 +119,7 @@ class ReplacementDuty:
             if choice and choice.ticker.upper() != "NONE":
                 pick = next((o for o in options if o["ticker"].upper() == choice.ticker.upper()), None)
             if pick is None and choice is None:
-                pick = options[0]       # the model did not answer: the bench's own order stands
+                pick = options[0]       # the model did not answer: the best score stands
             if pick is None:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; the Watcher opens nothing",
                                         choice.reason if choice else "no answer"))
@@ -115,14 +131,14 @@ class ReplacementDuty:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; {pick['ticker']} is too dear for its capital",
                                         f"{value:,.0f} buys no whole share at {pick['live_price']:,.2f}"))
                 continue
-            reason = (f"replaces {ticker}: {choice.reason if choice else 'first on the bench'} "
-                      f"({pick['live_move_pct']:+.1f}% to target)")
+            reason = (f"replaces {ticker}: {choice.reason if choice else 'best score on the bench'} "
+                      f"(score {pick['live_score']:.2f}, {pick['live_move_pct']:+.1f}% to target)")
             used.add(pick["ticker"].upper())
             day["replaced"][ticker] = pick["ticker"]
             findings.append(Finding(
                 self.name, pick["ticker"], "urgent",
                 f"{pick['side']} {pick['ticker']} replaces {ticker}",
-                reason + f"\n\nCandidates: " + ", ".join(o["ticker"] for o in options),
+                reason + "\n\nCandidates by score: " + ", ".join(f"{o['ticker']} {o['live_score']:.2f}" for o in options),
                 Action(pick["ticker"], "replace", "buy" if pick["side"] == "long" else "sell", qty, reason,
                        value=qty * pick["live_price"]),
             ))

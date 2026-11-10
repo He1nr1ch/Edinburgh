@@ -209,6 +209,29 @@ def index():
         body.append(_book_table(orders, {r["ticker"] for r in rows}))
     else:
         body.append("<p>No sized book yet: run <code>tradingagents size</code>.</p>")
+
+    from tradingagents.book import latest_bench
+
+    bench_path, bench = latest_bench(_results_dir())
+    body.append("<h2>Waiting in the wings</h2>")
+    if bench:
+        body.append(f'<p class="meta">The bench, best score first, from <code>{html.escape(bench_path.name)}</code>. '
+                    "Score = reward to risk × conviction × stance × freshness × balance; the Watcher re-scores "
+                    "at live prices when a slot opens.</p>")
+        body.append('<div class="wrap"><table><tr><th>#</th><th>Ticker</th><th>Side</th><th>Rating</th><th>Risk</th>'
+                    '<th>Decided</th><th>Price</th><th>Stop</th><th>Target</th><th>Move</th><th>Score</th><th>Report</th></tr>')
+        for i, b in enumerate(bench, 1):
+            body.append(
+                f'<tr><td>{i}</td><td><b>{html.escape(b["ticker"])}</b></td><td class="{b["side"]}">{b["side"]}</td>'
+                f'<td class="l">{html.escape(b["rating"])}</td><td class="l">{html.escape(b.get("risk_level") or "")}</td>'
+                f'<td class="l">{html.escape(b.get("decided") or "")}</td><td>{html.escape(b["price"])}</td>'
+                f'<td>{html.escape(b.get("stop") or "")}</td><td>{html.escape(b.get("target") or "")}</td>'
+                f'<td>{html.escape(b.get("expected_move_pct") or "")}%</td>'
+                f'<td title="{html.escape(b.get("score_parts") or "")}"><b>{html.escape(b.get("score") or "")}</b></td>'
+                f'<td class="l"><a href="/report/{html.escape(b["ticker"])}">agents</a></td></tr>')
+        body.append("</table></div>")
+    else:
+        body.append("<p>No bench yet.</p>")
     return _page("Edinburgh positions", "\n".join(body))
 
 

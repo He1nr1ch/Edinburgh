@@ -36,6 +36,7 @@ class Call:
     target: float | None = None     # the Portfolio Manager's price target
     stop: float | None = None       # the Risk Manager's stop, else the Trader's
     stop_from: str = ""             # who gave it: "Risk Manager" or "Trader"
+    decided: str = ""               # the analysis date of the decision, YYYY-MM-DD
 
     def target_move_pct(self, close: float | None) -> float | None:
         """The move from ``close`` to the target in the position's direction, as a percentage."""
@@ -78,7 +79,7 @@ def worth_trading(call: Call, close: float | None, min_target_pct: float) -> str
     return None
 
 
-@dataclass(frozen=True)
+@dataclass
 class Order:
     ticker: str
     rating: str
@@ -90,6 +91,7 @@ class Order:
     stop: float | None = None
     stop_from: str = ""
     target: float | None = None
+    score: float | None = None      # see ranking.py; set when the book is built
 
     @property
     def side(self) -> str:
@@ -256,7 +258,7 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
     return book
 
 
-def call_from_state(state: dict, ticker: str = "") -> Call:
+def call_from_state(state: dict, ticker: str = "", decided: str = "") -> Call:
     """The desk's call in a saved run state."""
     rm_stop = labelled_number(state.get("risk_assessment") or "", "Stop Loss")
     tr_stop = labelled_number(state.get("trader_investment_plan") or "", "Stop Loss")
@@ -268,12 +270,13 @@ def call_from_state(state: dict, ticker: str = "") -> Call:
         target=labelled_number(state.get("final_trade_decision") or "", "Price Target"),
         stop=rm_stop or tr_stop,
         stop_from="Risk Manager" if rm_stop else ("Trader" if tr_stop else ""),
+        decided=decided or state.get("trade_date") or "",
     )
 
 
 def load_calls(run_dir: Path, trade_date: str) -> list[Call]:
     """Every ticker's final call on ``trade_date`` from a run's saved states."""
-    return [call_from_state(json.loads(path.read_text(encoding="utf-8")), path.parts[-3])
+    return [call_from_state(json.loads(path.read_text(encoding="utf-8")), path.parts[-3], trade_date)
             for path in sorted(Path(run_dir).glob(f"*/TradingAgentsStrategy_logs/full_states_log_{trade_date}.json"))]
 
 

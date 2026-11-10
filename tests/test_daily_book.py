@@ -64,10 +64,12 @@ def test_build_and_save_the_book_with_its_bench(tmp_path, monkeypatch):
 
     built = bk.save_book(bk.build_book(["run_a"], "2026-11-05", cfg, 100_000), cfg)
     assert sorted(o.ticker for o in built.book.orders) == ["A", "C"]          # the top long and the top short
-    assert [b["ticker"] for b in built.bench] == ["B", "D"]                   # E's +1% is under the floor
-    assert built.bench[0]["expected_move_pct"] == 12.0 and built.bench[1]["stop"] == 103.0
+    # The bench is best score first: D is a short balancing a book that is net long after A
+    # (its ×1.15 lifts 10%/3% = 3.33 to 3.83), B is +12% over 5% = 2.4; E's +1% is under the floor.
+    assert [b["ticker"] for b in built.bench] == ["D", "B"]
+    assert built.bench[1]["expected_move_pct"] == 12.0 and built.bench[0]["stop"] == 103.0
     assert built.book_path.name == "run_a_2026-11-05.csv" and built.bench_path.name == "run_a_2026-11-05_bench.csv"
-    assert bk.latest_bench(tmp_path)[1][0]["ticker"] == "B"
+    assert bk.latest_bench(tmp_path)[1][0]["ticker"] == "D"
     from tradingagents.web.data import latest_book
     assert latest_book(tmp_path)[0] == built.book_path                         # the page never takes the bench for the book
 

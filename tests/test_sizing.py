@@ -80,7 +80,7 @@ def test_calls_are_read_from_a_runs_saved_states(tmp_path):
         "company_of_interest": "NVDA", "final_rating": "Underweight", "final_risk_level": "Neutral",
         "risk_assessment": "**Risk Level**: Neutral\n\n**Maximum Position**: 2.5\n",
     }))
-    assert load_calls(tmp_path, "2026-10-23") == [Call("NVDA", "Underweight", 2.5, "Neutral")]
+    assert load_calls(tmp_path, "2026-10-23") == [Call("NVDA", "Underweight", 2.5, "Neutral", decided="2026-10-23")]
     assert load_calls(tmp_path, "2026-10-16") == []
 
 
