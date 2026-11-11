@@ -27,7 +27,7 @@ from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.memory import TradingMemoryLog
-from tradingagents import usage
+from tradingagents import errors, usage
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +150,13 @@ def run_backtest(
     usage.set_run(run_id=run_id)
     run_dir = Path(config["results_dir"]) / "backtest" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    # The run's reports and memory log are its own; the usage and error logs
+    # are the desk's, one folder for every process, so the daily report, the
+    # outage alert and the sweep's retry see the sweep's calls and failures too.
     run_config = {**config, "results_dir": str(run_dir),
-                  "memory_log_path": str(run_dir / "trading_memory.md")}
+                  "memory_log_path": str(run_dir / "trading_memory.md"),
+                  "usage_dir": config.get("usage_dir") or str(Path(config["results_dir"]) / "usage"),
+                  "errors_dir": config.get("errors_dir") or str(Path(config["results_dir"]) / "errors")}
 
     graph = TradingAgentsGraph(selected_analysts, config=run_config)
     result = BacktestResult(run_id=run_id, log_path=Path(run_config["memory_log_path"]))
@@ -171,6 +176,7 @@ def run_backtest(
         except Exception as exc:  # one unreachable vendor must not end the sweep
             logger.warning("Backtest cell %s %s failed: %s", ticker, date, exc)
             result.failures.append((ticker, date, str(exc)))
+            errors.record("run", f"{type(exc).__name__}: {exc}", ticker=ticker)
 
     # Settlement runs at the start of the next run for a ticker, so each ticker's
     # last cell would stay pending without this pass.

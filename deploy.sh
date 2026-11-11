@@ -80,21 +80,25 @@ docker rm $CONTAINER 2>/dev/null || true
 # container's access to a bind mount without it. Lower-case z is the shared
 # label; :Z is private, and the second container to mount the folder would
 # relabel it and lock the first out (which happened on the first deploy).
-docker run -d --name $CONTAINER --restart unless-stopped \\
-    --network host \\
-    --log-opt max-size=10m --log-opt max-file=5 \\
-    --env-file $ENV_FILE \\
-    -v $DATA_DIR:/home/appuser/.tradingagents:z \\
-    $IMAGE:$BUILD_VERSION worker
-# The positions page: the same image, read-only on the same data folder.
-docker stop $WEB_CONTAINER 2>/dev/null || true
-docker rm $WEB_CONTAINER 2>/dev/null || true
-# The folder's name has spaces: an array keeps it one argument on Colossus.
+# PAIR's history, read-only, for both containers: the worker's client looks up
+# the node that served each call and checks its endpoint against it; the web
+# page shows the shares. The folder's name has spaces: an array keeps it one
+# argument on Colossus.
 PAIR_ARGS=()
 if [[ -f "$PAIR_DIR/workloads-history.json" ]]; then
     PAIR_ARGS=(-v "$PAIR_DIR:/home/appuser/pair:ro,z" -e TRADINGAGENTS_PAIR_DIR=/home/appuser/pair)
     echo "PAIR history mounted from $PAIR_DIR"
 fi
+docker run -d --name $CONTAINER --restart unless-stopped \\
+    --network host \\
+    --log-opt max-size=10m --log-opt max-file=5 \\
+    --env-file $ENV_FILE \\
+    -v $DATA_DIR:/home/appuser/.tradingagents:z \\
+    "\${PAIR_ARGS[@]}" \\
+    $IMAGE:$BUILD_VERSION worker
+# The positions page: the same image, read-only on the same data folder.
+docker stop $WEB_CONTAINER 2>/dev/null || true
+docker rm $WEB_CONTAINER 2>/dev/null || true
 docker run -d --name $WEB_CONTAINER --restart unless-stopped \\
     --network host \\
     --log-opt max-size=10m --log-opt max-file=5 \\

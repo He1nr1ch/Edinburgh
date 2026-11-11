@@ -101,6 +101,9 @@ def build_llm_kwargs(config: dict) -> dict[str, Any]:
         num_ctx = config.get("ollama_num_ctx")
         if num_ctx:
             kwargs["num_ctx"] = int(num_ctx)
+        for key, name in (("ollama_idle_timeout", "idle_timeout"), ("ollama_call_timeout", "call_timeout")):
+            if config.get(key):
+                kwargs[name] = float(config[key])
         thinking = config.get("ollama_thinking")
         if thinking is not None and thinking != "":
             kwargs["reasoning"] = bool(thinking)
@@ -145,3 +148,25 @@ def create_tier_client(config: dict, tier: str, **extra) -> BaseLLMClient:
     kwargs = build_llm_kwargs({**config, "llm_provider": provider})
     return create_llm_client(provider=provider, model=config[f"{tier}_think_llm"], base_url=base_url,
                              **kwargs, **extra)
+
+
+CALL_SETTINGS = ("model", "num_ctx", "timeout")
+
+
+def for_agent(llm: Any, config: dict, agent: str, tier: str) -> Any:
+    """The client an agent calls with: the tier's, with the agent's own model, window or limit if it has any.
+
+    ``agent_calls`` in the config names them, by tier and by agent, the agent
+    winning. A client that cannot vary its calls (another provider's) is
+    returned as it is, and the setting is refused rather than silently dropped.
+    """
+    calls = config.get("agent_calls") or {}
+    settings = {**(calls.get(tier) or {}), **(calls.get(agent) or {})}
+    unknown = set(settings) - set(CALL_SETTINGS)
+    if unknown:
+        raise ValueError(f"agent_calls[{agent!r}] has unknown setting(s) {sorted(unknown)}; use {', '.join(CALL_SETTINGS)}")
+    if not settings:
+        return llm
+    if not hasattr(llm, "with_call"):
+        raise ValueError(f"agent_calls is set for {agent!r}, but the {tier} tier's provider cannot vary its calls; it is an Ollama setting")
+    return llm.with_call(model=settings.get("model"), num_ctx=settings.get("num_ctx"), timeout=settings.get("timeout"))

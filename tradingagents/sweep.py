@@ -64,6 +64,7 @@ class Sweep:
         self.round: Round | None = None
         self.analysed_this_cycle = 0
         self.rounds: list[dict] = []     # finished rounds this cycle: round, tickers, parts, minutes, finished
+        self.retried: list[str] = []     # tickers whose failed run was queued again this cycle (once each)
         self._load()
 
     # --- state -----------------------------------------------------------
@@ -79,6 +80,7 @@ class Sweep:
         self.round_no = int(data.get("round_no", 0))
         self.analysed_this_cycle = int(data.get("analysed_this_cycle", 0))
         self.rounds = list(data.get("rounds", []))
+        self.retried = list(data.get("retried", []))
         if data.get("round"):
             # A round a restart interrupted: its processes are gone. The tickers
             # go back to the front of the queue; the cells they finished are
@@ -91,7 +93,7 @@ class Sweep:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"date": self.date, "cycle": self.cycle, "queue": self.queue, "round_no": self.round_no,
-                "analysed_this_cycle": self.analysed_this_cycle, "rounds": self.rounds[-50:],
+                "analysed_this_cycle": self.analysed_this_cycle, "rounds": self.rounds[-50:], "retried": self.retried,
                 "round": {"run_ids": self.round.run_ids, "tickers": self.round.tickers, "parts": self.round.parts,
                           "started": self.round.started_at} if self.round else None,
                 "saved": datetime.now().astimezone().isoformat(timespec="seconds")}
@@ -123,7 +125,7 @@ class Sweep:
     def _start_cycle(self, date: str, holdings: list[str], last_analysed: dict[str, str]) -> None:
         watchlist = watchlist_tickers(ensure_watchlist(self.config))
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
-        self.rounds = []
+        self.rounds, self.retried = [], []
         self.queue = order_tickers(watchlist, holdings, last_analysed, date)
         logger.info("Sweep cycle %d on %s's close: %d held positions first, then %d of the watchlist.",
                     self.cycle, date, len(holdings), len(self.queue) - len(holdings))
@@ -168,16 +170,37 @@ class Sweep:
         failed = [run_id for run_id, proc, _ in r.procs if proc.returncode != 0]
         for _, _, log in r.procs:
             log.close()
-        self.analysed_this_cycle += len(r.tickers)
+        again = self._failed(r)
+        self.queue += again
+        self.retried += again
+        self.analysed_this_cycle += len(r.tickers) - len(again)
         tag = r.run_ids[0].rsplit("_", 1)[0].rsplit("_", 1)[-1]
-        self.rounds.append({"round": tag, "tickers": len(r.tickers), "parts": r.parts, "minutes": round(seconds / 60, 1),
+        self.rounds.append({"round": tag, "tickers": len(r.tickers) - len(again), "parts": r.parts, "minutes": round(seconds / 60, 1),
                             "finished": datetime.now().astimezone().isoformat(timespec="seconds")})
         self.round = None
         self._save()
         p = self.progress()
-        logger.info("Sweep round %s done: %d tickers in %d min%s; %d of %d analysed this cycle, %d queued%s", tag,
+        logger.info("Sweep round %s done: %d tickers in %d min%s%s; %d of %d analysed this cycle, %d queued%s", tag,
                     len(r.tickers), int(seconds // 60), f"; parts exited non-zero: {failed}" if failed else "",
+                    f"; failed and queued again: {', '.join(again)}" if again else "",
                     p["analysed"], p["total"], p["queued"], f", about {describe_eta(p)} to go" if p.get("eta_hours") else "")
+
+    def _failed(self, r: Round) -> list[str]:
+        """The round's tickers whose run failed (see ``tradingagents.errors``) and may be tried once more this cycle.
+
+        They go to the back of the queue: whatever failed them (the model
+        silent, a vendor down) has the rest of the cycle to clear. A ticker
+        that fails twice in a cycle waits for the next one.
+        """
+        from tradingagents import errors
+
+        try:
+            days = sorted({r.started_at[:10], datetime.now().astimezone().isoformat()[:10]} - {""})
+            failed = {t for day in days for t in errors.failed_tickers(day, r.started_at, r.tickers, self.config)}
+        except Exception as exc:
+            logger.warning("The round's failures could not be read: %s", exc)
+            return []
+        return [t for t in r.tickers if t in failed and t not in self.retried]
 
     def stop(self) -> None:
         """Stop the round in flight (a shutdown); its tickers return to the queue on the next start."""

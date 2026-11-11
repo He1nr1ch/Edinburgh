@@ -103,6 +103,7 @@ class TradingAgentsGraph:
             max_tool_rounds,
             int(self.config.get("max_tool_output_chars", 16_000)),
             int(self.config.get("max_tool_history_chars", 160_000)),
+            config=self.config,
         )
 
         self.propagator = Propagator(

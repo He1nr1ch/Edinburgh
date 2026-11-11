@@ -60,6 +60,57 @@ def history(folder: Path | None = None) -> list[dict]:
     return sorted(seen.values(), key=lambda r: r["createdAt"])
 
 
+def own_node(folder: Path | None = None) -> str:
+    """This machine's node uuid, as the router wrote it; '' when there is none."""
+    try:
+        return json.loads(((folder or pair_dir()) / "node-id.json").read_text(encoding="utf-8")).get("node_uuid") or ""
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+_latest: dict = {"key": None, "rows": []}
+
+
+def _latest_rows(folder: Path) -> list[dict]:
+    """The newest history file's records, re-read only when the file has changed."""
+    path = folder / "workloads-history.json"
+    stat = path.stat()
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    if _latest["key"] != key:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        _latest.update(key=key, rows=rows if isinstance(rows, list) else [])
+    return _latest["rows"]
+
+
+def served_by(model: str, started: float, ended: float, folder: Path | None = None, slack: float = 3.0) -> str:
+    """The name of the node that served the call this machine made between ``started`` and ``ended`` (epoch seconds).
+
+    The router's history has every call with where it came from, its model and
+    its times. The call is the one this node originated, for this model,
+    created just as ours began and completed just as ours ended; when two fit,
+    the closer end wins. '' when there is no PAIR here, the history has not
+    caught up, or nothing fits: a node is never guessed.
+    """
+    try:
+        folder = folder or pair_dir()
+        if not available(folder):
+            return ""
+        me, rows = own_node(folder), _latest_rows(folder)
+        best, best_gap = None, slack
+        for r in rows:
+            created, completed = (r.get("createdAt") or 0) / 1000, (r.get("completedAt") or 0) / 1000
+            if r.get("model") != model or r.get("state") != "completed" or (me and r.get("originatedFrom") != me):
+                continue
+            if created < started - slack or completed > ended + slack:
+                continue
+            gap = abs(completed - ended)
+            if gap < best_gap:
+                best, best_gap = r, gap
+        return members(folder).get(best.get("scheduledOn"), best.get("scheduledOn") or "") if best else ""
+    except Exception:       # the node is a courtesy on the record; it must never fail the call it describes
+        return ""
+
+
 def node_shares(rows: list[dict], names: dict[str, str], since_ms: float = 0, until_ms: float | None = None) -> dict:
     """Calls and busy hours by serving node (and by node and model), and where the calls came from."""
     by_node: dict[str, dict] = defaultdict(lambda: {"calls": 0, "busy_hours": 0.0, "cancelled": 0, "models": defaultdict(lambda: {"calls": 0, "busy_hours": 0.0})})

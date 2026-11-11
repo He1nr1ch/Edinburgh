@@ -116,6 +116,13 @@ def gather(config: dict, day: str) -> dict:
     except Exception as exc:
         logger.warning("The usage log could not be read: %s", exc)
         spend = {}
+    try:
+        from tradingagents import errors as error_log
+
+        model_errors = error_log.summarize(error_log.read_day(day, config))
+    except Exception as exc:
+        logger.warning("The error log could not be read: %s", exc)
+        model_errors = {}
     decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{day}.json")))
 
     try:
@@ -139,6 +146,7 @@ def gather(config: dict, day: str) -> dict:
                   "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today,
                   "progress": sweep_progress(sweep)},
         "usage": {"total": spend.get("total", {}), "by_agent": spend.get("by_agent", {}), "by_host": spend.get("by_host", {})},
+        "errors": model_errors,
         "scorecard": card,
     }
 
@@ -184,6 +192,14 @@ def _facts_text(f: dict) -> str:
 
         lines.append("Model usage today: " + describe_usage(u) + "; by agent (minutes): "
                      + ", ".join(f"{a} {r['seconds'] / 60:.0f}" for a, r in list(u["by_agent"].items())[:9]))
+    e = f.get("errors") or {}
+    if e.get("total") or e.get("failed_tickers"):
+        from tradingagents.errors import describe as describe_errors
+
+        lines.append("Model errors today: " + describe_errors(e)
+                     + ("; by agent: " + ", ".join(f"{a} {n}" for a, n in list(e["by_agent"].items())[:9]) if e.get("by_agent") else "")
+                     + ". A contract error is an answer that failed its schema twice (the run closed as REVIEW); "
+                       "a timeout or unavailable is no answer at all (the run failed and was queued again).")
     if f["scorecard"]:
         lines.append("Feedback scorecard over settled decisions (agent: right/judged, mean return on its calls):")
         for agent, st in f["scorecard"].items():
@@ -288,6 +304,19 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out += [f"| {a} | {r['calls']} | {r['tokens_in']:,} | {r['tokens_out']:,} | {r['seconds'] / 60:.0f} |" for a, r in u["by_agent"].items()]
         if len(u.get("by_host") or {}) > 1:
             out.append("\nBy host: " + ", ".join(f"{h} {r['seconds'] / 3600:.1f} h" for h, r in u["by_host"].items()))
+        out.append("")
+    e = f.get("errors") or {}
+    if e:
+        from tradingagents.errors import describe as describe_errors
+
+        out += ["## Model errors", describe_errors(e).capitalize() + "."]
+        if e.get("total"):
+            out += ["", "| Kind | Count |", "|---|---:|"] + [f"| {k} | {n} |" for k, n in e["by_kind"].items()]
+            out += ["", "| Agent | Count |", "|---|---:|"] + [f"| {a} | {n} |" for a, n in e["by_agent"].items()]
+            out += ["", "Most recent:"] + [f"- {line}" for line in e["recent"]]
+        if e.get("failed_tickers"):
+            out += ["", "Ticker runs that failed (each is queued again once per sweep cycle):"]
+            out += [f"- **{t}**: {why[:200]}" for t, why in e["failed_tickers"].items()]
         out.append("")
     if f["scorecard"]:
         out += ["## Feedback scorecard (settled decisions)", "| Agent | Right / judged | Mean return |", "|---|---:|---:|"]

@@ -14,16 +14,23 @@ run writes into its ``timing.json`` by agent, so one ticker's cost can be
 compared with another's.
 
 Which PAIR node served a call is not in the response; PAIR keeps that record
-itself (see :mod:`tradingagents.pair`).
+itself, a few seconds after the call ends. So a record is written without its
+node, and :func:`resolve_nodes` looks it up once the history has caught up (on
+a later call, or as the process ends) and appends a short ``node_of`` line to
+the same file; :func:`read_day` puts the two together. A call nothing in the
+history fits keeps no node: one is never guessed.
 """
 
 from __future__ import annotations
 
+import atexit
 import contextvars
 import json
 import logging
 import socket
 import threading
+import time
+import uuid
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime
@@ -68,6 +75,11 @@ def set_run(ticker: str | None = None, run_id: str | None = None) -> None:
         _ticker.set(ticker)
     if run_id is not None:
         _run_id.set(run_id)
+
+
+def context() -> dict:
+    """The agent, ticker and run the calls being made belong to, as far as they are known here."""
+    return {"agent": _agent.get(), "ticker": _ticker.get(), "run_id": _run_id.get()}
 
 
 def agent_from(config: dict | None) -> str:
@@ -119,7 +131,8 @@ def usage_dir(config: dict | None = None) -> Path:
     return Path(config.get("usage_dir") or Path(config["results_dir"]) / "usage")
 
 
-def record_response(response, model: str, config: dict | None = None) -> dict | None:
+def record_response(response, model: str, config: dict | None = None,
+                    started: float | None = None, ended: float | None = None) -> dict | None:
     """Record one chat response (its ``usage_metadata`` and Ollama's durations); None when it carries none."""
     usage = getattr(response, "usage_metadata", None) or {}
     meta = getattr(response, "response_metadata", None) or {}
@@ -136,6 +149,8 @@ def record_response(response, model: str, config: dict | None = None) -> dict | 
     }
     if rec["gen_seconds"] and rec["tokens_out"]:
         rec["tokens_per_s"] = round(rec["tokens_out"] / rec["gen_seconds"], 1)
+    if started and ended:        # the call's own clock times, for finding it in PAIR's history
+        rec.update(id=uuid.uuid4().hex[:12], started=round(started, 3), ended=round(ended, 3))
     record(rec)
     return rec
 
@@ -148,22 +163,95 @@ def record(rec: dict) -> None:
     try:
         folder = usage_dir()
         folder.mkdir(parents=True, exist_ok=True)
-        with (folder / f"{rec['ts'][:10]}.jsonl").open("a", encoding="utf-8") as fh:
+        path = folder / f"{rec['ts'][:10]}.jsonl"
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
+        if rec.get("id"):
+            with _pending_lock:
+                _pending.append((rec, path))
+        resolve_nodes()
     except Exception as exc:     # a full disk must not fail the call that was answered
         logger.debug("Usage record not written: %s", exc)
+
+
+# --- which PAIR node served each call ------------------------------------------
+
+HISTORY_LAG = 4.0       # seconds PAIR takes to write a finished call to its history (3.5 s measured)
+GIVE_UP = 300.0         # a call the history still does not show after this long keeps no node
+
+_pending: list[tuple[dict, Path]] = []
+_pending_lock = threading.Lock()
+
+
+def resolve_nodes(now: float | None = None) -> int:
+    """Give the calls recorded a few seconds ago their node, from PAIR's history; how many were found.
+
+    Called with every record and as the process ends. The node goes to the
+    record in hand (so a verdict or a tally built from it can read it) and to
+    the file as a ``node_of`` line. Without PAIR here nothing waits.
+    """
+    from tradingagents import pair
+
+    with _pending_lock:
+        if not _pending:
+            return 0
+        if not pair.available():
+            _pending.clear()
+            return 0
+        now = now if now is not None else time.time()
+        due = [p for p in _pending if now - p[0]["ended"] >= HISTORY_LAG]
+        found = 0
+        for rec, path in due:
+            node = pair.served_by(rec["model"], rec["started"], rec["ended"])
+            if node:
+                rec["node"] = node
+                found += 1
+                try:
+                    with path.open("a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({"node_of": rec["id"], "node": node}) + "\n")
+                except OSError as exc:
+                    logger.debug("Node not written: %s", exc)
+            if node or now - rec["ended"] > GIVE_UP:
+                _pending.remove((rec, path))
+        return found
+
+
+def _resolve_at_exit() -> None:
+    """The last calls of a process have no later call to resolve them: wait out the history's lag, once."""
+    try:
+        with _pending_lock:
+            newest = max((p[0]["ended"] for p in _pending), default=None)
+        if newest is None:
+            return
+        from tradingagents import pair
+
+        if pair.available():
+            time.sleep(max(0.0, min(HISTORY_LAG, newest + HISTORY_LAG - time.time())))
+        resolve_nodes()
+    except Exception:       # never let bookkeeping spoil an exit
+        pass
+
+
+atexit.register(_resolve_at_exit)
 
 
 def read_day(day: str, config: dict | None = None) -> list[dict]:
     path = usage_dir(config) / f"{day}.jsonl"
     if not path.is_file():
         return []
-    rows = []
+    rows, nodes = [], {}
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
         except ValueError:
             continue
+        if "node_of" in row:
+            nodes[row["node_of"]] = row.get("node") or ""
+        else:
+            rows.append(row)
+    for row in rows:
+        if row.get("id") in nodes:
+            row["node"] = nodes[row["id"]]
     return rows
 
 
@@ -172,7 +260,7 @@ def summarize(rows: list[dict]) -> dict:
     def bucket() -> dict:
         return {"calls": 0, "tokens_in": 0, "tokens_out": 0, "seconds": 0.0}
 
-    groups = {k: defaultdict(bucket) for k in ("agent", "model", "host", "ticker")}
+    groups = {k: defaultdict(bucket) for k in ("agent", "model", "host", "node", "ticker")}
     total = bucket()
     for r in rows:
         for key, g in groups.items():

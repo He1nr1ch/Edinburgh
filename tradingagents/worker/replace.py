@@ -17,7 +17,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.book import latest_bench
 from tradingagents.dataflows.vendors.alpaca import latest_price, trading
 from tradingagents.lessons import desk_lessons
@@ -106,7 +106,8 @@ class ReplacementDuty:
         used = {r.upper() for r in day["replaced"].values()} | set(state.book)
         findings = []
         for ticker in gone:
-            departed = state.book.pop(ticker)
+            entry = state.book.pop(ticker)
+            departed = entry
             closed_by = next((o for o in reversed(state.orders) if o["symbol"] == ticker and o["kind"] == "exit"), None)
             departed = {**departed, "ticker": ticker, "why": (closed_by or {}).get("reason", "it is no longer held")}
             net = sum(h.market_value for h in context.account.holdings if h.asset_class == "us_equity")
@@ -116,15 +117,23 @@ class ReplacementDuty:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; no replacement on the bench",
                                         f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"))
                 continue
-            choice = invoke_structured(bind_structured(context.llm, ReplacementChoice, "Watcher"), _prompt(departed, options), "Watcher")
+            try:
+                choice, _ = decide(bind_structured(context.llm, ReplacementChoice, "Watcher"), _prompt(departed, options),
+                                   "Watcher", catch=ValueError)
+            except Exception as exc:
+                # No answer is not a confirmation: nothing is opened on the score
+                # alone. The name goes back in the book, so the next pass asks again.
+                state.book[ticker] = entry
+                logger.warning("No replacement for %s yet, the model gave no answer (%s); asking again next pass", ticker, exc)
+                findings.append(Finding(self.name, ticker, "info", f"{ticker} left the book; its replacement waits for the model",
+                                        f"{type(exc).__name__}: {exc}"))
+                continue
             pick = None
             if choice and choice.ticker.upper() != "NONE":
                 pick = next((o for o in options if o["ticker"].upper() == choice.ticker.upper()), None)
-            if pick is None and choice is None:
-                pick = options[0]       # the model did not answer: the best score stands
             if pick is None:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; the Watcher opens nothing",
-                                        choice.reason if choice else "no answer"))
+                                        choice.reason if choice else "the model's answer did not meet its contract"))
                 continue
             cap_value = context.account.equity * float(context.config["worker_position_cap_pct"]) / 100
             value = min(float(departed.get("value") or 0) or cap_value, cap_value)

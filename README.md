@@ -79,6 +79,38 @@ tool; the Fundamentals Analyst works from the statements.
 Crypto pairs are spelled Alpaca's way, `BTC/USD`; `BTCUSD` and `BTC-USD` are
 accepted and normalized.
 
+## The inference client
+
+Every model call goes through one class (`tradingagents/llm_clients/ollama_client.py`);
+a test fails if any other module builds a client or posts to the server itself.
+
+- **Time limits.** Calls are streamed. `TRADINGAGENTS_OLLAMA_IDLE_TIMEOUT` (600 s)
+  is the longest silence allowed between chunks, which includes the wait in
+  PAIR's queue; `TRADINGAGENTS_OLLAMA_CALL_TIMEOUT` (900 s) is for the whole
+  call. Past either the call is dropped, which frees the node, and
+  `InferenceTimeout` is raised.
+- **Fail closed.** No answer is never taken for an answer. A ticker's run
+  fails and is tried again; the Watcher leaves news it could not ask about
+  unread for its next pass, and opens no replacement until the model has
+  chosen one.
+- **Per-call settings.** `agent_calls` gives a tier or a single agent its own
+  model, context window or call limit, e.g.
+  `TRADINGAGENTS_AGENT_CALLS={"Portfolio Manager": {"timeout": 1200}}`.
+- **PAIR.** On a machine that runs PAIR the endpoint must be its own loopback
+  proxy, and the client refuses anything else. Each call's usage record is
+  given the node that served it, read from the router's history a few seconds
+  after the call (`tradingagents usage` and the positions page total by node).
+
+- **Errors reach you.** Every call that got no answer (a timeout, the server
+  unreachable), every answer that failed its contract and every ticker run
+  that failed is one line in `errors/<date>.jsonl` under the results folder.
+  The daily report has a **Model errors** section with the counts by kind and
+  agent and the tickers that failed; `tradingagents usage` prints the same for
+  a day. When the model has given no answer for
+  `TRADINGAGENTS_MODEL_OUTAGE_MINUTES` (15) the worker sends one email, and one
+  more when it answers again. A ticker whose run failed goes back in the
+  sweep's queue, once per cycle.
+
 ## Typed contracts
 
 Every agent answers to a Pydantic schema (`tradingagents/agents/schemas.py`),

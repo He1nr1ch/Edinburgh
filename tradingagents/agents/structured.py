@@ -28,7 +28,7 @@ from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel
 
-from tradingagents import usage
+from tradingagents import errors, usage
 from tradingagents.agents.schemas import ENVELOPE_FIELDS, AgentVerdict, AnalystVerdict, Envelope
 
 logger = logging.getLogger(__name__)
@@ -92,7 +92,7 @@ def decide(structured_llm: Any | None, prompt: Any, agent_name: str, call: str |
     debater's stance is its role). ``catch`` is what counts as a failed
     answer; anything else (the provider unreachable, say) is raised.
     """
-    result, error, attempts = None, "", 0
+    result, error, attempts, answered = None, "", 0, False
     start = time.monotonic()
     with usage.capture() as records:
         if structured_llm is None:
@@ -112,6 +112,7 @@ def decide(structured_llm: Any | None, prompt: Any, agent_name: str, call: str |
                     break
                 except catch as exc:
                     result = None
+                    answered = isinstance(exc, ValueError)      # it answered, and the answer did not fit
                     error = f"{type(exc).__name__}: {' '.join(str(exc).split())[:300]}"
                     logger.warning("%s: answer %d of %d did not meet its contract (%s)", agent_name, attempts, ATTEMPTS, error)
                     ask = _corrected(prompt, error)
@@ -122,7 +123,10 @@ def decide(structured_llm: Any | None, prompt: Any, agent_name: str, call: str |
         tokens_in=sum(r.get("tokens_in") or 0 for r in records) if records else None,
         tokens_out=sum(r.get("tokens_out") or 0 for r in records) if records else None,
     )
-    if result is not None:
+    if result is None:
+        if answered:    # no answer at all is the client's to record, as a timeout or an outage
+            errors.record("contract", error, agent_name, verdict.model)
+    else:
         verdict.fields = result.model_dump(mode="json", exclude=set(ENVELOPE_FIELDS))
         if isinstance(result, Envelope):
             verdict.call, verdict.thesis = call or result.call(), result.thesis()

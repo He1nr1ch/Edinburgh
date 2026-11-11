@@ -511,7 +511,7 @@ def usage(
     day = date or _dt.now().strftime("%Y-%m-%d")
     s = _usage.today_summary(DEFAULT_CONFIG, day)
     console.print(f"{day}: {_usage.describe(s)}")
-    for group, label in (("by_agent", "agent"), ("by_host", "host"), ("by_model", "model")):
+    for group, label in (("by_agent", "agent"), ("by_host", "host"), ("by_node", "PAIR node"), ("by_model", "model")):
         rows = s.get(group) or {}
         if rows:
             console.print(f"\n{label:22s} {'calls':>6s} {'tokens in':>11s} {'tokens out':>11s} {'minutes':>8s}")
@@ -521,6 +521,14 @@ def usage(
     if tickers:
         dear = sorted(((k, v) for k, v in tickers.items() if k != "-"), key=lambda kv: -kv[1]["seconds"])[:10]
         console.print("\nDearest tickers: " + ", ".join(f"{k} {v['seconds'] / 60:.0f} min" for k, v in dear))
+    from tradingagents import errors as _errors
+
+    e = _errors.today_summary(DEFAULT_CONFIG, day)
+    console.print(f"\nModel errors: {_errors.describe(e)}")
+    for line in e["recent"]:
+        console.print(f"  {line}")
+    if e["failed_tickers"]:
+        console.print("Ticker runs that failed: " + ", ".join(e["failed_tickers"]))
 
 
 @app.command()

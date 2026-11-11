@@ -36,6 +36,10 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_ANTHROPIC_EFFORT":        "anthropic_effort",
     "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
+    "TRADINGAGENTS_OLLAMA_IDLE_TIMEOUT":     "ollama_idle_timeout",
+    "TRADINGAGENTS_OLLAMA_CALL_TIMEOUT":     "ollama_call_timeout",
+    "TRADINGAGENTS_AGENT_CALLS":             "agent_calls",
+    "TRADINGAGENTS_MODEL_OUTAGE_MINUTES":    "model_outage_minutes",
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
     "TRADINGAGENTS_CONTRACT_FALLBACK":       "contract_fallback",
     "TRADINGAGENTS_ANALYST_VERDICTS":        "analyst_verdicts",
@@ -86,6 +90,13 @@ def _coerce(value: str, reference):
         return int(value)
     if isinstance(reference, float):
         return float(value)
+    if isinstance(reference, dict):
+        import json
+
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError(f"expected a JSON object, got {value!r}")
+        return parsed
     return value
 
 
@@ -124,6 +135,8 @@ def build_default_config() -> dict:
         # Every model call's tokens and seconds, one JSON-lines file per day (usage.py);
         # empty means <results_dir>/usage.
         "usage_dir": os.getenv("TRADINGAGENTS_USAGE_DIR") or "",
+        # The log of model failures, one file per day; "" keeps it in results_dir/errors.
+        "errors_dir": os.getenv("TRADINGAGENTS_ERRORS_DIR") or "",
         # NVIDIA PAIR's config folder, whose workload history says which node served
         # each call (pair.py); empty means the router's default folder for this user.
         "pair_dir": os.getenv("TRADINGAGENTS_PAIR_DIR") or "",
@@ -173,6 +186,26 @@ def build_default_config() -> dict:
         # the reasoning checks the debaters' figures against the reports (it caught
         # a misquoted RSI that the fast mode passed over). It applies to every agent.
         "ollama_thinking": True,
+        # Time limits on every Ollama call, in seconds. Calls are streamed, so
+        # the idle limit is the longest silence allowed between chunks, and the
+        # silence before the first chunk is the wait in PAIR's queue: it has to
+        # cover a busy sweep. The call limit is for the whole call. Past either,
+        # the call is dropped and fails closed (no answer is never an answer).
+        # Set from 2.2 days of PAIR's history on 2026-11-11 (10,000 calls): the
+        # longest queue wait was 585 s (99% under 170 s) and the longest call
+        # 841 s (99% under 315 s), so these cut off nothing that was healthy.
+        "ollama_idle_timeout": 600.0,
+        "ollama_call_timeout": 900.0,
+        # Per-tier and per-agent call settings on top of the above: a model, a
+        # context window or a call limit of its own, by tier ("quick", "deep")
+        # or by agent name as the graph names it, the agent winning. For example
+        # {"deep": {"timeout": 1200}, "Portfolio Manager": {"model": "qwen3.5:122b", "num_ctx": 65536}}.
+        # From the environment, TRADINGAGENTS_AGENT_CALLS takes the same as JSON.
+        "agent_calls": {},
+        # Minutes without an answer from the model (at least two calls, none
+        # answered since) before the worker emails that it is down. One more
+        # email says when it is back.
+        "model_outage_minutes": 15,
         # Sampling temperature, forwarded to every provider when set. None leaves
         # each provider at its own default. Lower values reduce run-to-run
         # variation on models that honor it; reasoning models largely ignore it

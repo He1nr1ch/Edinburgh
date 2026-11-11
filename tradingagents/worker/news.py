@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.dataflows.vendors.alpaca import articles_since, get_asset_profile
 from tradingagents.dataflows.vendors.alpaca.trading import Holding
 from tradingagents.lessons import desk_lessons
@@ -142,11 +142,23 @@ class WatcherDuty:
             except Exception as exc:     # one symbol's feed failing must not stop the pass
                 logger.warning("News for %s could not be read: %s", h.symbol, exc)
                 continue
-            context.state.last_check[h.symbol] = context.now.astimezone(UTC).isoformat()
+            checked = context.now.astimezone(UTC).isoformat()
             if not articles:
+                context.state.last_check[h.symbol] = checked
                 continue
             case = desk_case(h.symbol, decisions)
-            assessment = invoke_structured(structured, _prompt(h, articles, _name(h.symbol), case), "Watcher")
+            try:
+                assessment, _ = decide(structured, _prompt(h, articles, _name(h.symbol), case), "Watcher", catch=ValueError)
+            except Exception as exc:
+                # No answer is not a judgement. The articles stay unread and the
+                # clock stays where it was, so the next pass reads them again;
+                # reported as info, since it repeats every pass until the model is back.
+                logger.warning("News for %s was not judged, the model gave no answer (%s); it waits for the next pass", h.symbol, exc)
+                findings.append(Finding(self.name, h.symbol, "info",
+                                        f"{len(articles)} new article(s) wait: the model gave no answer",
+                                        f"{type(exc).__name__}: {exc}\n" + "\n".join(a["headline"] for a in articles)))
+                continue
+            context.state.last_check[h.symbol] = checked
             context.state.mark_seen(h.symbol, [a["id"] for a in articles])
             if assessment is None:
                 findings.append(Finding(self.name, h.symbol, "notable",

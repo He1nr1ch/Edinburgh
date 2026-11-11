@@ -39,6 +39,8 @@ def _own_file_locations():
     os.environ["TRADINGAGENTS_RESULTS_DIR"] = os.path.join(home, "logs")
     os.environ["TRADINGAGENTS_CACHE_DIR"] = os.path.join(home, "cache")
     os.environ["TRADINGAGENTS_MEMORY_LOG_PATH"] = os.path.join(home, "memory", "trading_memory.md")
+    # No PAIR for the suite, whatever this machine runs: the router's folder is a place that does not exist.
+    os.environ["TRADINGAGENTS_PAIR_DIR"] = os.path.join(home, "no-pair")
     os.environ["TRADINGAGENTS_FEEDBACK_DB_URL"] = "sqlite:///" + os.path.join(home, "memory", "feedback.db")
 
 

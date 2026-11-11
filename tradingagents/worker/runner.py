@@ -344,6 +344,17 @@ def tick_sweep(sweep, config: dict, market_open: bool) -> None:
         sweep.tick(date, market_open, holdings, last)
     except Exception as exc:
         logger.warning("The sweep could not be advanced: %s", exc)
+    watch_model(config)
+
+
+def watch_model(config: dict) -> None:
+    """Email when the model has gone silent and when it is back; never the loop's failure."""
+    from tradingagents import errors
+
+    try:
+        errors.watch(config)
+    except Exception as exc:
+        logger.warning("The model's health could not be checked: %s", exc)
 
 
 def summarize_day(config: dict, day: str) -> str:
