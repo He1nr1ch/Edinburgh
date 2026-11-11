@@ -16,7 +16,7 @@ from tradingagents.agents.context import (
 from tradingagents.agents.rating import parse_risk_level
 from tradingagents.agents.schemas import RiskAssessment, render_risk_assessment
 from tradingagents.lessons import desk_lessons
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, settle
 
 
 def create_risk_manager(llm):
@@ -68,14 +68,14 @@ Write these sections, in this order, starting with the risk level on its own lin
 
 {desk_lessons("Risk Manager")}{brevity}{NO_EXTERNAL_TOOLS}"""
 
-        assessment = invoke_structured(structured_llm, prompt, "Risk Manager")
-        if assessment is not None:
-            rendered = render_risk_assessment(assessment)
-            level = assessment.risk_level.value
+        outcome = settle(structured_llm, llm, prompt, "Risk Manager")
+        rendered = outcome.markdown(render_risk_assessment)
+        if outcome.result is not None:
+            level = outcome.result.risk_level.value
         else:
-            rendered = llm.invoke(prompt).content
-            level = parse_risk_level(rendered)
+            # Prose under the free-text opt-out names its stance; a closed run has none.
+            level = parse_risk_level(rendered if outcome.text is not None else "")
 
-        return {"risk_assessment": rendered, "risk_level": level}
+        return {"risk_assessment": rendered, "risk_level": level, **outcome.update("risk_manager")}
 
     return risk_manager_node

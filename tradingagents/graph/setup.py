@@ -36,13 +36,16 @@ DEBATE_PATH_MAP = {
     "Bull Researcher": "Bull Researcher",
     "Bear Researcher": "Bear Researcher",
     "Research Manager": "Research Manager",
+    # Where a run goes when an agent's answer failed its contract: the
+    # Portfolio Manager closes it as REVIEW without asking anyone else.
+    "Portfolio Manager": "Portfolio Manager",
 }
 RISK_ANALYSIS_PATH_MAP = {
     "Aggressive Analyst": "Aggressive Analyst",
     "Conservative Analyst": "Conservative Analyst",
     "Neutral Analyst": "Neutral Analyst",
     "Risk Manager": "Risk Manager",
-    # Kept so a router that still names the manager directly stays routable.
+    # A closed run (see DEBATE_PATH_MAP), and a router that names the manager directly.
     "Portfolio Manager": "Portfolio Manager",
 }
 
@@ -81,15 +84,15 @@ def _analyst_graph(spec, agent, max_tool_rounds: int, max_tool_output_chars: int
                    max_tool_history_chars: int = 160_000):
     """One analyst as a graph of its own: the model and its tools, on a private message history.
 
-    It returns only its report, so analysts running side by side never write the
-    same key, and its tool calls never reach the other analysts' messages. After
+    It returns only its report and its verdict (verdicts merge by agent), so
+    analysts running side by side never overwrite one another, and its tool calls never reach the other analysts' messages. After
     ``max_tool_rounds`` rounds of tool calls, or once its tool results hold more
     than ``max_tool_history_chars``, it is told to write its report, and that
     turn ends it whatever it answers, so a model that keeps calling tools cannot
     run the graph into its recursion limit or the model's context window. Each
     result is capped at ``max_tool_output_chars``.
     """
-    output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str})
+    output = TypedDict(f"{spec.key.capitalize()}Report", {spec.report_key: str, "verdicts": dict})
     graph = StateGraph(AgentState, output_schema=output)
     graph.add_node("agent", agent)
     graph.add_edge(START, "agent")
@@ -221,8 +224,10 @@ class GraphSetup:
                 self.conditional_logic.should_continue_debate,
                 DEBATE_PATH_MAP,
             )
-        workflow.add_edge("Research Manager", "Trader")
-        workflow.add_edge("Trader", "Aggressive Analyst")
+        workflow.add_conditional_edges("Research Manager", self.conditional_logic.after_research_manager,
+                                       ["Trader", "Portfolio Manager"])
+        workflow.add_conditional_edges("Trader", self.conditional_logic.after_trader,
+                                       ["Aggressive Analyst", "Portfolio Manager"])
         # All three risk edges share the complete RISK_ANALYSIS_PATH_MAP (#1088).
         for risk_node in ("Aggressive Analyst", "Conservative Analyst", "Neutral Analyst"):
             workflow.add_conditional_edges(

@@ -16,6 +16,8 @@ import pytest
 from tradingagents.agents.context import get_portfolio_context_from_state
 from tradingagents.portfolio import PortfolioContext, load_portfolio
 
+pytestmark = pytest.mark.usefixtures("free_text_contract")   # the fakes here answer in prose
+
 HOLDING = {
     "cash": 25000.0,
     "currency": "USD",

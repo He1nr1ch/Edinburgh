@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -13,7 +14,13 @@ from sqlalchemy.engine import Engine
 
 from tradingagents.agents.rating import RATING_REVIEW, run_rating
 from tradingagents.feedback import extract, scoring
-from tradingagents.feedback.schema import agent_scores, decisions, metadata, outcomes
+from tradingagents.feedback.schema import (
+    agent_scores,
+    agent_verdicts,
+    decisions,
+    metadata,
+    outcomes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +76,6 @@ class FeedbackStore:
         if not self.enabled:
             return None
         settings = settings or {}
-        risk_text = final_state.get("risk_assessment") or ""
         row = {
             "ticker": ticker, "trade_date": str(trade_date),
             "asset_type": final_state.get("asset_type") or "stock",
@@ -77,11 +83,8 @@ class FeedbackStore:
             "rating": run_rating(final_state),
             "position_size_pct": final_state.get("final_position_size_pct"),
             "risk_level": final_state.get("final_risk_level") or None,
-            "price_target": extract.labelled_number(final_state.get("final_trade_decision") or "", "Price Target"),
             "rm_risk_level": (final_state.get("risk_level") or None) if final_state.get("risk_level") != RATING_REVIEW else None,
-            **extract.risk_fields(risk_text),
-            **extract.trader_fields(final_state.get("trader_investment_plan") or ""),
-            "research_recommendation": extract.research_recommendation(final_state.get("investment_plan") or ""),
+            **typed_calls(final_state),
             "holding_days": holding_days, "benchmark": benchmark,
             "llm_provider": settings.get("llm_provider"),
             "quick_think_llm": settings.get("quick_think_llm"),
@@ -96,8 +99,28 @@ class FeedbackStore:
                 if existing.status != "pending":
                     return existing.id
                 conn.execute(decisions.update().where(decisions.c.id == existing.id).values(**row))
-                return existing.id
-            return conn.execute(decisions.insert().values(**row)).inserted_primary_key[0]
+                decision_id = existing.id
+            else:
+                decision_id = conn.execute(decisions.insert().values(**row)).inserted_primary_key[0]
+            conn.execute(agent_verdicts.delete().where(agent_verdicts.c.decision_id == decision_id))
+            for agent, v in (final_state.get("verdicts") or {}).items():
+                conn.execute(agent_verdicts.insert().values(
+                    decision_id=decision_id, agent=agent, ok=bool(v.get("ok")), call=v.get("call"),
+                    confidence=v.get("confidence"), thesis=v.get("thesis") or None,
+                    evidence=json.dumps(v.get("evidence") or []), model=v.get("model") or None,
+                    latency_s=v.get("latency_s"), tokens_in=v.get("tokens_in"), tokens_out=v.get("tokens_out"),
+                    attempts=v.get("attempts"), error=v.get("error") or None))
+            return decision_id
+
+    def verdicts(self, ticker: str, trade_date: str) -> list[dict]:
+        """Every agent's typed answer for one run, as recorded."""
+        if not self.enabled:
+            return []
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(agent_verdicts).join(decisions)
+                                .where(decisions.c.ticker == ticker, decisions.c.trade_date == str(trade_date))
+                                .order_by(agent_verdicts.c.id)).mappings().all()
+        return [{**dict(r), "evidence": json.loads(r["evidence"] or "[]")} for r in rows]
 
     # --- settle -----------------------------------------------------------------
 
@@ -243,6 +266,37 @@ class FeedbackStore:
         lines.append("Favour the calls and stances that have been right, and be slower to repeat those that have not; "
                      "a short record proves little, so weigh it with the evidence of this run.")
         return "\n".join(lines)
+
+
+def typed_calls(final_state: dict) -> dict:
+    """The deciding agents' calls for the decisions row, from their typed verdicts.
+
+    An agent with no verdict in the state (a run from before verdicts were
+    kept, or prose under the free-text opt-out) has its call read from its
+    rendered text instead, as before.
+    """
+    verdicts = final_state.get("verdicts") or {}
+
+    def typed(agent: str) -> dict | None:
+        v = verdicts.get(agent)
+        return v if v and v.get("ok") else None
+
+    out: dict = {}
+    pm, risk, trader, research = (typed(a) for a in ("portfolio_manager", "risk_manager", "trader", "research_manager"))
+    out["price_target"] = (pm["fields"].get("price_target") if pm
+                           else extract.labelled_number(final_state.get("final_trade_decision") or "", "Price Target"))
+    if risk:
+        out.update(rm_max_position_pct=risk["fields"].get("max_position_pct"), rm_stop_loss=risk["fields"].get("stop_loss"))
+    else:
+        out.update(extract.risk_fields(final_state.get("risk_assessment") or ""))
+    if trader:
+        out.update(trader_action=trader["call"], trader_entry_price=trader["fields"].get("entry_price"),
+                   trader_stop_loss=trader["fields"].get("stop_loss"))
+    else:
+        out.update(extract.trader_fields(final_state.get("trader_investment_plan") or ""))
+    out["research_recommendation"] = (research["call"] if research
+                                      else extract.research_recommendation(final_state.get("investment_plan") or ""))
+    return out
 
 
 def _finish(bucket: dict) -> None:

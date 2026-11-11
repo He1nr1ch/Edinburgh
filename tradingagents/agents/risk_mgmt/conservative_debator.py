@@ -5,9 +5,13 @@ from tradingagents.agents.context import (
     opponent_argument_or_opening,
     report_or_absent,
 )
+from tradingagents.agents.schemas import DebateArgument
+from tradingagents.agents.structured import bind_structured, settle
 
 
 def create_conservative_debator(llm):
+    structured_llm = bind_structured(llm, DebateArgument, "Conservative Analyst")
+
     def conservative_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -43,9 +47,9 @@ Here is the current conversation history: {history} Here is the last response fr
 
 Engage by questioning their optimism and emphasizing the potential downsides they may have overlooked. Address each of their counterpoints to showcase why a conservative stance is ultimately the safest path for the firm's assets. Focus on debating and critiquing their arguments to demonstrate the strength of a low-risk strategy over their approaches. Output conversationally as if you are speaking without any special formatting.{length_brief("argument", before=" ")}"""
 
-        response = llm.invoke(prompt)
+        outcome = settle(structured_llm, llm, prompt, "Conservative Analyst", call="Conservative")
 
-        argument = f"Conservative Analyst: {response.content}"
+        argument = f"Conservative Analyst: {outcome.markdown(lambda a: a.argument)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,
@@ -63,6 +67,6 @@ Engage by questioning their optimism and emphasizing the potential downsides the
             "count": risk_debate_state["count"] + 1,
         }
 
-        return {"risk_debate_state": new_risk_debate_state}
+        return {"risk_debate_state": new_risk_debate_state, **outcome.update("conservative_analyst")}
 
     return conservative_node

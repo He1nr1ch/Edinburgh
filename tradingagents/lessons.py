@@ -12,7 +12,7 @@ words an agent can act on, kept in ``lessons.json``:
 
 :func:`render_for` gives an agent its block: the standing lessons addressed
 to it or to the desk, then the last week's daily lessons for it, capped, so
-every deciding agent and the Watcher start each call knowing what the desk
+every agent (analysts, researchers, deciders) and the Watcher start each call knowing what the desk
 has already learned about their own part of the job.
 """
 
@@ -22,7 +22,8 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
-AGENTS = ("Market Analyst", "News Analyst", "Fundamentals Analyst", "Research Manager", "Trader",
+AGENTS = ("Market Analyst", "News Analyst", "Fundamentals Analyst", "Bull Researcher", "Bear Researcher",
+          "Research Manager", "Trader",
           "Risk Manager", "Portfolio Manager", "Watcher", "Desk")
 KEEP_DAILY_DAYS = 30
 MAX_STANDING = 12

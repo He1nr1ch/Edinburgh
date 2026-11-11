@@ -79,6 +79,34 @@ tool; the Fundamentals Analyst works from the statements.
 Crypto pairs are spelled Alpaca's way, `BTC/USD`; `BTCUSD` and `BTC-USD` are
 accepted and normalized.
 
+## Typed contracts
+
+Every agent answers to a Pydantic schema (`tradingagents/agents/schemas.py`),
+and every answer carries the same envelope: a **confidence** from 0 to 1 and
+the **evidence** that decided it, which the model states, plus the **model**
+that answered, the **seconds** it took and the tokens, which the code stamps.
+The answers are kept in the run's state as `verdicts`, one per agent, with a
+common shape (call, thesis, confidence, evidence, model, latency); the feedback
+store reads the calls from there, not from the prose, and writes them all to
+its `agent_verdicts` table. The markdown each agent renders is for people and
+for the next agent's prompt.
+
+- The **deciders** (Research Manager, Trader, Risk Manager, Portfolio Manager)
+  and the **debaters** (Bull, Bear, and the three risk analysts) answer in
+  their schema directly. A debater's call is its stance.
+- Each **analyst** writes its report with its tools as before, then states a
+  verdict on it (Bullish / Neutral / Bearish) in one more short call. Switch
+  that off with `TRADINGAGENTS_ANALYST_VERDICTS=false`.
+
+An answer that does not validate is asked for once more with the error quoted
+back. If the second fails too, the run is **closed**: nobody after that agent is
+asked, the Portfolio Manager's decision names the agent that failed, and the
+ticker is rated `REVIEW`, which is never traded. An analyst's verdict is the
+one exception: its report stands and the run goes on. A model that cannot be
+reached is not a failed answer; that error is raised so the run can be retried.
+`TRADINGAGENTS_CONTRACT_FALLBACK=free_text` restores the old behaviour (prose,
+read back with regexes) for a provider without structured output.
+
 ## The feedback loop
 
 Every finished run writes a row to `decisions`: the Portfolio Manager's rating,

@@ -37,6 +37,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OLLAMA_NUM_CTX":          "ollama_num_ctx",
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
+    "TRADINGAGENTS_CONTRACT_FALLBACK":       "contract_fallback",
+    "TRADINGAGENTS_ANALYST_VERDICTS":        "analyst_verdicts",
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
     "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
@@ -193,6 +195,17 @@ def build_default_config() -> dict:
         # prompts did before. Later agents read every earlier report, so concise
         # output is also shorter input and a faster run.
         "report_style": "concise",
+        # What an agent does when its answer does not meet its typed contract
+        # after one corrected retry. "fail" closes the run: the agent's verdict
+        # is marked failed, no later agent is asked, and the ticker is rated
+        # REVIEW, never traded on prose nobody could check. "free_text" is the
+        # old behaviour, for a provider without structured output: the agent
+        # answers in prose and its call is read back from the text.
+        "contract_fallback": "fail",
+        # Whether each analyst states a typed verdict (Bullish / Neutral /
+        # Bearish, confidence, evidence) after its report, so its calls can be
+        # scored against outcomes. One more quick-model call per analyst.
+        "analyst_verdicts": True,
         # Debate and discussion settings
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,

@@ -97,7 +97,7 @@ def _facts_text(w: dict) -> str:
 def _prompt(w: dict) -> str:
     return (
         "You are the desk's end-of-week reviewer on a long/short equity desk run by agents (Market, News and "
-        "Fundamentals Analysts; Research Manager; Trader; Risk Manager; Portfolio Manager; the Watcher that "
+        "Fundamentals Analysts; Bull and Bear Researchers; Research Manager; Trader; Risk Manager; Portfolio Manager; the Watcher that "
         "guards positions intraday). The desk's rules: Sell means short; a call needs a target over 5% away; "
         "the morning book opens with the top ten each side by expected move, but after that the most attractive "
         "call wins regardless of side (the desk is here to make money, not to stay balanced; an uneven book "

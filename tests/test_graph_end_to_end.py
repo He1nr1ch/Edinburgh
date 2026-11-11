@@ -40,7 +40,10 @@ STRUCTURED = {
         risk_level=schemas.RiskLevel.NEUTRAL,
         investment_thesis="Street consensus rating: Buy (28 of 35 analysts)."),
     schemas.RiskAssessment: schemas.RiskAssessment(
-        risk_level=schemas.RiskLevel.NEUTRAL, max_position_pct=5, stop_loss=180.0, rationale="r"),
+        risk_level=schemas.RiskLevel.NEUTRAL, max_position_pct=5, stop_loss=180.0, rationale="r",
+        confidence=0.6, evidence=["ATR 7.9"]),
+    schemas.DebateArgument: schemas.DebateArgument(argument="My case.", confidence=0.7, evidence=["RSI 71"]),
+    schemas.AnalystVerdict: schemas.AnalystVerdict(signal=schemas.Signal.BULLISH, summary="Up.", confidence="80%"),
 }
 
 ARGS = {"symbol": "NVDA", "ticker": "NVDA", "curr_date": TRADE_DATE, "start_date": "2026-01-02",
@@ -51,6 +54,7 @@ class ScriptedModel(BaseChatModel):
     """Calls every bound tool once, then answers with TEXT."""
 
     structured: bool = False
+    broken: tuple = ()                          # schemas this model cannot fill: it answers them in prose
     tools: tuple = ()
     calls: list = Field(default_factory=list)   # shared across bound copies
     threads: set = Field(default_factory=set)   # threads that served a tool-bound call
@@ -66,7 +70,7 @@ class ScriptedModel(BaseChatModel):
     def with_structured_output(self, schema, **kwargs):
         if not self.structured:
             raise NotImplementedError
-        return RunnableLambda(lambda _: self._count() or STRUCTURED[schema])
+        return RunnableLambda(lambda _: self._count() or (None if schema in self.broken else STRUCTURED[schema]))
 
     def _count(self) -> None:
         self.calls.append(1)
@@ -120,7 +124,10 @@ def offline(monkeypatch, tmp_path):
 def _graph(tmp_path, monkeypatch, model, debug=False, **config):
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg.update(results_dir=str(tmp_path / "results"), data_cache_dir=str(tmp_path / "cache"),
-               memory_log_path=str(tmp_path / "log.md"), **config)
+               memory_log_path=str(tmp_path / "log.md"))
+    if not model.structured:   # a model that only speaks prose runs under the free-text opt-out
+        cfg.update(contract_fallback="free_text", analyst_verdicts=False)
+    cfg.update(**config)
     monkeypatch.setattr(trading_graph, "create_tier_client", lambda config, tier, **k: _Client(model))
     return trading_graph.TradingAgentsGraph(config=cfg, debug=debug)
 

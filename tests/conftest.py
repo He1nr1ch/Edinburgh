@@ -106,3 +106,19 @@ def _isolate_config():
     config_module._config = copy.deepcopy(default_config.DEFAULT_CONFIG)
     yield
     config_module._config = copy.deepcopy(default_config.DEFAULT_CONFIG)
+
+
+@pytest.fixture
+def free_text_contract(monkeypatch):
+    """Run under the free-text opt-out, for tests whose fake model only speaks prose.
+
+    The default closes a run whose agent gives no typed answer; these tests
+    are about prompts and the prose readers, not the contract.
+    """
+    import tradingagents.dataflows.config as dataflows_config
+    import tradingagents.default_config as default_config
+
+    dataflows_config.initialize_config()
+    for config in (default_config.DEFAULT_CONFIG, dataflows_config._config):
+        monkeypatch.setitem(config, "contract_fallback", "free_text")
+        monkeypatch.setitem(config, "analyst_verdicts", False)

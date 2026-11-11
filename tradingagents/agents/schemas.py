@@ -1,19 +1,18 @@
-"""Pydantic schemas used by agents that produce structured output.
+"""Pydantic schemas: the typed contract every agent answers to.
 
-The framework's primary artifact is still prose: each agent's natural-language
-reasoning is what users read in the saved markdown reports and what the
-downstream agents read as context.  Structured output is layered onto the
-three decision-making agents (Research Manager, Trader, Portfolio Manager)
-so that:
+Each agent's answer is one of these models. All of them share the
+:class:`Envelope` (confidence, evidence), and each names its call and its
+thesis, so that the code which asked can stamp any answer into an
+:class:`AgentVerdict` of one shape: call, thesis, confidence, evidence, the
+model that answered and how long it took. That record, not the prose, is what
+the feedback store and other code read (see ``structured.py``).
 
-- Their outputs follow consistent section headers across runs and providers
 - Each provider's native structured-output mode is used (json_schema for
-  OpenAI/xAI, response_schema for Gemini, tool-use for Anthropic)
+  OpenAI/xAI and Ollama, response_schema for Gemini, tool-use for Anthropic)
 - Schema field descriptions become the model's output instructions, freeing
   the prompt body to focus on context and the rating-scale guidance
-- A render helper turns the parsed Pydantic instance back into the same
-  markdown shape the rest of the system already consumes, so display,
-  memory log, and saved reports keep working unchanged
+- A render helper turns each instance into markdown, for the saved reports
+  and for the next agent's prompt
 """
 
 from __future__ import annotations
@@ -72,8 +71,15 @@ class PortfolioRating(StrEnum):
     SELL = "Sell"
 
 
+ENVELOPE_FIELDS = ("confidence", "evidence")
+
+
 def _always_asked(*names):
     """Mark nullable fields as required in the JSON schema the model is bound to.
+
+    The envelope's own fields (confidence, evidence) are always among them, and
+    are moved to the end of the schema: a model writes its fields in schema
+    order, and it should state how sure it is after it has reasoned, not before.
 
     A field with a default is optional in the schema, and a model served a
     schema-constrained grammar (Ollama's structured output) then leaves the key
@@ -83,10 +89,178 @@ def _always_asked(*names):
     """
     def extend(schema: dict) -> None:
         required = schema.setdefault("required", [])
-        for name in names:
+        for name in (*names, *ENVELOPE_FIELDS):
             if name not in required:
                 required.append(name)
+        properties = schema.get("properties", {})
+        for name in ENVELOPE_FIELDS:
+            if name in properties:
+                properties[name] = properties.pop(name)
     return extend
+
+
+_CONFIDENCE_WORDS = {"very high": 0.9, "high": 0.8, "medium": 0.5, "moderate": 0.5, "low": 0.2, "very low": 0.1}
+
+
+def _coerce_confidence(value):
+    """A confidence in [0, 1], or None: "0.7", "70%", 70 and "high" all read as one.
+
+    A confidence nobody can read must not sink the decision it came with, so
+    anything else is dropped rather than failing validation.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _CONFIDENCE_WORDS:
+            return _CONFIDENCE_WORDS[text]
+        percent = text.endswith("%")
+        try:
+            value = float(text.rstrip("%").strip())
+        except ValueError:
+            return None
+        if percent:
+            value /= 100
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if 1.0 < number <= 100.0:
+        number /= 100
+    return number if 0.0 <= number <= 1.0 else None
+
+
+def _coerce_evidence(value):
+    """A list of short facts: a model that writes one string, or bullets, still gives a list."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [line.strip(" \t-*•") for line in value.splitlines()]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()][:8]
+
+
+class Envelope(BaseModel):
+    """What every agent's answer carries on top of its own fields.
+
+    The model states how sure it is and the facts that decided it; the code
+    that made the call stamps the rest (the model that answered, how long it
+    took) into the :class:`AgentVerdict` built from this answer. Each schema
+    names its call and its thesis, so the verdicts of different agents line up
+    in one table whatever their own fields are called.
+    """
+
+    model_config = ConfigDict(json_schema_extra=_always_asked())
+
+    confidence: float | None = Field(
+        default=None,
+        description=(
+            "How sure you are of this call, one number from 0 to 1: 0.5 is a coin "
+            "flip, 0.9 is near certain. Be honest; it is scored against outcomes."
+        ),
+    )
+    evidence: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The two to five facts that decided it, each a short phrase with its "
+            "number or level (for example 'RSI 71, above 70'), taken from the "
+            "material you were given. Facts, not opinions."
+        ),
+    )
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _confidence(cls, v):
+        return _coerce_confidence(v)
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _evidence(cls, v):
+        return _coerce_evidence(v)
+
+    def call(self) -> str | None:
+        """The call this answer makes (a rating, an action, a stance), in the desk's vocabulary."""
+        return None
+
+    def thesis(self) -> str:
+        """The reasoning behind the call, in the agent's own words."""
+        return ""
+
+
+def envelope_lines(answer: Envelope) -> list[str]:
+    """The confidence and evidence as labelled markdown lines; none when the answer gave neither."""
+    lines = []
+    if answer.confidence is not None:
+        lines += ["", f"**Confidence**: {answer.confidence:g}"]
+    if answer.evidence:
+        lines += ["", "**Evidence**: " + "; ".join(answer.evidence)]
+    return lines
+
+
+class AgentVerdict(BaseModel):
+    """One agent's answer as the rest of the system reads it: the same shape for every agent.
+
+    ``ok`` is False when the agent gave no answer that met its contract; then
+    ``error`` says why and there is no call. ``fields`` holds the answer's own
+    typed fields (a stop, a ceiling, a target), for readers that need them.
+    """
+
+    agent: str
+    ok: bool = True
+    error: str = ""
+    call: str | None = None
+    thesis: str = ""
+    confidence: float | None = None
+    evidence: list[str] = Field(default_factory=list)
+    model: str = ""
+    latency_s: float | None = None
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    attempts: int = 1
+    fields: dict = Field(default_factory=dict)
+
+
+class Signal(StrEnum):
+    """An analyst's read of where the instrument goes over the holding period."""
+
+    BULLISH = "Bullish"
+    NEUTRAL = "Neutral"
+    BEARISH = "Bearish"
+
+
+class AnalystVerdict(Envelope):
+    """An analyst's report reduced to a call that can be scored against the outcome."""
+
+    signal: Signal = Field(
+        description=(
+            "What the report implies for the price over the holding period. Exactly "
+            "one of Bullish / Neutral / Bearish. Neutral only when the report's "
+            "evidence is balanced or too thin; a report is not Neutral because it "
+            "lists both strengths and risks."
+        ),
+    )
+    summary: str = Field(description="The report's conclusion in one or two sentences: the reason for the signal.")
+
+    def call(self) -> str | None:
+        return self.signal.value
+
+    def thesis(self) -> str:
+        return self.summary
+
+
+class DebateArgument(Envelope):
+    """One turn of a debate: the argument as spoken, and how strong the speaker holds its case to be."""
+
+    argument: str = Field(
+        description=(
+            "Your argument for this turn, in full, written conversationally as you "
+            "would speak it to the other side, with no special formatting."
+        ),
+    )
+
+    def thesis(self) -> str:
+        return self.argument
 
 
 class RiskLevel(StrEnum):
@@ -134,7 +308,7 @@ class TraderAction(StrEnum):
 # ---------------------------------------------------------------------------
 
 
-class ResearchPlan(BaseModel):
+class ResearchPlan(Envelope):
     """Structured investment plan produced by the Research Manager.
 
     Hand-off to the Trader: the recommendation pins the directional view,
@@ -169,6 +343,12 @@ class ResearchPlan(BaseModel):
         ),
     )
 
+    def call(self) -> str | None:
+        return self.recommendation.value
+
+    def thesis(self) -> str:
+        return self.rationale
+
 
 def render_research_plan(plan: ResearchPlan) -> str:
     """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
@@ -178,6 +358,7 @@ def render_research_plan(plan: ResearchPlan) -> str:
         f"**Rationale**: {plan.rationale}",
         "",
         f"**Strategic Actions**: {plan.strategic_actions}",
+        *envelope_lines(plan),
     ])
 
 
@@ -186,7 +367,7 @@ def render_research_plan(plan: ResearchPlan) -> str:
 # ---------------------------------------------------------------------------
 
 
-class TraderProposal(BaseModel):
+class TraderProposal(Envelope):
     """Structured transaction proposal produced by the Trader.
 
     The trader reads the Research Manager's investment plan and the analyst
@@ -231,6 +412,12 @@ class TraderProposal(BaseModel):
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
 
+    def call(self) -> str | None:
+        return self.action.value
+
+    def thesis(self) -> str:
+        return self.reasoning
+
 
 def render_trader_proposal(proposal: TraderProposal) -> str:
     """Render a TraderProposal to markdown.
@@ -251,6 +438,7 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
                          ("Position Sizing", proposal.position_sizing)):
         parts.extend(["", f"**{label}**: {value if value is not None and value != '' else 'not provided'}"])
     parts.extend([
+        *envelope_lines(proposal),
         "",
         f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
     ])
@@ -262,7 +450,7 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
 # ---------------------------------------------------------------------------
 
 
-class RiskAssessment(BaseModel):
+class RiskAssessment(Envelope):
     """Structured verdict of Risk Management on the trader's proposal.
 
     The three risk analysts argue; this is where the desk settles on a stance
@@ -317,6 +505,12 @@ class RiskAssessment(BaseModel):
     def _nullish_float_to_none(cls, v):
         return _coerce_optional_float(v)
 
+    def call(self) -> str | None:
+        return self.risk_level.value
+
+    def thesis(self) -> str:
+        return self.rationale
+
 
 def render_risk_assessment(assessment: RiskAssessment) -> str:
     """Render a RiskAssessment to markdown, the risk level on its own first line."""
@@ -329,6 +523,7 @@ def render_risk_assessment(assessment: RiskAssessment) -> str:
         f"**Stop Loss**: {stop}",
         "",
         f"**Rationale**: {assessment.rationale}",
+        *envelope_lines(assessment),
     ])
 
 
@@ -337,7 +532,7 @@ def render_risk_assessment(assessment: RiskAssessment) -> str:
 # ---------------------------------------------------------------------------
 
 
-class PortfolioDecision(BaseModel):
+class PortfolioDecision(Envelope):
     """Structured output produced by the Portfolio Manager.
 
     The model fills every field as part of its primary LLM call; no separate
@@ -416,6 +611,12 @@ class PortfolioDecision(BaseModel):
     def _percent_or_none(cls, v):
         return _coerce_optional_percent(v)
 
+    def call(self) -> str | None:
+        return self.rating.value
+
+    def thesis(self) -> str:
+        return self.investment_thesis
+
 
 def render_pm_decision(decision: PortfolioDecision) -> str:
     """Render a PortfolioDecision back to the markdown shape the rest of the system expects.
@@ -443,4 +644,5 @@ def render_pm_decision(decision: PortfolioDecision) -> str:
     target = decision.price_target if decision.price_target is not None else "not provided"
     parts.extend(["", f"**Price Target**: {target}"])
     parts.extend(["", f"**Time Horizon**: {decision.time_horizon or 'not provided'}"])
+    parts.extend(envelope_lines(decision))
     return "\n".join(parts)

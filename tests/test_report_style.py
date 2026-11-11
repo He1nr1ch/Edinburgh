@@ -9,6 +9,8 @@ import pytest
 from tradingagents.agents.context import length_brief, report_style
 from tradingagents.dataflows.config import run_config
 
+pytestmark = pytest.mark.usefixtures("free_text_contract")   # the fakes here answer in prose
+
 
 def _trader_prompt(style: str) -> str:
     from tradingagents.agents.schemas import TraderAction, TraderProposal

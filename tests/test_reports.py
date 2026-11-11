@@ -186,3 +186,56 @@ def test_the_reports_pages(tmp_path, monkeypatch):
     assert "<h1>Edinburgh daily report, 2026-11-09</h1>" in page and "wider stops" in page
     assert client.get("/reports/2026-01-01").status_code == 404
     assert client.get("/reports/week/2026-11-13").status_code == 404
+
+
+@pytest.mark.unit
+@pytest.mark.usefixtures("free_text_contract")
+def test_the_analysts_and_the_researchers_read_their_lessons(tmp_path):
+    """A lesson addressed to an analyst or a researcher reaches that agent's prompt, and no other's."""
+    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.runnables import RunnableLambda
+
+    from tradingagents.agents.analysts.fundamentals_analyst import create_fundamentals_analyst
+    from tradingagents.agents.analysts.market_analyst import create_market_analyst
+    from tradingagents.agents.analysts.news_analyst import create_news_analyst
+    from tradingagents.agents.researchers.bear_researcher import create_bear_researcher
+    from tradingagents.agents.researchers.bull_researcher import create_bull_researcher
+    from tradingagents.dataflows.config import run_config
+
+    marks = {"Market Analyst": "MARKET-MARK {braces} stay literal", "News Analyst": "NEWS-MARK", "Fundamentals Analyst": "FUND-MARK",
+             "Bull Researcher": "BULL-MARK", "Bear Researcher": "BEAR-MARK"}
+    store = Lessons(tmp_path / "lessons.json")
+    store.add_daily(date.today().isoformat(), [{"agent": a, "lesson": m, "evidence": "x"} for a, m in marks.items()])
+    store.set_standing(date.today().isoformat(), [{"agent": "Desk", "lesson": "DESK-MARK", "evidence": "x"}])
+
+    def analyst_prompt(factory) -> str:
+        seen = {}
+
+        class Llm:
+            def bind_tools(self, tools):
+                return RunnableLambda(lambda value: seen.__setitem__("text", value.to_string()) or AIMessage(content="report"))
+
+        factory(Llm())({"trade_date": "2026-11-10", "company_of_interest": "GD", "asset_type": "stock",
+                        "messages": [HumanMessage(content="GD")]})
+        return seen["text"]
+
+    def researcher_prompt(factory) -> str:
+        seen = {}
+        llm = MagicMock()
+        llm.invoke.side_effect = lambda prompt: seen.__setitem__("text", prompt) or MagicMock(content="argument")
+        factory(llm)({"company_of_interest": "GD", "asset_type": "stock", "market_report": "m", "news_report": "n",
+                      "fundamentals_report": "f",
+                      "investment_debate_state": {"history": "", "bull_history": "", "bear_history": "", "current_response": "", "count": 0}})
+        return seen["text"]
+
+    with run_config({"lessons_path": str(tmp_path / "lessons.json")}):
+        prompts = {"Market Analyst": analyst_prompt(create_market_analyst), "News Analyst": analyst_prompt(create_news_analyst),
+                   "Fundamentals Analyst": analyst_prompt(create_fundamentals_analyst),
+                   "Bull Researcher": researcher_prompt(create_bull_researcher), "Bear Researcher": researcher_prompt(create_bear_researcher)}
+    for agent, text in prompts.items():
+        assert marks[agent] in text and "DESK-MARK" in text, agent
+        assert not any(m in text for a, m in marks.items() if a != agent), agent
+
+    with run_config({"lessons_path": str(tmp_path / "none.json")}):      # nothing learned yet: the prompt carries no block
+        assert "Lessons from the desk" not in researcher_prompt(create_bull_researcher)
+        assert "Lessons from the desk" not in analyst_prompt(create_market_analyst)

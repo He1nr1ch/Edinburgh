@@ -5,9 +5,13 @@ from tradingagents.agents.context import (
     opponent_argument_or_opening,
     report_or_absent,
 )
+from tradingagents.agents.schemas import DebateArgument
+from tradingagents.agents.structured import bind_structured, settle
 
 
 def create_neutral_debator(llm):
+    structured_llm = bind_structured(llm, DebateArgument, "Neutral Analyst")
+
     def neutral_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -43,9 +47,9 @@ Here is the current conversation history: {history} Here is the last response fr
 
 Engage actively by analyzing both sides critically, addressing weaknesses in the aggressive and conservative arguments to advocate for a more balanced approach. Challenge each of their points to illustrate why a moderate risk strategy might offer the best of both worlds, providing growth potential while safeguarding against extreme volatility. Focus on debating rather than simply presenting data, aiming to show that a balanced view can lead to the most reliable outcomes. Output conversationally as if you are speaking without any special formatting.{length_brief("argument", before=" ")}"""
 
-        response = llm.invoke(prompt)
+        outcome = settle(structured_llm, llm, prompt, "Neutral Analyst", call="Neutral")
 
-        argument = f"Neutral Analyst: {response.content}"
+        argument = f"Neutral Analyst: {outcome.markdown(lambda a: a.argument)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,
@@ -61,6 +65,6 @@ Engage actively by analyzing both sides critically, addressing weaknesses in the
             "count": risk_debate_state["count"] + 1,
         }
 
-        return {"risk_debate_state": new_risk_debate_state}
+        return {"risk_debate_state": new_risk_debate_state, **outcome.update("neutral_analyst")}
 
     return neutral_node

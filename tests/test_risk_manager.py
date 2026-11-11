@@ -142,9 +142,11 @@ def test_the_risk_manager_settles_the_debate_into_a_typed_verdict():
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("free_text_contract")
 def test_the_risk_manager_falls_back_to_text_and_reads_the_stance_from_it():
     out = create_risk_manager(_free_text("**Risk Level**: Aggressive\n\nFull size."))(_state())
-    assert out == {"risk_assessment": "**Risk Level**: Aggressive\n\nFull size.", "risk_level": "Aggressive"}
+    assert (out["risk_assessment"], out["risk_level"]) == ("**Risk Level**: Aggressive\n\nFull size.", "Aggressive")
+    assert out["verdicts"]["risk_manager"]["ok"] is False and "contract_failure" not in out   # prose is not a typed answer
 
 
 @pytest.mark.unit
@@ -188,6 +190,7 @@ def test_without_a_verdict_the_portfolio_manager_is_told_to_set_the_stance_itsel
 
 
 @pytest.mark.unit
+@pytest.mark.usefixtures("free_text_contract")
 def test_the_free_text_fallback_reads_size_as_unknown_and_the_stance_from_the_text():
     out = create_portfolio_manager(_free_text("**Rating**: Sell\n**Risk Level**: Conservative\n\nExit."))(_state(risk_level="Neutral"))
     assert (out["final_rating"], out["final_position_size_pct"], out["final_risk_level"]) == ("Sell", None, "Conservative")

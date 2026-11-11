@@ -1,8 +1,10 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.turn import take_turn
+from tradingagents.agents.structured import analyst_verdict
 from tradingagents.agents.context import get_instrument_context_from_state, length_brief, report_style
 from tradingagents.agents.tools import get_indicators, get_stock_data, get_verified_market_snapshot
+from tradingagents.lessons import desk_lessons
 
 # The tools this analyst is offered; its tool node is built from the same tuple.
 TOOLS = (
@@ -75,7 +77,7 @@ Before writing the final report, call get_verified_market_snapshot for this tick
             ]
         )
 
-        prompt = prompt.partial(system_message=system_message)
+        prompt = prompt.partial(system_message=system_message + desk_lessons("Market Analyst", before="\n\n", after=""))
         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in TOOLS]))
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
@@ -85,6 +87,7 @@ Before writing the final report, call get_verified_market_snapshot for this tick
         return {
             "messages": [result],
             "market_report": report,
+            **analyst_verdict(llm, "Market Analyst", "market_analyst", report, instrument_context),
         }
 
     return market_analyst_node

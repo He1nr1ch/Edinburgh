@@ -4,8 +4,10 @@ Uses LangChain's ``with_structured_output`` so the LLM produces a typed
 ``PortfolioDecision`` directly, in a single call. Its rating is the run's
 ``final_rating``, and the decision is rendered to markdown as
 ``final_trade_decision`` for the memory log, CLI display and saved reports.
-When a provider does not expose structured output, the agent falls back to
-free-text generation and the rating is read from that text.
+When any agent's answer has not met its contract (its own included), no call
+is made: the decision says which agent failed and the rating is REVIEW. Under
+the ``contract_fallback: free_text`` opt-out the agent answers in prose
+instead and the rating is read from that text.
 """
 
 from __future__ import annotations
@@ -15,10 +17,10 @@ from tradingagents.agents.context import (
     get_instrument_context_from_state,
     get_portfolio_context_from_state,
 )
-from tradingagents.agents.rating import parse_rating, parse_risk_level
+from tradingagents.agents.rating import RATING_REVIEW, parse_rating, parse_risk_level
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.lessons import desk_lessons
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, failed_upstream, settle
 
 
 def create_portfolio_manager(llm):
@@ -30,6 +32,9 @@ def create_portfolio_manager(llm):
 
         history = state["risk_debate_state"]["history"]
         risk_debate_state = state["risk_debate_state"]
+        if failed_upstream(state):
+            # An earlier agent gave no valid answer: there is nothing sound to decide on.
+            return _closed(state, failed_upstream(state))
         research_plan = state["investment_plan"]
         trader_plan = state["trader_investment_plan"]
         risk_assessment = (state.get("risk_assessment") or "").strip()
@@ -96,7 +101,10 @@ Write these sections, in this order, starting with the rating on its own line:
 
         # The typed rating is the decision; the rendered text only carries it.
         # Read back from text, a rating the thesis quotes could replace it.
-        decision = invoke_structured(structured_llm, prompt, "Portfolio Manager")
+        outcome = settle(structured_llm, llm, prompt, "Portfolio Manager")
+        decision = outcome.result
+        if outcome.closed:
+            return {**_closed(state, f"{outcome.verdict.agent}: {outcome.verdict.error}"), **outcome.update("portfolio_manager")}
         if decision is not None:
             final_trade_decision = render_pm_decision(decision)
             final_rating = decision.rating.value
@@ -105,7 +113,7 @@ Write these sections, in this order, starting with the rating on its own line:
             final_risk_level = (decision.risk_level.value if decision.risk_level
                                 else state.get("risk_level") or parse_risk_level(""))
         else:
-            final_trade_decision = llm.invoke(prompt).content
+            final_trade_decision = outcome.text
             final_rating = parse_rating(final_trade_decision)
             position_size = None
             final_risk_level = parse_risk_level(final_trade_decision, default=state.get("risk_level") or parse_risk_level(""))
@@ -128,6 +136,26 @@ Write these sections, in this order, starting with the rating on its own line:
             "final_rating": final_rating,
             "final_position_size_pct": position_size,
             "final_risk_level": final_risk_level,
+            **outcome.update("portfolio_manager"),
         }
 
     return portfolio_manager_node
+
+
+def _closed(state, failure: str) -> dict:
+    """The run's end when a contract was not met: no rating, no size, and the reason in the decision."""
+    debate = dict(state["risk_debate_state"])
+    debate["latest_speaker"] = "Judge"
+    return {
+        "risk_debate_state": debate,
+        "final_trade_decision": (
+            f"**Rating**: {RATING_REVIEW}\n\n"
+            f"**Reason**: No call was made. An agent's answer did not meet its contract after a corrected "
+            f"retry, so the run was closed rather than decided on prose nobody could check.\n\n"
+            f"**Failed**: {failure}"
+        ),
+        "final_rating": RATING_REVIEW,
+        "final_position_size_pct": None,
+        "final_risk_level": RATING_REVIEW,
+        "contract_failure": failure,
+    }

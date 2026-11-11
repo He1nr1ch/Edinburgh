@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 _agent: contextvars.ContextVar[str] = contextvars.ContextVar("usage_agent", default="")
 _ticker: contextvars.ContextVar[str] = contextvars.ContextVar("usage_ticker", default="")
 _run_id: contextvars.ContextVar[str] = contextvars.ContextVar("usage_run_id", default="")
+_capture: contextvars.ContextVar[list | None] = contextvars.ContextVar("usage_capture", default=None)
 _HOST = socket.gethostname()
 
 # LangGraph's inner nodes, whose outer node names the agent.
@@ -48,6 +49,17 @@ def as_agent(name: str):
         yield
     finally:
         _agent.reset(token)
+
+
+@contextmanager
+def capture():
+    """Collect the records of the model calls made inside the block, for the caller to stamp its answer with."""
+    records: list[dict] = []
+    token = _capture.set(records)
+    try:
+        yield records
+    finally:
+        _capture.reset(token)
 
 
 def set_run(ticker: str | None = None, run_id: str | None = None) -> None:
@@ -130,6 +142,9 @@ def record_response(response, model: str, config: dict | None = None) -> dict | 
 
 def record(rec: dict) -> None:
     tally.add(rec)
+    collected = _capture.get()
+    if collected is not None:
+        collected.append(rec)
     try:
         folder = usage_dir()
         folder.mkdir(parents=True, exist_ok=True)

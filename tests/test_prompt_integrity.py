@@ -12,6 +12,8 @@ import importlib
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("free_text_contract")   # the fakes here answer in prose
+
 ANALYSTS = ["market_analyst", "news_analyst", "fundamentals_analyst"]
 
 

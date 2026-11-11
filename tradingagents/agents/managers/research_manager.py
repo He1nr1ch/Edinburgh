@@ -8,7 +8,7 @@ from tradingagents.agents.schemas import ResearchPlan, render_research_plan
 from tradingagents.agents.structured import (
     NO_EXTERNAL_TOOLS,
     bind_structured,
-    invoke_structured_or_freetext,
+    settle,
 )
 
 
@@ -55,13 +55,8 @@ Write these sections, in this order, starting with the recommendation on its own
 
 {desk_lessons("Research Manager")}{brevity}{NO_EXTERNAL_TOOLS}"""
 
-        investment_plan = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            prompt,
-            render_research_plan,
-            "Research Manager",
-        )
+        outcome = settle(structured_llm, llm, prompt, "Research Manager")
+        investment_plan = outcome.markdown(render_research_plan)
 
         new_investment_debate_state = {
             "history": investment_debate_state.get("history", ""),
@@ -74,6 +69,7 @@ Write these sections, in this order, starting with the recommendation on its own
         return {
             "investment_debate_state": new_investment_debate_state,
             "investment_plan": investment_plan,
+            **outcome.update("research_manager"),
         }
 
     return research_manager_node

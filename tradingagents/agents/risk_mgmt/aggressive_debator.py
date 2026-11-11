@@ -5,9 +5,13 @@ from tradingagents.agents.context import (
     opponent_argument_or_opening,
     report_or_absent,
 )
+from tradingagents.agents.schemas import DebateArgument
+from tradingagents.agents.structured import bind_structured, settle
 
 
 def create_aggressive_debator(llm):
+    structured_llm = bind_structured(llm, DebateArgument, "Aggressive Analyst")
+
     def aggressive_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -43,9 +47,9 @@ Here is the current conversation history: {history} Here are the last arguments 
 
 Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.{length_brief("argument", before=" ")}"""
 
-        response = llm.invoke(prompt)
+        outcome = settle(structured_llm, llm, prompt, "Aggressive Analyst", call="Aggressive")
 
-        argument = f"Aggressive Analyst: {response.content}"
+        argument = f"Aggressive Analyst: {outcome.markdown(lambda a: a.argument)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,
@@ -61,6 +65,6 @@ Engage actively by addressing any specific concerns raised, refuting the weaknes
             "count": risk_debate_state["count"] + 1,
         }
 
-        return {"risk_debate_state": new_risk_debate_state}
+        return {"risk_debate_state": new_risk_debate_state, **outcome.update("aggressive_analyst")}
 
     return aggressive_node

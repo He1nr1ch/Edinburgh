@@ -14,7 +14,7 @@ from tradingagents.lessons import desk_lessons
 from tradingagents.agents.structured import (
     NO_EXTERNAL_TOOLS,
     bind_structured,
-    invoke_structured_or_freetext,
+    settle,
 )
 
 
@@ -88,17 +88,13 @@ def create_trader(llm):
             },
         ]
 
-        trader_plan = invoke_structured_or_freetext(
-            structured_llm,
-            llm,
-            messages,
-            render_trader_proposal,
-            "Trader",
-        )
+        outcome = settle(structured_llm, llm, messages, "Trader")
+        trader_plan = outcome.markdown(render_trader_proposal)
 
         return {
             "messages": [AIMessage(content=trader_plan)],
             "trader_investment_plan": trader_plan,
+            **outcome.update("trader"),
         }
 
     return trader_node

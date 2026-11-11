@@ -189,20 +189,21 @@ def _structured_trader_llm(captured: dict, proposal: TraderProposal | None = Non
 
 
 @pytest.mark.unit
-def test_invoke_structured_falls_back_when_result_is_none():
+@pytest.mark.usefixtures("free_text_contract")
+def test_settle_falls_back_when_result_is_none():
     # A thinking model can answer in plain text, leaving the parser with None.
-    # That must fall back to free text, not crash on render(None) (#1051).
-    from tradingagents.agents.structured import invoke_structured_or_freetext
+    # Under the free-text opt-out that must fall back to free text, not crash
+    # on render(None) (#1051).
+    from tradingagents.agents.structured import settle
 
     structured = MagicMock()
     structured.invoke.return_value = None
     plain = MagicMock()
     plain.invoke.return_value = MagicMock(content="FREETEXT")
 
-    out = invoke_structured_or_freetext(
-        structured, plain, "prompt", render=lambda r: r.rating, agent_name="t"
-    )
-    assert out == "FREETEXT"
+    outcome = settle(structured, plain, "prompt", "t")
+    assert outcome.markdown(lambda r: r.rating) == "FREETEXT" and not outcome.closed
+    assert outcome.verdict.ok is False and outcome.verdict.attempts == 2
     plain.invoke.assert_called_once()
 
 
@@ -261,6 +262,7 @@ class TestTraderAgent:
         assert "Ground concrete price levels" not in text
         assert "Proposed Investment Plan" in text  # still present
 
+    @pytest.mark.usefixtures("free_text_contract")
     def test_falls_back_to_freetext_when_structured_unavailable(self):
         plain_response = (
             "**Action**: Sell\n\nGuidance cut hits margins.\n\n"
@@ -335,6 +337,7 @@ class TestResearchManagerAgent:
         for tier in ("Buy", "Overweight", "Hold", "Underweight", "Sell"):
             assert f"**{tier}**" in prompt, f"missing {tier} in prompt"
 
+    @pytest.mark.usefixtures("free_text_contract")
     def test_falls_back_to_freetext_when_structured_unavailable(self):
         plain_response = "**Recommendation**: Sell\n\n**Rationale**: ...\n\n**Strategic Actions**: ..."
         llm = MagicMock()

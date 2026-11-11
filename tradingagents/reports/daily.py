@@ -5,7 +5,7 @@ positions snapshot, the transactions with their results, the Watcher's
 findings, the book, the sweep's coverage, the feedback scorecard), has the
 deep-tier model review it in the voice of the desk's reflections, and saves
 ``reports/daily/<date>.md`` and ``.json``. The review's lessons go to the
-lessons store, where the deciding agents and the Watcher read them before
+lessons store, where every agent and the Watcher read them before
 their next call. ``tradingagents report --date`` runs it by hand.
 """
 
@@ -26,7 +26,8 @@ from tradingagents.lessons import AGENTS, Lessons
 
 logger = logging.getLogger(__name__)
 
-AgentName = Literal["Market Analyst", "News Analyst", "Fundamentals Analyst", "Research Manager", "Trader",
+AgentName = Literal["Market Analyst", "News Analyst", "Fundamentals Analyst", "Bull Researcher", "Bear Researcher",
+                    "Research Manager", "Trader",
                     "Risk Manager", "Portfolio Manager", "Watcher", "Desk"]
 
 
@@ -195,7 +196,8 @@ def _facts_text(f: dict) -> str:
 def _prompt(facts: dict, prior_lessons: str) -> str:
     return (
         "You are the desk's end-of-day reviewer on a long/short equity desk run by agents: three analysts "
-        "(Market, News, Fundamentals), a Research Manager who settles the bull/bear debate, a Trader who sets "
+        "(Market, News, Fundamentals), a Bull and a Bear Researcher who argue each side from the analysts' reports, "
+        "a Research Manager who settles their debate, a Trader who sets "
         "entry and stop, a Risk Manager who sets the stance, the position ceiling and the stop, a Portfolio "
         "Manager who sets the rating, size and target, and a Watcher that guards positions through the day "
         "(stop and target guards, news judged against the desk's case, replacements from a scored bench). "

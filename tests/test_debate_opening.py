@@ -19,6 +19,8 @@ from tradingagents.agents.risk_mgmt.aggressive_debator import create_aggressive_
 from tradingagents.agents.risk_mgmt.conservative_debator import create_conservative_debator
 from tradingagents.agents.risk_mgmt.neutral_debator import create_neutral_debator
 
+pytestmark = pytest.mark.usefixtures("free_text_contract")   # the fakes here answer in prose
+
 _REPORTS = {
     "company_of_interest": "AAPL", "asset_type": "stock",
     "market_report": "m", "sentiment_report": "s",

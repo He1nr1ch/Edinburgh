@@ -716,6 +716,7 @@ class TestPortfolioManagerInjection:
         assert "**Price Target**: 215.0" in md
         assert "**Time Horizon**: 3-6 months" in md
 
+    @pytest.mark.usefixtures("free_text_contract")
     def test_pm_falls_back_to_freetext_when_structured_unavailable(self):
         """If a provider does not support with_structured_output, the agent
         falls back to a plain invoke and returns whatever prose the model

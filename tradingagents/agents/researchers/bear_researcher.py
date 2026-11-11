@@ -4,9 +4,14 @@ from tradingagents.agents.context import (
     opponent_argument_or_opening,
     report_or_absent,
 )
+from tradingagents.agents.schemas import DebateArgument
+from tradingagents.agents.structured import bind_structured, settle
+from tradingagents.lessons import desk_lessons
 
 
 def create_bear_researcher(llm):
+    structured_llm = bind_structured(llm, DebateArgument, "Bear Researcher")
+
     def bear_node(state) -> dict:
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
@@ -46,11 +51,11 @@ Latest world affairs news: {news_report}
 Conversation history of the debate: {history}
 Last bull argument: {current_response}
 Use this information to deliver a compelling bear argument, refute the bull's claims, and engage in a dynamic debate that demonstrates the risks and weaknesses of investing in the {target_label}.
-{length_brief("argument")}"""
+{desk_lessons("Bear Researcher")}{length_brief("argument")}"""
 
-        response = llm.invoke(prompt)
+        outcome = settle(structured_llm, llm, prompt, "Bear Researcher", call="Bearish")
 
-        argument = f"Bear Analyst: {response.content}"
+        argument = f"Bear Analyst: {outcome.markdown(lambda a: a.argument)}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,
@@ -60,6 +65,6 @@ Use this information to deliver a compelling bear argument, refute the bull's cl
             "count": investment_debate_state["count"] + 1,
         }
 
-        return {"investment_debate_state": new_investment_debate_state}
+        return {"investment_debate_state": new_investment_debate_state, **outcome.update("bear_researcher")}
 
     return bear_node

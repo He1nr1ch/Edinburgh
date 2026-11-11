@@ -1,12 +1,14 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts.turn import take_turn
+from tradingagents.agents.structured import analyst_verdict
 from tradingagents.agents.context import get_instrument_context_from_state, length_brief, report_style
 from tradingagents.agents.tools import (
     get_balance_sheet,
     get_cashflow,
     get_income_statement,
 )
+from tradingagents.lessons import desk_lessons
 
 # The tools this analyst is offered; its tool node is built from the same tuple.
 TOOLS = (
@@ -49,7 +51,7 @@ def create_fundamentals_analyst(llm):
             ]
         )
 
-        prompt = prompt.partial(system_message=system_message)
+        prompt = prompt.partial(system_message=system_message + desk_lessons("Fundamentals Analyst", before="\n\n", after=""))
         prompt = prompt.partial(tool_names=", ".join([tool.name for tool in TOOLS]))
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
@@ -59,6 +61,7 @@ def create_fundamentals_analyst(llm):
         return {
             "messages": [result],
             "fundamentals_report": report,
+            **analyst_verdict(llm, "Fundamentals Analyst", "fundamentals_analyst", report, instrument_context),
         }
 
     return fundamentals_analyst_node

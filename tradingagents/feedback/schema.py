@@ -3,6 +3,7 @@
 decisions      one row per run: the typed calls every stage made
 outcomes       one row per settled decision: what the market did over the window
 agent_scores   one row per agent per settled decision: its call and whether it was right
+agent_verdicts one row per agent per run: its typed answer, with the model and the time it took
 """
 
 from __future__ import annotations
@@ -88,4 +89,23 @@ agent_scores = Table(
     Column("correct", Boolean),                                  # NULL when the call cannot be judged
     Column("score", Float),                                      # the return its call earned, signed
     UniqueConstraint("decision_id", "agent", name="uq_agent_scores_decision_agent"),
+)
+
+agent_verdicts = Table(
+    "agent_verdicts", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("decision_id", Integer, ForeignKey("decisions.id", ondelete="CASCADE"), nullable=False),
+    Column("agent", String(32), nullable=False),                 # market_analyst | bull_researcher | trader | ...
+    Column("ok", Boolean, nullable=False),                       # False: the answer did not meet its contract
+    Column("call", String(16)),                                  # Buy / Bullish / Aggressive ...; NULL when not ok
+    Column("confidence", Float),                                 # 0..1, as the agent stated it
+    Column("thesis", Text),
+    Column("evidence", Text),                                    # JSON list of the facts it cited
+    Column("model", String(128)),
+    Column("latency_s", Float),
+    Column("tokens_in", Integer),
+    Column("tokens_out", Integer),
+    Column("attempts", Integer),
+    Column("error", Text),
+    UniqueConstraint("decision_id", "agent", name="uq_agent_verdicts_decision_agent"),
 )

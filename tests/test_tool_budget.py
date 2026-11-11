@@ -10,6 +10,8 @@ from tradingagents.dataflows import router
 from tradingagents.dataflows.vendors.alpaca import market as alpaca_market
 from tradingagents.graph import setup
 
+pytestmark = pytest.mark.usefixtures("free_text_contract")   # the fakes here answer in prose
+
 
 @pytest.mark.unit
 def test_a_long_tool_result_is_cut_and_marked():

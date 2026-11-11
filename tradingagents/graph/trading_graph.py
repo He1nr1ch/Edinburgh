@@ -502,6 +502,8 @@ class TradingAgentsGraph:
             "final_position_size_pct": final_state.get("final_position_size_pct"),
             "final_risk_level": final_state.get("final_risk_level", ""),
             "final_rating": run_rating(final_state),
+            "verdicts": final_state.get("verdicts") or {},
+            "contract_failure": final_state.get("contract_failure") or "",
             "run_settings": self.run_settings(),
         }
 

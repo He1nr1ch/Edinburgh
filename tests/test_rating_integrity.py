@@ -177,6 +177,7 @@ def test_the_cli_says_when_a_run_produced_no_usable_rating(monkeypatch, tmp_path
     ("tradingagents.agents.managers.risk_manager", "create_risk_manager", "Risk Level"),
     ("tradingagents.agents.trader.trader", "create_trader", "Action"),
 ])
+@pytest.mark.usefixtures("free_text_contract")
 def test_a_decision_prompt_states_the_shape_of_its_answer(module, factory, must_name):
     """The field descriptions live in the schema, which a provider without
     structured output never sees. Without the format in the prompt body, the
