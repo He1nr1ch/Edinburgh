@@ -27,6 +27,7 @@ from tradingagents.dataflows.date_window import get_current_date
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.memory import TradingMemoryLog
+from tradingagents import usage
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,7 @@ def run_backtest(
     # run_id becomes a path segment, so it is validated like a ticker: an
     # absolute or dotted value would otherwise place the run outside results_dir.
     run_id = safe_ticker_component(run_id or datetime.now().strftime("%Y%m%d_%H%M%S"))
+    usage.set_run(run_id=run_id)
     run_dir = Path(config["results_dir"]) / "backtest" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     run_config = {**config, "results_dir": str(run_dir),

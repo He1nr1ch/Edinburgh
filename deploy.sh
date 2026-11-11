@@ -19,6 +19,10 @@ WEB_PORT=8010               # Dublin's logbook has 8000
 # (set OLLAMA_BASE_URL in it to PAIR's proxy on Colossus, http://127.0.0.1:11434)
 ENV_FILE="/home/heinrich/edinburgh/.env"
 DATA_DIR="/home/heinrich/edinburgh/data"
+# PAIR's config folder on Colossus: its workload history names the node that
+# served each call, which the positions page shows. Mounted read-only into
+# the web container when it exists.
+PAIR_DIR="/home/heinrich/.config/Nvidia Corporation/Personal AI Router"
 KEEP_IMAGES=3               # builds of $IMAGE kept on each side; older ones go
 GIT_SHA=$(git rev-parse --short HEAD)
 # Build version, Dublin's scheme: major . year . month . day . hour-of-build,
@@ -85,11 +89,18 @@ docker run -d --name $CONTAINER --restart unless-stopped \\
 # The positions page: the same image, read-only on the same data folder.
 docker stop $WEB_CONTAINER 2>/dev/null || true
 docker rm $WEB_CONTAINER 2>/dev/null || true
+# The folder's name has spaces: an array keeps it one argument on Colossus.
+PAIR_ARGS=()
+if [[ -f "$PAIR_DIR/workloads-history.json" ]]; then
+    PAIR_ARGS=(-v "$PAIR_DIR:/home/appuser/pair:ro,z" -e TRADINGAGENTS_PAIR_DIR=/home/appuser/pair)
+    echo "PAIR history mounted from $PAIR_DIR"
+fi
 docker run -d --name $WEB_CONTAINER --restart unless-stopped \\
     --network host \\
     --log-opt max-size=10m --log-opt max-file=5 \\
     --env-file $ENV_FILE \\
     -v $DATA_DIR:/home/appuser/.tradingagents:ro,z \\
+    "\${PAIR_ARGS[@]}" \\
     $IMAGE:$BUILD_VERSION web --port $WEB_PORT
 echo "--- Last 20 log lines ---"
 sleep 3

@@ -107,6 +107,14 @@ def gather(config: dict, day: str) -> dict:
 
     sweep_path = Path(config.get("sweep_state_path", ""))
     sweep = json.loads(sweep_path.read_text(encoding="utf-8")) if sweep_path.is_file() else {}
+    from tradingagents import usage as usage_log
+    from tradingagents.sweep import progress as sweep_progress
+
+    try:
+        spend = usage_log.summarize(usage_log.read_day(day, config))
+    except Exception as exc:
+        logger.warning("The usage log could not be read: %s", exc)
+        spend = {}
     decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{day}.json")))
 
     try:
@@ -127,7 +135,9 @@ def gather(config: dict, day: str) -> dict:
         "findings": findings,
         "book": book_rows, "book_held": sum(1 for r in book_rows if r["ticker"] in held),
         "sweep": {"cycle": sweep.get("cycle"), "date": sweep.get("date"), "queued": len(sweep.get("queue", [])),
-                  "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today},
+                  "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today,
+                  "progress": sweep_progress(sweep)},
+        "usage": {"total": spend.get("total", {}), "by_agent": spend.get("by_agent", {}), "by_host": spend.get("by_host", {})},
         "scorecard": card,
     }
 
@@ -165,7 +175,14 @@ def _facts_text(f: dict) -> str:
     s = f["sweep"]
     if s.get("cycle"):
         lines.append(f"Sweep: cycle {s['cycle']} on {s['date']}'s close, {s['analysed_this_cycle']} analysed this cycle, "
-                     f"{s['queued']} queued; {s['decided_today']} decisions dated today")
+                     f"{s['queued']} queued; {s['decided_today']} decisions dated today"
+                     + (f"; pace {s['progress']['minutes_per_ticker']:.1f} min per ticker" if (s.get('progress') or {}).get('minutes_per_ticker') else ""))
+    u = f.get("usage") or {}
+    if (u.get("total") or {}).get("calls"):
+        from tradingagents.usage import describe as describe_usage
+
+        lines.append("Model usage today: " + describe_usage(u) + "; by agent (minutes): "
+                     + ", ".join(f"{a} {r['seconds'] / 60:.0f}" for a, r in list(u["by_agent"].items())[:9]))
     if f["scorecard"]:
         lines.append("Feedback scorecard over settled decisions (agent: right/judged, mean return on its calls):")
         for agent, st in f["scorecard"].items():
@@ -259,7 +276,17 @@ def render(facts: dict, rev: DailyReview | None) -> str:
     s = f["sweep"]
     if s.get("cycle"):
         out += ["## Sweep", f"Cycle {s['cycle']} on {s['date']}'s close: {s['analysed_this_cycle']} analysed this cycle, "
-                f"{s['queued']} queued, {s['decided_today']} decisions dated {f['day']}.", ""]
+                f"{s['queued']} queued, {s['decided_today']} decisions dated {f['day']}."
+                + (f" Pace {s['progress']['minutes_per_ticker']:.1f} min per ticker." if (s.get('progress') or {}).get('minutes_per_ticker') else ""), ""]
+    u = f.get("usage") or {}
+    if (u.get("total") or {}).get("calls"):
+        from tradingagents.usage import describe as describe_usage
+
+        out += ["## Model usage", describe_usage(u) + ".", "", "| Agent | Calls | Tokens in | Tokens out | Minutes |", "|---|---:|---:|---:|---:|"]
+        out += [f"| {a} | {r['calls']} | {r['tokens_in']:,} | {r['tokens_out']:,} | {r['seconds'] / 60:.0f} |" for a, r in u["by_agent"].items()]
+        if len(u.get("by_host") or {}) > 1:
+            out.append("\nBy host: " + ", ".join(f"{h} {r['seconds'] / 3600:.1f} h" for h, r in u["by_host"].items()))
+        out.append("")
     if f["scorecard"]:
         out += ["## Feedback scorecard (settled decisions)", "| Agent | Right / judged | Mean return |", "|---|---:|---:|"]
         for agent, st in f["scorecard"].items():

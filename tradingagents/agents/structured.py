@@ -23,6 +23,7 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
+from tradingagents import usage
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,8 @@ def invoke_structured(structured_llm: Any | None, prompt: Any, agent_name: str) 
     if structured_llm is None:
         return None
     try:
-        result = structured_llm.invoke(prompt)
+        with usage.as_agent(agent_name):
+            result = structured_llm.invoke(prompt)
         if result is None:
             # A thinking model can answer in plain text instead of calling
             # the tool, leaving the parser with nothing to return. Treat it
@@ -92,4 +94,5 @@ def invoke_structured_or_freetext(
     result = invoke_structured(structured_llm, prompt, agent_name)
     if result is not None:
         return render(result)
-    return plain_llm.invoke(prompt).content
+    with usage.as_agent(agent_name):
+        return plain_llm.invoke(prompt).content

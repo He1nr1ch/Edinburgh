@@ -16,7 +16,10 @@ short, so the change of parallelism at the open and the close takes effect
 within the hour without stopping a ticker midway.
 
 State lives in ``sweep_state.json``: the cycle's date, the queue still to
-analyse, the round in flight, so a restart resumes where it was.
+analyse, the round in flight and the rounds finished, so a restart resumes
+where it was and anything that reads the file (the positions page, the
+daily report, ``/health``) can say how far the cycle has come and when it
+should end: see :func:`progress`.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from tradingagents.daily import ensure_watchlist, order_tickers, watchlist_ticke
 logger = logging.getLogger(__name__)
 
 NICE = 10       # the sweep's processes yield the CPU to the worker
+PACE_ROUNDS = 6  # how many finished rounds the pace (and the finish estimate) is taken from
 
 
 @dataclass
@@ -43,6 +47,8 @@ class Round:
     run_ids: list[str]
     tickers: list[str]
     started: float                      # time.monotonic()
+    parts: int = 1
+    started_at: str = ""                # wall clock, for the state file
     procs: list = field(default_factory=list)   # (run_id, Popen, log handle); empty after a restart
 
 
@@ -57,6 +63,7 @@ class Sweep:
         self.round_no = 0
         self.round: Round | None = None
         self.analysed_this_cycle = 0
+        self.rounds: list[dict] = []     # finished rounds this cycle: round, tickers, parts, minutes, finished
         self._load()
 
     # --- state -----------------------------------------------------------
@@ -71,6 +78,7 @@ class Sweep:
         self.date, self.cycle, self.queue = data.get("date", ""), int(data.get("cycle", 0)), list(data.get("queue", []))
         self.round_no = int(data.get("round_no", 0))
         self.analysed_this_cycle = int(data.get("analysed_this_cycle", 0))
+        self.rounds = list(data.get("rounds", []))
         if data.get("round"):
             # A round a restart interrupted: its processes are gone. The tickers
             # go back to the front of the queue; the cells they finished are
@@ -83,8 +91,9 @@ class Sweep:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"date": self.date, "cycle": self.cycle, "queue": self.queue, "round_no": self.round_no,
-                "analysed_this_cycle": self.analysed_this_cycle,
-                "round": {"run_ids": self.round.run_ids, "tickers": self.round.tickers} if self.round else None,
+                "analysed_this_cycle": self.analysed_this_cycle, "rounds": self.rounds[-50:],
+                "round": {"run_ids": self.round.run_ids, "tickers": self.round.tickers, "parts": self.round.parts,
+                          "started": self.round.started_at} if self.round else None,
                 "saved": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -114,6 +123,7 @@ class Sweep:
     def _start_cycle(self, date: str, holdings: list[str], last_analysed: dict[str, str]) -> None:
         watchlist = watchlist_tickers(ensure_watchlist(self.config))
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
+        self.rounds = []
         self.queue = order_tickers(watchlist, holdings, last_analysed, date)
         logger.info("Sweep cycle %d on %s's close: %d held positions first, then %d of the watchlist.",
                     self.cycle, date, len(holdings), len(self.queue) - len(holdings))
@@ -126,7 +136,7 @@ class Sweep:
         self.round_no += 1
         tag = f"c{self.cycle}r{self.round_no}"
         run_ids = [f"sp500_{self.date.replace('-', '')}_{tag}_{chr(97 + i)}" for i in range(parts)]
-        self.round = Round(run_ids, tickers, time.monotonic())
+        self.round = Round(run_ids, tickers, time.monotonic(), parts, datetime.now().astimezone().isoformat(timespec="seconds"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         for i, run_id in enumerate(run_ids):
             slice_ = tickers[i::parts]
@@ -159,10 +169,15 @@ class Sweep:
         for _, _, log in r.procs:
             log.close()
         self.analysed_this_cycle += len(r.tickers)
-        logger.info("Sweep round %s done: %d tickers in %d min%s", r.run_ids[0].rsplit("_", 1)[0].rsplit("_", 1)[-1],
-                    len(r.tickers), int(seconds // 60), f"; parts exited non-zero: {failed}" if failed else "")
+        tag = r.run_ids[0].rsplit("_", 1)[0].rsplit("_", 1)[-1]
+        self.rounds.append({"round": tag, "tickers": len(r.tickers), "parts": r.parts, "minutes": round(seconds / 60, 1),
+                            "finished": datetime.now().astimezone().isoformat(timespec="seconds")})
         self.round = None
         self._save()
+        p = self.progress()
+        logger.info("Sweep round %s done: %d tickers in %d min%s; %d of %d analysed this cycle, %d queued%s", tag,
+                    len(r.tickers), int(seconds // 60), f"; parts exited non-zero: {failed}" if failed else "",
+                    p["analysed"], p["total"], p["queued"], f", about {describe_eta(p)} to go" if p.get("eta_hours") else "")
 
     def stop(self) -> None:
         """Stop the round in flight (a shutdown); its tickers return to the queue on the next start."""
@@ -173,7 +188,69 @@ class Sweep:
                 proc.terminate()
         self._save()
 
+    def progress(self) -> dict:
+        return progress(json.loads(self.path.read_text(encoding="utf-8")) if self.path.is_file() else {})
+
     def status(self) -> str:
         in_flight = f", round {self.round_no} running ({len(self.round.tickers)} tickers)" if self.round else ""
         return (f"cycle {self.cycle} on {self.date or '-'}: {self.analysed_this_cycle} analysed, "
                 f"{len(self.queue)} queued{in_flight}")
+
+
+def progress(state: dict, now: datetime | None = None) -> dict:
+    """How far the cycle has come, from the state file: counts, the pace of recent rounds, a finish estimate.
+
+    The pace is minutes per ticker over the last few finished rounds, so a
+    change of parallelism at the open or the close shows within an hour.
+    """
+    if not state:
+        return {}
+    in_flight = len((state.get("round") or {}).get("tickers", []))
+    analysed, queued = int(state.get("analysed_this_cycle", 0)), len(state.get("queue", []))
+    recent = [r for r in state.get("rounds", [])[-PACE_ROUNDS:] if r.get("tickers") and r.get("minutes")]
+    out = {"cycle": state.get("cycle"), "date": state.get("date"), "analysed": analysed, "in_flight": in_flight,
+           "queued": queued, "total": analysed + in_flight + queued, "round": state.get("round_no"),
+           "round_started": (state.get("round") or {}).get("started"), "parts": (state.get("round") or {}).get("parts"),
+           "rounds_done": len(state.get("rounds", [])), "saved": state.get("saved")}
+    if recent:
+        minutes_per_ticker = sum(r["minutes"] for r in recent) / sum(r["tickers"] for r in recent)
+        out["minutes_per_round"] = round(sum(r["minutes"] for r in recent) / len(recent), 1)
+        out["tickers_per_round"] = round(sum(r["tickers"] for r in recent) / len(recent), 1)
+        out["minutes_per_ticker"] = round(minutes_per_ticker, 2)
+        remaining = queued + in_flight
+        elapsed = 0.0
+        started = out["round_started"]
+        if started and in_flight:
+            try:
+                elapsed = max(0.0, ((now or datetime.now().astimezone()) - datetime.fromisoformat(started)).total_seconds() / 60)
+            except ValueError:
+                elapsed = 0.0
+        out["eta_hours"] = round(max(0.0, remaining * minutes_per_ticker - elapsed) / 60, 1)
+        out["pct"] = round(100 * analysed / out["total"], 1) if out["total"] else 0.0
+    return out
+
+
+def describe_eta(p: dict) -> str:
+    hours = p.get("eta_hours")
+    if hours is None:
+        return ""
+    if hours < 1:
+        return f"{int(round(hours * 60))} min"
+    if hours < 48:
+        return f"{hours:.1f} h"
+    return f"{hours / 24:.1f} days"
+
+
+def describe(p: dict) -> str:
+    """One line: 'cycle 2 on 2026-11-10: 36 of 515 analysed (7%), 12 in flight, 467 queued, 43 min per round, about 29 h to go'."""
+    if not p:
+        return "no sweep yet"
+    text = f"cycle {p['cycle']} on {p['date']}: {p['analysed']} of {p['total']} analysed"
+    if "pct" in p:
+        text += f" ({p['pct']:.0f}%)"
+    text += f", {p['in_flight']} in flight, {p['queued']} queued"
+    if p.get("minutes_per_round"):
+        text += f", {p['minutes_per_round']:.0f} min per round of {p['tickers_per_round']:.0f}"
+    if p.get("eta_hours") is not None:
+        text += f", about {describe_eta(p)} to go"
+    return text

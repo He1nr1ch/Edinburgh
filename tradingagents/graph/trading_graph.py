@@ -24,6 +24,7 @@ from .checkpointer import checkpoint_step, clear_checkpoint, get_checkpointer, t
 from .conditional_logic import ConditionalLogic
 from .propagation import Propagator
 from .setup import GraphSetup
+from tradingagents import usage
 
 logger = logging.getLogger(__name__)
 
@@ -408,6 +409,7 @@ class TradingAgentsGraph:
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock",
                    checkpoint_thread_id: str | None = None, portfolio=None):
         """Execute the graph and write the resulting state to disk and memory log."""
+        usage.set_run(ticker=company_name)
         init_agent_state = self.create_run_state(company_name, trade_date, asset_type, portfolio)
         args = self.propagator.get_graph_args()
 

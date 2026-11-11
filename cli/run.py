@@ -33,6 +33,7 @@ from tradingagents.graph.analyst_execution import (
     build_analyst_execution_plan,
 )
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents import usage
 
 
 def _run_directory(config: dict, ticker: str, trade_date: str) -> Path:
@@ -114,6 +115,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     config = _build_run_config(selections, checkpoint)
 
     stats_handler = StatsCallbackHandler()
+    usage.tally.reset()
 
     # Normalize analyst selection to predefined order (selection is a 'set', order is fixed)
     selected_set = {analyst.value for analyst in selections["analysts"]}
@@ -418,6 +420,7 @@ def _save_timing(results_dir: Path, run_timer, analyst_tracker, stats_handler, s
     )
     timing["analysts"] = {k: round(v, 2) for k, v in analyst_tracker.wall_times().items()}
     timing["calls"] = stats_handler.get_stats()
+    timing["usage"] = usage.tally.snapshot()
     timing_file = results_dir / "timing.json"
     timing_file.write_text(json.dumps(timing, indent=2) + "\n", encoding="utf-8")
     return timing_file

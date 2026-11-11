@@ -500,6 +500,40 @@ def report(
 
 
 @app.command()
+def usage(
+    date: str = typer.Option(None, "--date", help="The day, YYYY-MM-DD (default today)"),
+):
+    """What the models cost that day: calls, tokens and model time, by agent, ticker and host."""
+    from datetime import datetime as _dt
+
+    from tradingagents import usage as _usage
+
+    day = date or _dt.now().strftime("%Y-%m-%d")
+    s = _usage.today_summary(DEFAULT_CONFIG, day)
+    console.print(f"{day}: {_usage.describe(s)}")
+    for group, label in (("by_agent", "agent"), ("by_host", "host"), ("by_model", "model")):
+        rows = s.get(group) or {}
+        if rows:
+            console.print(f"\n{label:22s} {'calls':>6s} {'tokens in':>11s} {'tokens out':>11s} {'minutes':>8s}")
+            for name, r in rows.items():
+                console.print(f"{name[:22]:22s} {r['calls']:6d} {r['tokens_in']:11,d} {r['tokens_out']:11,d} {r['seconds'] / 60:8.1f}")
+    tickers = s.get("by_ticker") or {}
+    if tickers:
+        dear = sorted(((k, v) for k, v in tickers.items() if k != "-"), key=lambda kv: -kv[1]["seconds"])[:10]
+        console.print("\nDearest tickers: " + ", ".join(f"{k} {v['seconds'] / 60:.0f} min" for k, v in dear))
+
+
+@app.command()
+def nodes(
+    hours: float = typer.Option(24, "--hours", help="The window, in hours back from now"),
+):
+    """Which PAIR node served the calls: from the router's own workload history."""
+    from tradingagents import pair
+
+    console.print(pair.render(pair.shares(hours, pair.pair_dir(DEFAULT_CONFIG))))
+
+
+@app.command()
 def snapshot():
     """Record today's open positions for the positions page's day-by-day view."""
     from pathlib import Path

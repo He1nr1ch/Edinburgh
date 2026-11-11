@@ -15,6 +15,8 @@ from typing import Any
 
 from langchain_ollama import ChatOllama
 
+from tradingagents import usage
+
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
 
@@ -52,7 +54,8 @@ class NormalizedChatOllama(ChatOllama):
 
     A prompt that fills most of the window is logged, and one that overflows it
     is reported as what it is, so the fix (a larger ``ollama_num_ctx``, or
-    shorter reports) is named instead of an opaque server error.
+    shorter reports) is named instead of an opaque server error. Every answered
+    call is recorded in the usage log (tokens, seconds, the agent that asked).
     """
 
     def invoke(self, input, config=None, **kwargs):
@@ -65,6 +68,7 @@ class NormalizedChatOllama(ChatOllama):
                     f"{self.model}; raise ollama_num_ctx (TRADINGAGENTS_OLLAMA_NUM_CTX) or shorten the reports."
                 ) from exc
             raise
+        usage.record_response(response, self.model, config)
         used = (getattr(response, "usage_metadata", None) or {}).get("input_tokens")
         if used and self.num_ctx and used > 0.8 * self.num_ctx:
             logger.warning("Prompt used %d of the %d-token context window on %s", used, self.num_ctx, self.model)

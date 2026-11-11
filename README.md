@@ -277,6 +277,27 @@ Manager and Portfolio Manager read the standing lessons addressed to them or to 
 the last week's daily ones for them, and the Watcher reads its own in its news judgment and its
 replacement choice. The page lists the reports and the lessons at `/reports`.
 
+## What the models cost, how far the sweep is, and which node did the work
+
+Every answered Ollama call is recorded (`usage.py`): the model, the agent that asked (the
+LangGraph node, or the name a structured caller such as the Watcher or a reviewer gives), the
+ticker and run under analysis, the tokens in and out and the seconds the server spent, one
+JSON-lines file per day in `logs/usage/`. `tradingagents usage [--date]` totals a day by agent,
+host and model and names the dearest tickers; a single run's `timing.json` carries its usage by
+agent; the daily report has a "Model usage" section; the positions page shows the day's calls,
+tokens and model hours.
+
+The sweep keeps its finished rounds in `sweep_state.json`, so the page's "Desk status" cards,
+`/health` and `/api/status` say how far the cycle has come (analysed, in flight, queued), the
+recent pace in minutes per round and per ticker, and when the cycle should end at that pace;
+the worker logs the same after every round.
+
+PAIR's proxy does not say which node served a call, but the router keeps that record itself:
+`workloads-history.json` in its config folder (`~/.config/Nvidia Corporation/Personal AI
+Router`), synced between the nodes. `tradingagents nodes [--hours 24]` tallies it by serving
+node and model (`pair.py`); the page shows the same table when the folder is readable
+(`TRADINGAGENTS_PAIR_DIR`; `deploy.sh` mounts it read-only into the web container on Colossus).
+
 ## LLM providers
 
 `ollama` (local or LAN, no key), `anthropic`, `openai`, or any OpenAI-compatible

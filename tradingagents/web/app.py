@@ -16,6 +16,7 @@ Local run: tradingagents web --port 8010
 from __future__ import annotations
 
 import html
+import json
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -222,11 +223,105 @@ def transactions_day(day: str):
     return _page(f"Transactions {day}", "\n".join(body))
 
 
+def _sweep_progress() -> dict:
+    from tradingagents.sweep import progress
+
+    path = Path(get_config().get("sweep_state_path") or "")
+    try:
+        return progress(json.loads(path.read_text(encoding="utf-8"))) if path.is_file() else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _usage_today() -> dict:
+    from tradingagents import usage
+
+    try:
+        return usage.today_summary(get_config(), data.now_text()[:10])
+    except Exception:
+        return {}
+
+
+def _nodes(hours: float = 24) -> dict:
+    from tradingagents import pair
+
+    try:
+        return pair.shares(hours, pair.pair_dir(get_config()))
+    except Exception:
+        return {}
+
+
+def _status_section() -> str:
+    """The desk's running state: the sweep's progress, the day's model spend, the PAIR nodes' shares."""
+    from tradingagents import sweep as sw
+    from tradingagents import usage
+
+    out = ['<h2>Desk status</h2>']
+    p = _sweep_progress()
+    cards = []
+    if p:
+        pct = f' ({p["pct"]:.0f}%)' if "pct" in p else ""
+        cards.append(('Sweep', f'{p["analysed"]} of {p["total"]}{pct}', f'cycle {p["cycle"]} on {p["date"]}'))
+        cards.append(('In flight', f'{p["in_flight"]}', f'round {p.get("round") or "-"}'
+                      + (f' on {p["parts"]} process(es)' if p.get("parts") else '')))
+        cards.append(('Queued', f'{p["queued"]}', ''))
+        if p.get("minutes_per_round"):
+            cards.append(('Pace', f'{p["minutes_per_round"]:.0f} min / round',
+                          f'{p["tickers_per_round"]:.0f} tickers, {p["minutes_per_ticker"]:.1f} min each'))
+        if p.get("eta_hours") is not None:
+            cards.append(('Cycle ends in', html.escape(sw.describe_eta(p)), 'at the recent pace'))
+    else:
+        cards.append(('Sweep', '—', 'no sweep state yet'))
+    u = _usage_today()
+    if u and u["total"]["calls"]:
+        t = u["total"]
+        cards.append(('Model calls today', f'{t["calls"]:,}', f'{t["tickers"]} ticker(s)'))
+        cards.append(('Tokens today', f'{(t["tokens_in"] + t["tokens_out"]) / 1e6:.1f} M',
+                      f'{t["tokens_in"] / 1e6:.1f} M in, {t["tokens_out"] / 1e6:.1f} M out'))
+        cards.append(('Model time today', f'{t["hours"]:.1f} h', 'server time over all nodes'))
+    out.append('<div class="cards">' + ''.join(
+        f'<div class="card"><div class="k">{html.escape(k)}</div><div class="v">{v}</div><div class="k">{html.escape(sub)}</div></div>'
+        for k, v, sub in cards) + '</div>')
+    if p and p.get("saved"):
+        out.append(f'<p class="meta">Sweep state saved {html.escape(p["saved"][:16].replace("T", " "))}'
+                   + (f' · round started {html.escape(p["round_started"][11:16])}' if p.get("round_started") else '') + '</p>')
+    if u and u["total"]["calls"]:
+        out.append('<details><summary class="meta">Model time by agent today</summary><div class="wrap"><table>'
+                   '<tr><th class="l">Agent</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th><th>Minutes</th></tr>')
+        for name, r in u["by_agent"].items():
+            out.append(f'<tr><td class="l">{html.escape(name)}</td><td>{r["calls"]}</td><td>{r["tokens_in"]:,}</td>'
+                       f'<td>{r["tokens_out"]:,}</td><td>{r["seconds"] / 60:.0f}</td></tr>')
+        out.append('</table></div></details>')
+    n = _nodes()
+    if n and n.get("calls"):
+        out.append(f'<h3 class="meta">PAIR nodes, last {n["hours"]:g} h: {n["calls"]:,} calls, {n["busy_hours"]:.1f} busy hours</h3>'
+                   '<div class="wrap"><table><tr><th class="l">Node</th><th>Calls</th><th>Share</th><th>Busy hours</th><th class="l">Models</th></tr>')
+        for node in n["nodes"]:
+            models = ", ".join(f'{m} {v["calls"]}' for m, v in node["models"].items())
+            out.append(f'<tr><td class="l"><b>{html.escape(node["node"])}</b></td><td>{node["calls"]:,}</td><td>{node["share_pct"]:.0f}%</td>'
+                       f'<td>{node["busy_hours"]:.1f}</td><td class="l">{html.escape(models)}</td></tr>')
+        out.append('</table></div>')
+    return "\n".join(out)
+
+
 @app.get("/health")
 def health():
     decisions = data.find_decisions(_results_dir())
+    from tradingagents import sweep as sw
+
+    p = _sweep_progress()
     return {"ok": True, "build": build.BUILD_VERSION, "git_sha": build.git_sha(), "decisions": len(decisions),
-            "results_dir": str(_results_dir())}
+            "results_dir": str(_results_dir()), "sweep": p, "sweep_text": sw.describe(p),
+            "usage_today": (_usage_today() or {}).get("total", {})}
+
+
+@app.get("/api/status")
+def api_status():
+    from tradingagents import sweep as sw
+
+    p = _sweep_progress()
+    return {"as_of": data.now_text(), "sweep": p, "sweep_text": sw.describe(p), "usage_today": _usage_today(),
+            "nodes": _nodes()}
 
 
 @app.get("/api/positions")
@@ -279,6 +374,7 @@ def index():
             f'<a href="/days">past days</a> · <a href="/transactions">transactions</a> · <a href="/reports">reports</a></p>']
     body.append("<h2>Open positions</h2>")
     body.append(_positions_table(rows) if rows else "<p>No open positions.</p>")
+    body.append(_status_section())
 
     today_rows = _transactions_rows(data.now_text()[:10])
     body.append(f'<h2>Today\'s transactions <span class="meta">· <a href="/transactions">all days</a></span></h2>')
