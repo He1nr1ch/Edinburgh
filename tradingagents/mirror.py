@@ -207,6 +207,31 @@ def follow(config: dict, dry_run: bool = False, main: Account | None = None, mar
     return sent
 
 
+def flatten(config: dict, dry_run: bool = False) -> list[str]:
+    """Close every position in the mirror account and cancel its open orders: a clean slate.
+
+    The ledger notes it. The next :func:`follow` rebuilds the opposite of the
+    desk's book from scratch, so flatten her only when that is what is wanted.
+    """
+    now = datetime.now(UTC).astimezone()
+    cl = client()
+    held = [h for h in get_account(cl).holdings if h.qty]
+    labels = [f"{h.side} {abs(h.qty):g} {h.symbol}" for h in held]
+    if dry_run:
+        _log(config, now, f"dry run: would close {len(held)} position(s): " + ", ".join(labels))
+        return labels
+    results = common.call(lambda: cl.close_all_positions(cancel_orders=True), "closing every mirror position") or []
+    failed = [str(getattr(r, 'symbol', r)) for r in results if getattr(r, 'status', 200) not in (200, 201, 207)]
+    state = MirrorState(config["mirror_state_path"])
+    for h in held:
+        state.record(h.symbol, "sell" if h.qty > 0 else "buy", abs(int(round(h.qty))), "close-all", now, "flattened by hand: a clean slate")
+    state.last_follow = now.isoformat()
+    state.save()
+    _log(config, now, f"flattened: closed {len(held)} position(s)" + (f"; Alpaca refused {failed}" if failed else ""))
+    logger.info("Mirror flattened: %d position(s) closed%s", len(held), f", refused {failed}" if failed else "")
+    return labels
+
+
 # --- the page's view -------------------------------------------------------------
 
 def positions_view(mirror: Account, main: Account, decisions: dict, default_stop_pct: float, refused: dict | None = None) -> list[dict]:

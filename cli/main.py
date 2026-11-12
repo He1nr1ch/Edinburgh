@@ -574,6 +574,7 @@ def nodes(
 def mirror(
     dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be sent; send nothing"),
     show: bool = typer.Option(False, "--show", help="Only show the mirror account against the main one"),
+    flatten: bool = typer.Option(False, "--flatten", help="Close every mirror position and cancel its orders instead (a clean slate)"),
 ):
     """Bring the mirror account (Valya) to the exact opposite of the main account, now."""
     import logging
@@ -594,6 +595,11 @@ def mirror(
         mark = "" if wanted.get(symbol, 0) == have.get(symbol, 0) else "  <- differs"
         console.print(f"  {symbol:6s} desk {-wanted.get(symbol, 0):+6d}  {name} {have.get(symbol, 0):+6d}  wanted {wanted.get(symbol, 0):+6d}{mark}")
     if show:
+        return
+    if flatten:
+        closed = _mirror.flatten(DEFAULT_CONFIG, dry_run)
+        console.print(f"{'would close' if dry_run else 'closed'} {len(closed)} position(s): " + ", ".join(closed))
+        console.print("Note: the next follow (the worker's, or `tradingagents mirror`) rebuilds the opposite of the desk's book.")
         return
     sent = _mirror.follow(DEFAULT_CONFIG, dry_run, main=main)
     for o in sent:

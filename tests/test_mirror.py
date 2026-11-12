@@ -168,3 +168,23 @@ def test_the_worker_follows_the_mirror_after_a_pass_and_a_failure_is_not_fatal(c
     monkeypatch.setattr(mirror, "follow", lambda *a, **k: calls.append(1))
     runner.follow_mirror(cfg, False, True)
     assert calls == []                                   # no keys: never called
+
+
+@pytest.mark.unit
+def test_flatten_closes_everything_she_holds_and_notes_it(cfg, monkeypatch, tmp_path):
+    hers = _acct(_h("WM", -20), _h("NKE", 259))
+    calls = []
+
+    class Client:
+        def close_all_positions(self, cancel_orders):
+            calls.append(cancel_orders)
+            return []
+
+    cl = Client()
+    monkeypatch.setattr(mirror, "client", lambda: cl)
+    monkeypatch.setattr(mirror.trading, "get_account", lambda client=None, paper=None: hers)
+    assert mirror.flatten(cfg, dry_run=True) == ["short 20 WM", "long 259 NKE"] and calls == []
+    assert mirror.flatten(cfg) == ["short 20 WM", "long 259 NKE"] and calls == [True]
+    state = json.loads((tmp_path / "memory" / "mirror.json").read_text())
+    assert [(o["symbol"], o["side"], o["qty"]) for o in state["orders"]] == [("WM", "buy", 20), ("NKE", "sell", 259)]
+    assert "flattened: closed 2 position(s)" in (tmp_path / "worker" / f"{datetime.now(UTC).astimezone():%Y-%m-%d}.log").read_text()
