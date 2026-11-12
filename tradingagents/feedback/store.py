@@ -18,6 +18,7 @@ from tradingagents.feedback.schema import (
     agent_scores,
     agent_verdicts,
     decisions,
+    desk_verdicts,
     metadata,
     outcomes,
 )
@@ -121,6 +122,40 @@ class FeedbackStore:
                                 .where(decisions.c.ticker == ticker, decisions.c.trade_date == str(trade_date))
                                 .order_by(agent_verdicts.c.id)).mappings().all()
         return [{**dict(r), "evidence": json.loads(r["evidence"] or "[]")} for r in rows]
+
+    # --- calls made outside a run ----------------------------------------------
+
+    def record_desk_verdict(self, verdict: dict, kind: str, day: str, ticker: str | None = None,
+                            action: str | None = None, context: dict | None = None) -> int | None:
+        """Record a call the Watcher or a reviewer made: its typed answer and what the desk did with it."""
+        if not self.enabled:
+            return None
+        v = verdict
+        with self.engine.begin() as conn:
+            return conn.execute(desk_verdicts.insert().values(
+                recorded_at=datetime.now(), agent=v.get("agent") or "", kind=kind, ticker=ticker, day=str(day),
+                ok=bool(v.get("ok")), call=(v.get("call") or None), confidence=v.get("confidence"),
+                thesis=v.get("thesis") or None, evidence=json.dumps(v.get("evidence") or []),
+                fields=json.dumps(v.get("fields") or {}, default=str), action=action,
+                context=json.dumps(context, default=str) if context else None, model=v.get("model") or None,
+                latency_s=v.get("latency_s"), tokens_in=v.get("tokens_in"), tokens_out=v.get("tokens_out"),
+                attempts=v.get("attempts"), error=v.get("error") or None)).inserted_primary_key[0]
+
+    def desk_verdicts(self, kind: str | None = None, ticker: str | None = None, since: str | None = None) -> list[dict]:
+        """The calls made outside a run, oldest first; by kind, ticker and first day when given."""
+        if not self.enabled:
+            return []
+        query = select(desk_verdicts).order_by(desk_verdicts.c.id)
+        if kind:
+            query = query.where(desk_verdicts.c.kind == kind)
+        if ticker:
+            query = query.where(desk_verdicts.c.ticker == ticker)
+        if since:
+            query = query.where(desk_verdicts.c.day >= since)
+        with self.engine.connect() as conn:
+            rows = conn.execute(query).mappings().all()
+        return [{**dict(r), "evidence": json.loads(r["evidence"] or "[]"), "fields": json.loads(r["fields"] or "{}"),
+                 "context": json.loads(r["context"] or "null")} for r in rows]
 
     # --- settle -----------------------------------------------------------------
 
@@ -304,3 +339,12 @@ def _finish(bucket: dict) -> None:
     bucket["mean"] = sum(scores) / len(scores) if scores else None
     bucket["hit_rate"] = bucket["hits"] / bucket["n"] if bucket["n"] else None
 
+
+def keep_desk_verdict(config: dict, verdict, kind: str, day: str, ticker: str | None = None,
+                      action: str | None = None, context: dict | None = None) -> None:
+    """Record a Watcher's or a reviewer's verdict in the store. Never raises: the record must not stop the desk."""
+    try:
+        data = verdict.model_dump(mode="json") if hasattr(verdict, "model_dump") else dict(verdict)
+        FeedbackStore(config).record_desk_verdict(data, kind, day, ticker, action, context)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("The %s verdict was not recorded: %s", kind, exc)

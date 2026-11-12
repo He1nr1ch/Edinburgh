@@ -7,6 +7,7 @@ from tradingagents.agents.context import (
 )
 from tradingagents.agents.schemas import DebateArgument
 from tradingagents.agents.structured import bind_structured, settle
+from tradingagents.lessons import desk_lessons
 
 
 def create_aggressive_debator(llm):
@@ -31,6 +32,7 @@ def create_aggressive_debator(llm):
         portfolio_context = get_portfolio_context_from_state(state)
 
         trader_decision = state["trader_investment_plan"]
+        lessons = desk_lessons("Aggressive Risk Analyst", before="\n\n", after="")
 
         prompt = f"""As the Aggressive Risk Analyst, your role is to actively champion high-reward, high-risk opportunities, emphasizing bold strategies and competitive advantages. When evaluating the trader's decision or plan, focus intently on the potential upside, growth potential, and innovative benefits—even when these come with elevated risk. Use the provided market data and research to strengthen your arguments and challenge the opposing views. Specifically, respond directly to each point made by the conservative and neutral analysts, countering with data-driven rebuttals and persuasive reasoning. Highlight where their caution might miss critical opportunities or where their assumptions may be overly conservative. Here is the trader's decision:
 
@@ -45,7 +47,7 @@ Latest World Affairs Report: {news_report}
 Company Fundamentals Report: {fundamentals_report}
 Here is the current conversation history: {history} Here are the last arguments from the conservative analyst: {current_conservative_response} Here are the last arguments from the neutral analyst: {current_neutral_response}. If there are no responses from the other viewpoints yet, present your own argument based on the available data.
 
-Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.{length_brief("argument", before=" ")}"""
+Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting.{length_brief("argument", before=" ")}{lessons}"""
 
         outcome = settle(structured_llm, llm, prompt, "Aggressive Analyst", call="Aggressive")
 

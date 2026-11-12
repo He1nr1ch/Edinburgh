@@ -120,7 +120,8 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     rev = daily.DailyReview(what_happened="TROW stopped out for -43.20.", what_worked="The stop guard fired within 5 s of the breach.",
                             what_did_not="TROW's stop sat 2.1% above entry, inside one day's range.",
                             lessons=[daily.Lesson(agent="Risk Manager", lesson="Place a short's stop beyond one ATR above entry.", evidence="TROW stop 111.36 hit at 10:50")],
-                            rule_suggestions=["Raise default_stop_pct to 3% for names with ATR over 2% (LEN, TROW)."])
+                            rule_suggestions=["Raise default_stop_pct to 3% for names with ATR over 2% (LEN, TROW)."],
+                            confidence=0.6, evidence=["one stop-out, -43.20"])
     llm, structured = _fake_llm(rev)
     path, got = daily.run(cfg, "2026-11-09", llm)
     assert "Today's record:" in structured.prompt and "TROW" in structured.prompt and "Feedback scorecard" not in structured.prompt   # nothing settled yet
@@ -129,6 +130,11 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     assert "| 15:50 | Exited | TROW |" in text and "-43.20" in text and "## Rule suggestions" in text
     assert Lessons(cfg["lessons_path"]).for_agent("Risk Manager", as_of="2026-11-10")[0]["lesson"].startswith("Place a short's stop")
     assert json.loads((tmp_path / "reports" / "daily" / "2026-11-09.json").read_text())["review"]["lessons"][0]["agent"] == "Risk Manager"
+    assert "## How sure the review is" in text and "**Confidence**: 0.6" in text
+    from tradingagents.feedback import FeedbackStore
+    (kept,) = FeedbackStore(cfg).desk_verdicts(kind="daily_review")
+    assert (kept["agent"], kept["day"], kept["confidence"], kept["action"]) == ("Daily review", "2026-11-09", 0.6, "1 lesson(s)")
+    assert kept["thesis"] == "TROW stopped out for -43.20." and kept["fields"]["lessons"][0]["agent"] == "Risk Manager"
 
 
 @pytest.mark.unit
@@ -152,6 +158,9 @@ def test_the_weekly_report_aggregates_the_days_and_sets_the_standing_lessons(tmp
     assert "## Standing lessons (carried forward)" in path.read_text() and "| stop | 1 | -43.20 |" in path.read_text()
     standing = Lessons(cfg["lessons_path"]).standing
     assert len(standing) == 1 and standing[0]["since"] == "2026-11-13"
+    from tradingagents.feedback import FeedbackStore
+    (kept,) = FeedbackStore(cfg).desk_verdicts(kind="weekly_review")
+    assert (kept["agent"], kept["day"], kept["action"], kept["thesis"]) == ("Weekly review", "2026-11-13", "1 standing lesson(s)", "s")
     from tradingagents.dataflows.config import run_config
     with run_config({"lessons_path": cfg["lessons_path"]}):
         assert "Stops inside one day" in desk_lessons("Trader")          # a Desk lesson reaches every deciding agent
@@ -239,3 +248,51 @@ def test_the_analysts_and_the_researchers_read_their_lessons(tmp_path):
     with run_config({"lessons_path": str(tmp_path / "none.json")}):      # nothing learned yet: the prompt carries no block
         assert "Lessons from the desk" not in researcher_prompt(create_bull_researcher)
         assert "Lessons from the desk" not in analyst_prompt(create_market_analyst)
+
+
+@pytest.mark.unit
+def test_each_risk_analyst_reads_its_own_lessons_and_the_reviewers_can_address_them(tmp_path):
+    from typing import get_args
+
+    from tradingagents.agents.risk_mgmt.aggressive_debator import create_aggressive_debator
+    from tradingagents.agents.risk_mgmt.conservative_debator import create_conservative_debator
+    from tradingagents.agents.risk_mgmt.neutral_debator import create_neutral_debator
+    from tradingagents.dataflows.config import run_config
+    from tradingagents.lessons import AGENTS
+    from tradingagents.reports import daily, weekly
+
+    factories = {"Aggressive Risk Analyst": create_aggressive_debator, "Conservative Risk Analyst": create_conservative_debator,
+                 "Neutral Risk Analyst": create_neutral_debator}
+    marks = {a: f"{a.split()[0].upper()}-MARK" for a in factories}
+    marks["Risk Manager"] = "MANAGER-MARK"
+    assert set(factories) <= set(AGENTS) and set(AGENTS) == set(get_args(daily.AgentName))
+    store = Lessons(tmp_path / "lessons.json")
+    store.add_daily(date.today().isoformat(), [{"agent": a, "lesson": m, "evidence": "x"} for a, m in marks.items()])
+    store.set_standing(date.today().isoformat(), [{"agent": "Desk", "lesson": "DESK-MARK", "evidence": "x"}])
+
+    def debater_prompt(factory) -> str:
+        seen = []
+        llm = MagicMock()
+        llm.invoke.side_effect = lambda prompt: seen.append(prompt) or MagicMock(content="argument")
+        llm.with_structured_output.return_value.invoke.side_effect = lambda prompt: seen.append(prompt) or MagicMock(content="argument")
+        factory(llm)({"company_of_interest": "GD", "asset_type": "stock", "market_report": "m", "news_report": "n",
+                      "fundamentals_report": "f", "trader_investment_plan": "plan",
+                      "risk_debate_state": {"history": "", "aggressive_history": "", "conservative_history": "", "neutral_history": "",
+                                            "current_aggressive_response": "", "current_conservative_response": "",
+                                            "current_neutral_response": "", "count": 0}})
+        return str(seen[0])
+
+    with run_config({"lessons_path": str(tmp_path / "lessons.json"), "contract_fallback": "free_text"}):
+        prompts = {agent: debater_prompt(factory) for agent, factory in factories.items()}
+    for agent, text in prompts.items():
+        assert marks[agent] in text and "DESK-MARK" in text, agent
+        assert not any(m in text for a, m in marks.items() if a != agent), agent
+
+    with run_config({"lessons_path": str(tmp_path / "none.json"), "contract_fallback": "free_text"}):
+        assert "Lessons from the desk" not in debater_prompt(create_neutral_debator)
+
+    # The reviewers know the three exist and that a lesson must not argue one out of its stance.
+    import inspect
+    for module in (daily, weekly):
+        source = inspect.getsource(module._prompt)
+        assert "Risk Analysts" in source and "give up its" in source, module.__name__

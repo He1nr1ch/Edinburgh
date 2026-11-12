@@ -21,13 +21,16 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.schemas import Envelope, envelope_lines
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
+from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import AGENTS, Lessons
 
 logger = logging.getLogger(__name__)
 
 AgentName = Literal["Market Analyst", "News Analyst", "Fundamentals Analyst", "Bull Researcher", "Bear Researcher",
                     "Research Manager", "Trader",
+                    "Aggressive Risk Analyst", "Conservative Risk Analyst", "Neutral Risk Analyst",
                     "Risk Manager", "Portfolio Manager", "Watcher", "Desk"]
 
 
@@ -37,12 +40,17 @@ class Lesson(BaseModel):
     evidence: str = Field(description="The fact from today that taught it: a ticker, a level, a number.")
 
 
-class DailyReview(BaseModel):
+class DailyReview(Envelope):
+    """The day's review. Its confidence is how far one day's evidence supports its lessons."""
+
     what_happened: str = Field(description="Two to four sentences: the day's result and what drove it, with the numbers.")
     what_worked: str = Field(description="One to three sentences on the decisions and guards that did their job today, with evidence.")
     what_did_not: str = Field(description="One to three sentences on what cost money or missed, with evidence; say so plainly if nothing did.")
     lessons: list[Lesson] = Field(description="Up to five lessons, each addressed to one agent or the Desk. Fewer is better than padding.")
     rule_suggestions: list[str] = Field(description="Up to three changes to the desk's rules or parameters the day argues for, each with the evidence; empty when none.")
+
+    def thesis(self) -> str:
+        return self.what_happened
 
 
 # --- the facts ---------------------------------------------------------------
@@ -214,7 +222,8 @@ def _prompt(facts: dict, prior_lessons: str) -> str:
         "You are the desk's end-of-day reviewer on a long/short equity desk run by agents: three analysts "
         "(Market, News, Fundamentals), a Bull and a Bear Researcher who argue each side from the analysts' reports, "
         "a Research Manager who settles their debate, a Trader who sets "
-        "entry and stop, a Risk Manager who sets the stance, the position ceiling and the stop, a Portfolio "
+        "entry and stop, three Risk Analysts (Aggressive, Conservative, Neutral) who argue the Trader's plan from "
+        "their fixed stances, a Risk Manager who settles that debate and sets the stance, the position ceiling and the stop, a Portfolio "
         "Manager who sets the rating, size and target, and a Watcher that guards positions through the day "
         "(stop and target guards, news judged against the desk's case, replacements from a scored bench). "
         "The desk's rules: Sell means short; a call needs a target over 5% away; the morning book opens with "
@@ -227,7 +236,9 @@ def _prompt(facts: dict, prior_lessons: str) -> str:
         + "Review the day as the desk's own reflections do: specific, terse, every figure cited, no praise and no "
         "padding. Address each lesson to the one agent whose decision it would change, or to the Desk when it is "
         "a rule or a parameter; a lesson must be something that agent can do differently next time, stated as an "
-        "instruction. A one-day window proves little about a thesis, so lessons about direction need more than "
+        "instruction. A lesson for a Risk Analyst sharpens how it argues its own side (what to weigh, what it "
+        "overstated or missed); it never asks it to give up its stance, since the debate needs all three. "
+        "A one-day window proves little about a thesis, so lessons about direction need more than "
         "one day's move; lessons about stops, targets, sizing and the Watcher's calls can rest on today. "
         + NO_EXTERNAL_TOOLS
     )
@@ -241,7 +252,10 @@ def review(config: dict, facts: dict, llm=None) -> DailyReview | None:
     lessons = Lessons(config["lessons_path"])
     prior = "\n".join(f"- ({l.get('since') or l.get('date')}) {l['agent']}: {l['lesson']}"
                       for l in (lessons.standing + lessons.daily[-10:]))
-    return invoke_structured(bind_structured(llm, DailyReview, "Daily review"), _prompt(facts, prior), "Daily review")
+    rev, verdict = decide(bind_structured(llm, DailyReview, "Daily review"), _prompt(facts, prior), "Daily review")
+    keep_desk_verdict(config, verdict, "daily_review", facts["day"],
+                      action=f"{len(rev.lessons)} lesson(s)" if rev else "none")
+    return rev
 
 
 # --- the report --------------------------------------------------------------
@@ -262,6 +276,8 @@ def render(facts: dict, rev: DailyReview | None) -> str:
     if rev:
         out += ["## What happened", rev.what_happened, "", "## What worked", rev.what_worked, "",
                 "## What did not", rev.what_did_not, ""]
+        if envelope_lines(rev):
+            out += ["## How sure the review is", *envelope_lines(rev)[1:], ""]
         if rev.lessons:
             out += ["## Lessons"] + [f"- **{l.agent}**: {l.lesson} *({l.evidence})*" for l in rev.lessons] + [""]
         if rev.rule_suggestions:

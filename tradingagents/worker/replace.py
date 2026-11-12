@@ -12,14 +12,17 @@ from __future__ import annotations
 
 import logging
 import math
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from tradingagents.agents.schemas import Envelope, envelope_lines
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.book import latest_bench
 from tradingagents.dataflows.vendors.alpaca import latest_price, trading
+from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import desk_lessons
 from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
 from tradingagents.worker.duty import Action, Finding, WorkerContext
@@ -27,9 +30,15 @@ from tradingagents.worker.duty import Action, Finding, WorkerContext
 logger = logging.getLogger(__name__)
 
 
-class ReplacementChoice(BaseModel):
+class ReplacementChoice(Envelope):
     ticker: str = Field(description="The candidate to open, exactly as listed; or NONE to leave the slot empty.")
     reason: str = Field(description="One or two sentences: why this one over the others, for the position that left.")
+
+    def call(self) -> str:
+        return self.ticker.strip().upper()[:32]
+
+    def thesis(self) -> str:
+        return self.reason
 
 
 def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct: float,
@@ -118,7 +127,7 @@ class ReplacementDuty:
                                         f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"))
                 continue
             try:
-                choice, _ = decide(bind_structured(context.llm, ReplacementChoice, "Watcher"), _prompt(departed, options),
+                choice, verdict = decide(bind_structured(context.llm, ReplacementChoice, "Watcher"), _prompt(departed, options),
                                    "Watcher", catch=ValueError)
             except Exception as exc:
                 # No answer is not a confirmation: nothing is opened on the score
@@ -131,7 +140,12 @@ class ReplacementDuty:
             pick = None
             if choice and choice.ticker.upper() != "NONE":
                 pick = next((o for o in options if o["ticker"].upper() == choice.ticker.upper()), None)
+            asked = {"departed": {k: departed.get(k) for k in ("ticker", "side", "value", "why")},
+                     "candidates": [{k: o.get(k) for k in ("ticker", "side", "rating", "risk_level", "live_price", "target", "stop",
+                                                           "live_move_pct", "live_score")} for o in options]}
+            keep = partial(keep_desk_verdict, context.config, verdict, "replacement", today, ticker, context=asked)
             if pick is None:
+                keep(action="none")
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; the Watcher opens nothing",
                                         choice.reason if choice else "the model's answer did not meet its contract"))
                 continue
@@ -139,17 +153,19 @@ class ReplacementDuty:
             value = min(float(departed.get("value") or 0) or cap_value, cap_value)
             qty = math.floor(value / pick["live_price"])
             if qty < 1:
+                keep(action=f"none: {pick['ticker']} too dear")
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; {pick['ticker']} is too dear for its capital",
                                         f"{value:,.0f} buys no whole share at {pick['live_price']:,.2f}"))
                 continue
-            reason = (f"replaces {ticker}: {choice.reason if choice else 'best score on the bench'} "
+            keep(action=f"open {pick['side']} {pick['ticker']} {qty}")
+            reason = (f"replaces {ticker}: {choice.reason} "
                       f"(score {pick['live_score']:.2f}, {pick['live_move_pct']:+.1f}% to target)")
             used.add(pick["ticker"].upper())
             day["replaced"][ticker] = pick["ticker"]
             findings.append(Finding(
                 self.name, pick["ticker"], "urgent",
                 f"{pick['side']} {pick['ticker']} replaces {ticker}",
-                reason + "\n\nCandidates by score: " + ", ".join(f"{o['ticker']} {o['live_score']:.2f}" for o in options),
+                reason + "\n".join(envelope_lines(choice)) + "\n\nCandidates by score: " + ", ".join(f"{o['ticker']} {o['live_score']:.2f}" for o in options),
                 Action(pick["ticker"], "replace", "buy" if pick["side"] == "long" else "sell", qty, reason,
                        value=qty * pick["live_price"]),
             ))

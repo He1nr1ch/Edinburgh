@@ -163,9 +163,9 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
     captured = {}
     structured = MagicMock()
     structured.invoke.side_effect = lambda prompt: captured.__setitem__("prompt", prompt) or replace.ReplacementChoice(
-        ticker="NOW", reason="largest move left and keeps a short slot short")
+        ticker="NOW", reason="largest move left and keeps a short slot short", confidence=0.7, evidence=["12.8% to target"])
     llm = MagicMock(); llm.with_structured_output.return_value = structured
-    cfg = _cfg(tmp_path)
+    cfg = {**_cfg(tmp_path), "feedback_db_url": "sqlite:///" + str(tmp_path / "feedback.db")}
     state = WorkerState.load(cfg["worker_state_path"])
     state.book = {"FIS": {"placed_on": "2026-11-06", "side": "short", "value": 4643.0}, "GD": {"placed_on": "2026-11-06", "side": "long", "value": 5838.0}}
     state.record_order("FIS", "exit", "buy", 156, "ord-1", datetime.now(UTC), "price 31.90 is through the stop 31.68 (Risk Manager)")
@@ -178,6 +178,12 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
     assert (finding.action.symbol, finding.action.kind, finding.action.side, finding.action.qty) == ("NOW", "replace", "sell", 42)   # 4,643 / 109
     assert finding.action.value == pytest.approx(42 * 109.0)
     assert "FIS" not in state.book and state.day("2026-11-06")["replaced"] == {"FIS": "NOW"}
+
+    from tradingagents.feedback import FeedbackStore
+    (kept,) = FeedbackStore(cfg).desk_verdicts(kind="replacement")
+    assert (kept["ticker"], kept["call"], kept["confidence"], kept["action"], kept["day"]) == ("FIS", "NOW", 0.7, "open short NOW 42", "2026-11-06")
+    assert kept["context"]["departed"]["ticker"] == "FIS" and [c["ticker"] for c in kept["context"]["candidates"]] == ["NOW"]
+    assert "**Confidence**: 0.7" in finding.detail
 
 
 @pytest.mark.unit

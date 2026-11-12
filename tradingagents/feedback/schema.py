@@ -4,6 +4,8 @@ decisions      one row per run: the typed calls every stage made
 outcomes       one row per settled decision: what the market did over the window
 agent_scores   one row per agent per settled decision: its call and whether it was right
 agent_verdicts one row per agent per run: its typed answer, with the model and the time it took
+desk_verdicts  one row per call made outside a run: the Watcher's news judgements and replacement
+               picks, the daily and weekly reviews, each with what the desk then did
 """
 
 from __future__ import annotations
@@ -108,4 +110,28 @@ agent_verdicts = Table(
     Column("attempts", Integer),
     Column("error", Text),
     UniqueConstraint("decision_id", "agent", name="uq_agent_verdicts_decision_agent"),
+)
+
+desk_verdicts = Table(
+    "desk_verdicts", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("recorded_at", DateTime, nullable=False),
+    Column("agent", String(32), nullable=False),                 # Watcher | Daily review | Weekly review
+    Column("kind", String(16), nullable=False),                  # news | replacement | daily_review | weekly_review
+    Column("ticker", String(32)),                                # the position judged or replaced; NULL for a review
+    Column("day", String(10), nullable=False),                   # YYYY-MM-DD the call was made for
+    Column("ok", Boolean, nullable=False),                       # False: the answer did not meet its contract
+    Column("call", String(32)),                                  # "high adverse" / the ticker picked / NONE ...
+    Column("confidence", Float),
+    Column("thesis", Text),
+    Column("evidence", Text),                                    # JSON list of the facts it cited
+    Column("fields", Text),                                      # JSON: the answer's own typed fields
+    Column("action", String(64)),                                # what the desk did with it: "exit 40", "open LMT", ...
+    Column("context", Text),                                     # JSON: what it was asked about (headlines, candidates)
+    Column("model", String(128)),
+    Column("latency_s", Float),
+    Column("tokens_in", Integer),
+    Column("tokens_out", Integer),
+    Column("attempts", Integer),
+    Column("error", Text),
 )

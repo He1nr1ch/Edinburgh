@@ -17,11 +17,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
+from tradingagents.agents.schemas import Envelope, envelope_lines
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.dataflows.vendors.alpaca import articles_since, get_asset_profile
 from tradingagents.dataflows.vendors.alpaca.trading import Holding
+from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import desk_lessons
 from tradingagents.web import data
 from tradingagents.worker.duty import Finding, WorkerContext
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 _KNOWN_NEWS_CHARS = 2500
 
 
-class NewsAssessment(BaseModel):
+class NewsAssessment(Envelope):
     materiality: Literal["none", "low", "medium", "high"] = Field(
         description=(
             "How much the news could move this stock over the next few days. high: changes the "
@@ -51,6 +53,12 @@ class NewsAssessment(BaseModel):
         ))
     summary: str = Field(description="One or two sentences: what happened, with the numbers.")
     rationale: str = Field(description="Why it matters, or does not, for the position as held, against the desk's case.")
+
+    def call(self) -> str:
+        return f"{self.materiality} {self.direction}"
+
+    def thesis(self) -> str:
+        return self.rationale
 
 
 def _name(symbol: str) -> str:
@@ -148,7 +156,7 @@ class WatcherDuty:
                 continue
             case = desk_case(h.symbol, decisions)
             try:
-                assessment, _ = decide(structured, _prompt(h, articles, _name(h.symbol), case), "Watcher", catch=ValueError)
+                assessment, verdict = decide(structured, _prompt(h, articles, _name(h.symbol), case), "Watcher", catch=ValueError)
             except Exception as exc:
                 # No answer is not a judgement. The articles stay unread and the
                 # clock stays where it was, so the next pass reads them again;
@@ -160,7 +168,12 @@ class WatcherDuty:
                 continue
             context.state.last_check[h.symbol] = checked
             context.state.mark_seen(h.symbol, [a["id"] for a in articles])
+            day = context.now.strftime("%Y-%m-%d")
+            asked = {"side": h.side, "qty": h.qty, "market_value": h.market_value, "case_date": case.get("date"),
+                     "articles": [{"id": a["id"], "headline": a["headline"], "source": a["source"],
+                                   "created_at": a["created_at"], "url": a.get("url")} for a in articles]}
             if assessment is None:
+                keep_desk_verdict(context.config, verdict, "news", day, h.symbol, None, asked)
                 findings.append(Finding(self.name, h.symbol, "notable",
                                         f"{len(articles)} new article(s); the model could not judge them",
                                         "\n".join(a["headline"] for a in articles)))
@@ -170,7 +183,9 @@ class WatcherDuty:
                      f"{'not accounted for' if surprise else 'accounted for'}: {assessment.summary}"
             action = action_for(h, assessment.materiality, assessment.direction, surprise,
                                 context.account.equity, context.config, reason)
-            detail = (f"{assessment.summary}\n\n{assessment.rationale}\n\nHeadlines:\n"
+            keep_desk_verdict(context.config, verdict, "news", day, h.symbol,
+                              f"{action.kind} {action.qty}" if action else "none", asked)
+            detail = (f"{assessment.summary}\n\n{assessment.rationale}" + "\n".join(envelope_lines(assessment)) + "\n\nHeadlines:\n"
                       + "\n".join(f"- {a['headline']} ({a['source']}) {a['url']}" for a in articles))
             findings.append(Finding(self.name, h.symbol, _severity(assessment),
                                     f"{h.side} {h.symbol}: {assessment.materiality} {assessment.direction} news"

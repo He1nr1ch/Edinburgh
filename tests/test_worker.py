@@ -203,7 +203,8 @@ def test_the_watcher_judges_news_against_the_desks_case(tmp_path, monkeypatch):
                                    "**Investment Thesis**: Net interest income grows; the known risk is the Basel capital rule.\n\n"
                                    "**Price Target**: 385\n\n**Time Horizon**: 1-3 months",
               news_report="## JPM News\n\n### Basel III endgame rule lands (Reuters)")
-    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_news_lookback_hours": 18}
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_news_lookback_hours": 18,
+           "feedback_db_url": "sqlite:///" + str(tmp_path / "feedback.db")}
     article = {"id": "a1", "headline": "JPMorgan CFO resigns abruptly", "summary": "", "source": "WSJ",
                "created_at": datetime(2026, 11, 6, 15, 0, tzinfo=UTC), "url": "u"}
     monkeypatch.setattr(news, "articles_since", lambda s, since, limit=20: [article])
@@ -211,7 +212,8 @@ def test_the_watcher_judges_news_against_the_desks_case(tmp_path, monkeypatch):
     captured = {}
     structured = MagicMock()
     structured.invoke.side_effect = lambda prompt: captured.__setitem__("prompt", prompt) or news.NewsAssessment(
-        materiality="high", direction="adverse", accounted_for=False, summary="CFO out.", rationale="Not in the thesis.")
+        materiality="high", direction="adverse", accounted_for=False, summary="CFO out.", rationale="Not in the thesis.",
+        confidence="80%", evidence=["CFO resigned 2026-11-06", "thesis names only the Basel rule"])
     llm = MagicMock(); llm.with_structured_output.return_value = structured
     state = WorkerState.load(tmp_path / "state.json")
     ctx = WorkerContext(Account(100_000, 0, True, (LONG,)), datetime(2026, 11, 6, 15, 5, tzinfo=UTC), cfg, state, llm)
@@ -223,9 +225,27 @@ def test_the_watcher_judges_news_against_the_desks_case(tmp_path, monkeypatch):
     assert "CFO resigns" in prompt
     assert finding.severity == "urgent" and finding.action.kind == "exit" and finding.action.qty == 40
     assert "not accounted for" in finding.headline
+    assert "**Confidence**: 0.8" in finding.detail and "CFO resigned 2026-11-06" in finding.detail
 
     structured.invoke.side_effect = lambda prompt: news.NewsAssessment(
         materiality="high", direction="adverse", accounted_for=True, summary="Basel rule.", rationale="Known.")
     state.last_check.clear(); state.seen.clear()
     (finding,) = news.WatcherDuty().run(ctx)
     assert finding.action is None and finding.severity == "notable" and "(accounted for)" in finding.headline
+
+    # Both judgements are kept as typed verdicts, with what the desk did and what it was asked about.
+    from tradingagents.feedback import FeedbackStore
+    first, second = FeedbackStore(cfg).desk_verdicts(kind="news", ticker="JPM")
+    assert (first["agent"], first["call"], first["confidence"], first["action"]) == ("Watcher", "high adverse", 0.8, "exit 40")
+    assert first["evidence"] == ["CFO resigned 2026-11-06", "thesis names only the Basel rule"] and first["thesis"] == "Not in the thesis."
+    assert first["fields"]["accounted_for"] is False and first["context"]["articles"][0]["headline"].startswith("JPMorgan CFO")
+    assert first["day"] == "2026-11-06" and first["ok"] and first["latency_s"] is not None
+    assert (second["action"], second["confidence"], second["fields"]["accounted_for"]) == ("none", None, True)
+
+    # An answer that does not meet the contract is kept too, as a failed verdict.
+    structured.invoke.side_effect = ValueError("not the schema")
+    state.last_check.clear()
+    state.seen.clear()
+    news.WatcherDuty().run(ctx)
+    failed = FeedbackStore(cfg).desk_verdicts(kind="news")[-1]
+    assert not failed["ok"] and "not the schema" in failed["error"] and failed["call"] is None

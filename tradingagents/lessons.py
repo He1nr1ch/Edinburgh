@@ -24,6 +24,7 @@ from pathlib import Path
 
 AGENTS = ("Market Analyst", "News Analyst", "Fundamentals Analyst", "Bull Researcher", "Bear Researcher",
           "Research Manager", "Trader",
+          "Aggressive Risk Analyst", "Conservative Risk Analyst", "Neutral Risk Analyst",
           "Risk Manager", "Portfolio Manager", "Watcher", "Desk")
 KEEP_DAILY_DAYS = 30
 MAX_STANDING = 12

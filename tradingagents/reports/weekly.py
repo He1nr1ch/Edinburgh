@@ -15,20 +15,27 @@ import logging
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, invoke_structured
+from tradingagents.agents.schemas import Envelope, envelope_lines
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
+from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import MAX_STANDING, Lessons
 from tradingagents.reports.daily import Lesson, report_dir, week_days
 
 logger = logging.getLogger(__name__)
 
 
-class WeeklyReview(BaseModel):
+class WeeklyReview(Envelope):
+    """The week's review. Its confidence is how far the week's evidence supports its standing lessons."""
+
     summary: str = Field(description="Three to five sentences: the week's result and what drove it, with the numbers.")
     by_agent: str = Field(description="One short paragraph per agent whose decisions shaped the week (skip the rest): what its calls got right and wrong, with evidence.")
     standing_lessons: list[Lesson] = Field(description=f"The consolidated standing lessons for the desk going forward, at most {MAX_STANDING}: merge the week's daily lessons with the prior standing ones, keep what the evidence still supports, drop what it does not, sharpen wording. Each addressed to one agent or the Desk.")
     rule_suggestions: list[str] = Field(description="Up to three changes to the desk's rules or parameters the week argues for, each with the evidence; empty when none.")
+
+    def thesis(self) -> str:
+        return self.summary
 
 
 def gather(config: dict, week_ending: str) -> dict:
@@ -97,7 +104,7 @@ def _facts_text(w: dict) -> str:
 def _prompt(w: dict) -> str:
     return (
         "You are the desk's end-of-week reviewer on a long/short equity desk run by agents (Market, News and "
-        "Fundamentals Analysts; Bull and Bear Researchers; Research Manager; Trader; Risk Manager; Portfolio Manager; the Watcher that "
+        "Fundamentals Analysts; Bull and Bear Researchers; Research Manager; Trader; Aggressive, Conservative and Neutral Risk Analysts, who debate the Trader's plan from fixed stances; Risk Manager; Portfolio Manager; the Watcher that "
         "guards positions intraday). The desk's rules: Sell means short; a call needs a target over 5% away; "
         "the morning book opens with the top ten each side by expected move, but after that the most attractive "
         "call wins regardless of side (the desk is here to make money, not to stay balanced; an uneven book "
@@ -108,7 +115,8 @@ def _prompt(w: dict) -> str:
         f"standing lessons the desk carries forward, at most {MAX_STANDING}: merge the week's daily lessons with "
         "the prior standing ones, keep what the week's evidence still supports, drop what it contradicts or "
         "what one day's noise produced, and sharpen each into an instruction the named agent can apply. "
-        "Prefer lessons about stops, targets, sizing, the Watcher's calls and the rules, which a week can judge, "
+        "A lesson for a Risk Analyst sharpens how it argues its own side and never asks it to give up its "
+        "stance. Prefer lessons about stops, targets, sizing, the Watcher's calls and the rules, which a week can judge, "
         "over lessons about direction, which it mostly cannot. " + NO_EXTERNAL_TOOLS
     )
 
@@ -127,6 +135,8 @@ def render(w: dict, rev: WeeklyReview | None) -> str:
     out.append("")
     if rev:
         out += ["## The week", rev.summary, "", "## By agent", rev.by_agent, ""]
+        if envelope_lines(rev):
+            out += ["## How sure the review is", *envelope_lines(rev)[1:], ""]
         out += ["## Standing lessons (carried forward)"] + [f"- **{l.agent}**: {l.lesson} *({l.evidence})*" for l in rev.standing_lessons] + [""]
         if rev.rule_suggestions:
             out += ["## Rule suggestions (for you to decide, not applied)"] + [f"- {s}" for s in rev.rule_suggestions] + [""]
@@ -152,7 +162,9 @@ def run(config: dict, week_ending: str, llm=None) -> tuple[Path, WeeklyReview | 
     rev = None
     try:
         llm = llm or create_tier_client(config, "deep").get_llm()
-        rev = invoke_structured(bind_structured(llm, WeeklyReview, "Weekly review"), _prompt(w), "Weekly review")
+        rev, verdict = decide(bind_structured(llm, WeeklyReview, "Weekly review"), _prompt(w), "Weekly review")
+        keep_desk_verdict(config, verdict, "weekly_review", week_ending,
+                          action=f"{len(rev.standing_lessons)} standing lesson(s)" if rev else "none")
     except Exception as exc:
         logger.warning("The weekly review could not be made: %s", exc)
     folder = weekly_dir(config)
