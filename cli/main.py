@@ -152,6 +152,35 @@ def backtest(
         console.print(f"[yellow]unsettled:[/yellow] {ticker}: {reason}")
 
 
+@app.command(name="feedback-copy")
+def feedback_copy(
+    source: str = typer.Option(None, "--from", help="The database to copy from; default: the SQLite file under ~/.tradingagents/memory"),
+    target: str = typer.Option(None, "--to", help="The database to copy into; default: TRADINGAGENTS_FEEDBACK_DB_URL"),
+):
+    """Copy the feedback store into a new, empty database (SQLite to Postgres), once."""
+    import os
+
+    from sqlalchemy.engine import make_url
+
+    from tradingagents.default_config import _TRADINGAGENTS_HOME
+    from tradingagents.feedback.migrate import copy_store
+
+    source = source or "sqlite:///" + os.path.join(_TRADINGAGENTS_HOME, "memory", "feedback.db")
+    target = target or DEFAULT_CONFIG.get("feedback_db_url") or ""
+    if not target:
+        console.print("[red]No destination: set TRADINGAGENTS_FEEDBACK_DB_URL or pass --to.[/red]")
+        raise typer.Exit(code=1)
+    shown = make_url(target).render_as_string(hide_password=True)
+    try:
+        report = copy_store(source, target)
+    except Exception as exc:
+        console.print(f"[red]Nothing was copied to {shown}:[/red] {type(exc).__name__}: {str(exc).splitlines()[0]}")
+        raise typer.Exit(code=1) from None
+    console.print(f"Copied {source} to {shown}:")
+    for table, n in report.items():
+        console.print(f"  {table}: {n['copied']} row(s)" + (f", {n['skipped']} skipped (their decision is missing)" if n["skipped"] else ""))
+
+
 @app.command()
 def scorecard(
     ticker: str = typer.Option(None, "--ticker", help="Also list this ticker's settled decisions"),

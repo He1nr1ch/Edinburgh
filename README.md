@@ -129,6 +129,14 @@ for the next agent's prompt.
 - Each **analyst** writes its report with its tools as before, then states a
   verdict on it (Bullish / Neutral / Bearish) in one more short call. Switch
   that off with `TRADINGAGENTS_ANALYST_VERDICTS=false`.
+- The calls made **outside a run** carry the same envelope and are kept in the
+  store's `desk_verdicts` table, one row per call: the **Watcher's** news
+  judgements (call: materiality and direction) and replacement picks (call: the
+  ticker, or NONE), and the **daily and weekly reviews**. Each row also holds
+  the answer's own fields, what the desk did with it (`exit 40`, `open short
+  NOW 42`, `none`) and what it was asked about (the headlines, the candidates),
+  so a call can later be set against what the price did. A failed answer is
+  kept too, with its error.
 
 An answer that does not validate is asked for once more with the error quoted
 back. If the second fails too, the run is **closed**: nobody after that agent is
@@ -164,8 +172,12 @@ tradingagents scorecard --ticker NVDA
 ```
 
 The store is a SQLAlchemy URL (`TRADINGAGENTS_FEEDBACK_DB_URL`): SQLite under
-`~/.tradingagents/memory/feedback.db` by default, Postgres when it lands
-(`postgresql+psycopg://user:pass@host/db`, with `psycopg` installed). The
+`~/.tradingagents/memory/feedback.db` by default, or Postgres
+(`postgresql+psycopg://user:pass@host/db`; the driver is installed with the
+app). On Colossus it is the `edinburgh` database, set in `~/edinburgh/.env`;
+the tables are created on first use. `tradingagents feedback-copy` moves an
+existing SQLite store into a new, empty database once, ids included, in one
+transaction: a copy that fails leaves the destination empty. The
 markdown memory log still writes the per-decision reflections; the store keeps
 each lesson with its outcome.
 
