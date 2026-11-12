@@ -42,13 +42,14 @@ class Clock:
     next_close: datetime
 
 
-def _client():
-    return common.trading_client(common.paper_trading())
+def _client(client=None):
+    """The configured account's client, or the one given (a second account, see mirror.py)."""
+    return client if client is not None else common.trading_client(common.paper_trading())
 
 
-def get_account() -> Account:
-    """The account's equity, cash and every open position."""
-    client = _client()
+def get_account(client=None, paper: bool | None = None) -> Account:
+    """The account's equity, cash and every open position (of the client given, when one is)."""
+    client = _client(client)
     account = common.call(client.get_account, "the trading account")
     positions = common.call(client.get_all_positions, "open positions") or []
     if account is None:
@@ -58,7 +59,7 @@ def get_account() -> Account:
                 str(getattr(p.asset_class, "value", p.asset_class)))
         for p in positions
     )
-    return Account(float(account.equity), float(account.cash), common.paper_trading(), holdings)
+    return Account(float(account.equity), float(account.cash), common.paper_trading() if paper is None else paper, holdings)
 
 
 def get_clock() -> Clock:
@@ -107,13 +108,13 @@ def fills_on(day: str) -> dict[str, dict]:
     return found
 
 
-def open_orders() -> dict[str, str]:
+def open_orders(client=None) -> dict[str, str]:
     """Every order sent but not yet filled or cancelled, by order id: its symbol."""
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
     request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500, nested=True)
-    orders = common.call(lambda: _client().get_orders(filter=request), "open orders") or []
+    orders = common.call(lambda: _client(client).get_orders(filter=request), "open orders") or []
     found = {}
     for o in orders:
         for order in (o, *(getattr(o, "legs", None) or ())):
@@ -121,21 +122,21 @@ def open_orders() -> dict[str, str]:
     return found
 
 
-def cancel_orders_for(symbol: str, open_now: dict[str, str]) -> int:
+def cancel_orders_for(symbol: str, open_now: dict[str, str], client=None) -> int:
     """Cancel every open order for ``symbol`` (a bracket's legs included); returns how many."""
     ids = [order_id for order_id, sym in open_now.items() if sym == symbol]
     for order_id in ids:
-        common.call(lambda oid=order_id: _client().cancel_order_by_id(oid), f"cancelling order {order_id}")
+        common.call(lambda oid=order_id: _client(client).cancel_order_by_id(oid), f"cancelling order {order_id}")
     return len(ids)
 
 
-def submit_market_order(symbol: str, qty: int, side: str) -> str:
+def submit_market_order(symbol: str, qty: int, side: str, client=None) -> str:
     """Send a day market order (``side`` is buy or sell); returns Alpaca's order id."""
     from alpaca.trading.enums import OrderSide, TimeInForce
     from alpaca.trading.requests import MarketOrderRequest
 
     request = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide(side), time_in_force=TimeInForce.DAY)
-    order = common.call(lambda: _client().submit_order(request), f"a {side} order for {qty} {symbol}")
+    order = common.call(lambda: _client(client).submit_order(request), f"a {side} order for {qty} {symbol}")
     if order is None:
         raise VendorUnavailableError(f"Alpaca did not accept the {side} order for {qty} {symbol}")
     return str(order.id)

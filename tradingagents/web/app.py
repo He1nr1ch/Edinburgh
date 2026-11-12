@@ -371,7 +371,8 @@ def index():
     today = days[0] if days and days[0]["date"] == data.now_text()[:10] else None
     recorded = (f' · today recorded at {today["as_of"][11:16]}' if today else " · no record of today yet")
     body = [f"<h1>Edinburgh positions</h1><p class=\"meta\">{account_line} · as of {data.now_text()}{recorded} · "
-            f'<a href="/days">past days</a> · <a href="/transactions">transactions</a> · <a href="/reports">reports</a></p>']
+            f'<a href="/days">past days</a> · <a href="/transactions">transactions</a> · <a href="/reports">reports</a>'
+            + _mirror_link() + '</p>']
     body.append("<h2>Open positions</h2>")
     body.append(_positions_table(rows) if rows else "<p>No open positions.</p>")
     body.append(_status_section())
@@ -411,6 +412,76 @@ def index():
     else:
         body.append("<p>No bench yet.</p>")
     return _page("Edinburgh positions", "\n".join(body))
+
+
+def _mirror_link() -> str:
+    from tradingagents import mirror
+
+    cfg = get_config()
+    return f' · <a href="/mirror">{html.escape(cfg.get("mirror_name") or "mirror")}</a>' if mirror.configured(cfg) else ""
+
+
+@app.get("/mirror", response_class=HTMLResponse)
+def mirror_page():
+    """The mirror account: the desk's positions the other way round, with her levels swapped."""
+    from tradingagents import mirror
+
+    cfg = get_config()
+    name = cfg.get("mirror_name") or "Mirror"
+    if not mirror.configured(cfg):
+        return _page(name, f"<h1>{html.escape(name)}</h1><p>No mirror account is configured (API_KEY_VALYA / API_SECRET_VALYA).</p>", 404)
+    try:
+        main, her = _holdings(), _mirror_account()
+    except Exception as exc:
+        return _page(name, f"<h1>{html.escape(name)}</h1><p>Alpaca did not answer: {html.escape(str(exc))}</p>", 503)
+    state = mirror.MirrorState(cfg["mirror_state_path"])
+    rows = mirror.positions_view(her, main, data.find_decisions(_results_dir()), _default_stop(), state.refused)
+    open_rows = [r for r in rows if not r.get("missing")]
+    unrealised = sum((r["pnl_pct"] or 0) / 100 * abs(r["market_value"]) for r in open_rows if r.get("pnl_pct") is not None)
+    body = [f'<h1>{html.escape(name)}</h1><p class="meta"><a href="/">← the desk</a> · '
+            f"{'Paper' if her.paper else 'LIVE'} account · equity {her.equity:,.0f} · cash {her.cash:,.0f} · "
+            f'{len(open_rows)} open position(s) · unrealised {_pct_money(unrealised)} · as of {data.now_text()}'
+            + (f' · last followed {html.escape(state.last_follow[11:16])}' if state.last_follow else '') + '</p>',
+            f'<p class="meta">{html.escape(name)} holds the exact opposite of the desk: every long of the desk is her short and every '
+            'short her long, in the same shares. Her stop is the desk\'s target and her target the desk\'s stop; she leaves a name '
+            'the moment the desk does. The SPY call hedge is the desk\'s alone.</p>']
+    body.append('<div class="wrap"><table><tr><th>Ticker</th><th>Side</th><th>Desk</th><th>Qty</th><th>Value</th><th>Entry</th><th>Price</th>'
+                '<th>P&amp;L</th><th>Stop</th><th>To stop</th><th>Target</th><th>To target</th><th>Decided</th><th>Report</th></tr>')
+    for r in rows:
+        if r.get("missing"):
+            body.append(f'<tr><td><b>{html.escape(r["ticker"])}</b></td><td class="{r["side"]}">{r["side"]}</td>'
+                        f'<td class="{r["desk_side"]}">{r["desk_side"]}</td><td colspan="11" class="l none">not held: {html.escape(r["missing"])}</td></tr>')
+            continue
+        report = f'<a href="/report/{html.escape(r["ticker"])}/{r["decision_date"]}">agents</a>' if r.get("decision_date") else '<span class="none">none</span>'
+        desk = f'<td class="{r["desk_side"]}">{r["desk_side"]}' + ('' if r["matched"] else ' <span class="none">(size differs)</span>') + '</td>' \
+            if r.get("desk_side") else '<td class="none">not held</td>'
+        body.append(f'<tr><td><b>{html.escape(r["ticker"])}</b></td><td class="{r["side"]}">{r["side"]}</td>{desk}'
+                    f'<td>{_num(r["qty"], 0, signed=True)}</td><td>{_num(abs(r["market_value"]), 0)}</td>'
+                    f'<td>{_num(r["avg_entry_price"])}</td><td>{_num(r["price"])}</td><td>{_pct(r["pnl_pct"])}</td>'
+                    f'<td>{_num(r["stop"])}</td><td>{_pct(r["to_stop_pct"])}</td><td>{_num(r["target"])}</td><td>{_pct(r["to_target_pct"])}</td>'
+                    f'<td class="l">{r.get("decision_date") or "—"}</td><td class="l">{report}</td></tr>')
+    body.append('</table></div>')
+    return _page(name, "\n".join(body))
+
+
+def _mirror_account():
+    from tradingagents import mirror
+
+    return mirror.get_account()
+
+
+@app.get("/api/mirror")
+def api_mirror():
+    from tradingagents import mirror
+
+    cfg = get_config()
+    if not mirror.configured(cfg):
+        raise HTTPException(404, "no mirror account is configured")
+    main, her = _holdings(), _mirror_account()
+    rows = mirror.positions_view(her, main, data.find_decisions(_results_dir()), _default_stop(),
+                                 mirror.MirrorState(cfg["mirror_state_path"]).refused)
+    return {"as_of": data.now_text(), "name": cfg.get("mirror_name"), "paper": her.paper, "equity": her.equity, "cash": her.cash,
+            "positions": rows}
 
 
 @app.get("/days", response_class=HTMLResponse)

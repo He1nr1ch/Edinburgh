@@ -39,6 +39,18 @@ def default_duties() -> list[Duty]:
     return [StopDuty(), TargetDuty(), WatcherDuty(), ReplacementDuty()]
 
 
+def follow_mirror(config: dict, dry_run: bool, market_open: bool) -> None:
+    """Bring the mirror account (Valya) to the opposite of the main one; a failure is logged, never fatal."""
+    from tradingagents import mirror
+
+    if not mirror.configured(config):
+        return
+    try:
+        mirror.follow(config, dry_run, market_open=market_open)
+    except Exception as exc:
+        logger.warning("The mirror account could not be followed: %s", exc)
+
+
 def _log(config: dict, now: datetime, text: str) -> None:
     path = Path(config["results_dir"]) / "worker" / f"{now:%Y-%m-%d}.log"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -103,6 +115,7 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
             if f.action:
                 _act(f, context, market_open, pending, open_now, dry_run)
         state.save()
+        follow_mirror(config, dry_run, market_open)
         # The day's record for the positions page: the last pass of the day
         # leaves the close-of-day picture.
         try:
@@ -283,6 +296,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         day["placed"] = placed
         state.save()
         _log(config, now, f"book placed: {len(placed)} order(s) from {book_path.name}")
+        follow_mirror(config, dry_run, market_open)
         if placed:
             send_email(f"Edinburgh: the day's book, {len(placed)} order(s)",
                        "\n".join(f"- {t}" for t in placed) + f"\n\nfrom {book_path}", config)

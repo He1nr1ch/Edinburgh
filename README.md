@@ -349,6 +349,25 @@ Manager and Portfolio Manager read the standing lessons addressed to them or to 
 the last week's daily ones for them, and the Watcher reads its own in its news judgment and its
 replacement choice. The page lists the reports and the lessons at `/reports`.
 
+## The mirror account: Valya, the exact opposite of the desk
+
+A second Alpaca paper account (`API_KEY_VALYA` / `API_SECRET_VALYA` in `.env`, the names
+Dublin uses) holds every equity position of the main account the other way round, in the same
+number of shares (`mirror.py`): where the desk is long she is short, and where it is short she
+is long. Her stop is the desk's target and her target the desk's stop, which the geometry gives
+for free, and she leaves a name the moment the desk does, for whatever reason it did. Nothing
+is decided for her: after every Watcher pass, and after the book is placed at the open, the
+worker reads both accounts and sends the market orders that make her equity positions the
+negation of the desk's. A name whose desk order has not filled waits for the next pass; a name
+that must change side is flattened first and opened the other way on the pass after; a name
+Alpaca will not lend is noted and shown on her page as unmirrored. The SPY call hedge and
+crypto are not mirrored.
+
+`tradingagents mirror` syncs her by hand (`--dry-run` to see the orders, `--show` to compare the
+books), which is how she is brought level the first time. Her page is `/mirror`: equity, cash and
+her positions with her levels; no transaction list or report is kept for her, by design.
+`TRADINGAGENTS_MIRROR_ENABLED=false` switches her off.
+
 ## What the models cost, how far the sweep is, and which node did the work
 
 Every answered Ollama call is recorded (`usage.py`): the model, the agent that asked (the

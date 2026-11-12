@@ -571,6 +571,38 @@ def nodes(
 
 
 @app.command()
+def mirror(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be sent; send nothing"),
+    show: bool = typer.Option(False, "--show", help="Only show the mirror account against the main one"),
+):
+    """Bring the mirror account (Valya) to the exact opposite of the main account, now."""
+    import logging
+
+    from tradingagents import mirror as _mirror
+    from tradingagents.dataflows.vendors.alpaca import trading
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if not _mirror.configured(DEFAULT_CONFIG):
+        console.print("[red]The mirror account is not configured: set API_KEY_VALYA and API_SECRET_VALYA in .env[/red]")
+        raise typer.Exit(code=1)
+    main, her = trading.get_account(), _mirror.get_account()
+    name = DEFAULT_CONFIG.get("mirror_name", "Valya")
+    console.print(f"Main: equity {main.equity:,.0f}, {len(main.holdings)} position(s) · {name}: equity {her.equity:,.0f}, "
+                  f"cash {her.cash:,.0f}, {len(her.holdings)} position(s)")
+    wanted, have = _mirror.target_positions(main), _mirror.current_positions(her)
+    for symbol in sorted(set(wanted) | set(have)):
+        mark = "" if wanted.get(symbol, 0) == have.get(symbol, 0) else "  <- differs"
+        console.print(f"  {symbol:6s} desk {-wanted.get(symbol, 0):+6d}  {name} {have.get(symbol, 0):+6d}  wanted {wanted.get(symbol, 0):+6d}{mark}")
+    if show:
+        return
+    sent = _mirror.follow(DEFAULT_CONFIG, dry_run, main=main)
+    for o in sent:
+        console.print(f"  {'would send' if dry_run else 'sent'}: {o['side']} {o['qty']} {o['symbol']} ({o['why']})"
+                      + (f" order {o['order_id']}" if o.get("order_id") else ""))
+    console.print(f"{len(sent)} order(s) {'wanted' if dry_run else 'sent'}; the log is in results/worker/<date>.log")
+
+
+@app.command()
 def snapshot():
     """Record today's open positions for the positions page's day-by-day view."""
     from pathlib import Path

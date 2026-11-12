@@ -80,10 +80,12 @@ def option_client():
 
 
 @functools.lru_cache(maxsize=2)
-def trading_client(paper: bool):
+def trading_client(paper: bool, key: str | None = None, secret: str | None = None):
+    """A trading client for the configured key pair, or for the pair given (a second account)."""
     from alpaca.trading.client import TradingClient
 
-    key, secret = credentials()
+    if not (key and secret):
+        key, secret = credentials()
     return TradingClient(key, secret, paper=paper)
 
 

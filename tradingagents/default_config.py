@@ -63,6 +63,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
     "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
+    "TRADINGAGENTS_MIRROR_ENABLED":          "mirror_enabled",
+    "TRADINGAGENTS_MIRROR_NAME":             "mirror_name",
 }
 
 
@@ -129,6 +131,9 @@ def build_default_config() -> dict:
         "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
         "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
         "sweep_state_path": os.getenv("TRADINGAGENTS_SWEEP_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "sweep_state.json"),
+        # The mirror account's ledger: the orders sent to keep it the exact opposite of
+        # the main account (mirror.py), and the names it could not mirror.
+        "mirror_state_path": os.getenv("TRADINGAGENTS_MIRROR_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "mirror_state.json"),
         # The lessons the daily and weekly reviews teach, read back by the deciding
         # agents and the Watcher before each call (see lessons.py).
         "lessons_path": os.getenv("TRADINGAGENTS_LESSONS_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "lessons.json"),
@@ -330,6 +335,10 @@ def build_default_config() -> dict:
         "daily_hedge": True,
         # Whether the worker places the day's book at the open (paper only
         # unless worker_allow_live). Off, it builds the book and watches only.
+        # The mirror account (API_KEY_VALYA / API_SECRET_VALYA): every equity position of
+        # the main account held the other way round, same size, followed after each pass.
+        "mirror_enabled": True,
+        "mirror_name": "Valya",
         "worker_place_book": True,
         # The daily worker (tradingagents worker). It trades by itself within these
         # limits: on a paper account unless worker_allow_live is turned on.
