@@ -116,6 +116,9 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     assert facts["exits_by_cause"] == {"stop": 1} and facts["entries"] == 3 and facts["book_held"] == 1
     assert len(facts["findings"]) == 2 and facts["sweep"]["queued"] == 2 and facts["sweep"]["decided_today"] == 1
     assert facts["build"].startswith("1.2026.11.09.22")
+    # TROW short from 109.10 with the book's stop at 111.36 (2.07% of risk), bought back at 111.50: a little over 1R lost.
+    assert facts["r"] == {"n": 1, "total": -1.06, "mean": -1.06} and facts["r_by_side"] == {"short": facts["r"]}
+    assert facts["decisions_r"] == {}                                    # nothing settled yet
 
     rev = daily.DailyReview(what_happened="TROW stopped out for -43.20.", what_worked="The stop guard fired within 5 s of the breach.",
                             what_did_not="TROW's stop sat 2.1% above entry, inside one day's range.",
@@ -128,6 +131,8 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     text = path.read_text()
     assert text.startswith("# Edinburgh daily report, 2026-11-09") and "**Risk Manager**: Place a short's stop" in text
     assert "| 15:50 | Exited | TROW |" in text and "-43.20" in text and "## Rule suggestions" in text
+    assert "**In R today** -1.06R over 1 exit, -1.06R each (short -1.06R over 1)" in text and "| -2.2% | -1.06R | stop |" in text
+    assert "In R today: -1.06R over 1 exit" in structured.prompt and "-1.06R on a 2.1% stop" in structured.prompt
     assert Lessons(cfg["lessons_path"]).for_agent("Risk Manager", as_of="2026-11-10")[0]["lesson"].startswith("Place a short's stop")
     assert json.loads((tmp_path / "reports" / "daily" / "2026-11-09.json").read_text())["review"]["lessons"][0]["agent"] == "Risk Manager"
     assert "## How sure the review is" in text and "**Confidence**: 0.6" in text
@@ -148,6 +153,7 @@ def test_the_weekly_report_aggregates_the_days_and_sets_the_standing_lessons(tmp
     assert [d["day"] for d in w["days"]] == ["2026-11-09"] and w["realised_week"] == -43.2
     assert w["by_cause"] == {"stop": {"n": 1, "pnl": -43.2}} and w["by_side"]["short"]["wins"] == 0
     assert w["daily_lessons"][0]["agent"] == "Watcher" and w["equity_start"] == 100_000 and w["equity_end"] == 99_800
+    assert w["r_week"] == {"n": 1, "total": -1.06, "mean": -1.06} and w["r_by_day"]["2026-11-09"]["total"] == -1.06
 
     rev = weekly.WeeklyReview(summary="s", by_agent="Risk Manager: stops too tight.",
                               standing_lessons=[daily.Lesson(agent="Desk", lesson="Stops inside one day's range fire on noise.", evidence="2 of 2 stops hit within hours")],
@@ -156,6 +162,7 @@ def test_the_weekly_report_aggregates_the_days_and_sets_the_standing_lessons(tmp
     path, got = weekly.run(cfg, "2026-11-13", wllm)
     assert "The week's daily lessons:" in structured.prompt and "Replace a short with a short" in structured.prompt
     assert "## Standing lessons (carried forward)" in path.read_text() and "| stop | 1 | -43.20 |" in path.read_text()
+    assert "In R over the week: -1.06R over 1 exit" in structured.prompt and "| 2026-11-09 | -43.20 | -1.06R |" in path.read_text()
     standing = Lessons(cfg["lessons_path"]).standing
     assert len(standing) == 1 and standing[0]["since"] == "2026-11-13"
     from tradingagents.feedback import FeedbackStore

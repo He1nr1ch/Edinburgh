@@ -78,7 +78,8 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
             order_id = trading.submit_market_order(a.symbol, a.qty, a.side)
             held = next((h for h in context.account.holdings if h.symbol.upper() == a.symbol.upper()), None)
             context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason,
-                                       entry_price=held.avg_entry_price if held and a.kind in ("exit", "trim") else None)
+                                       entry_price=held.avg_entry_price if held and a.kind in ("exit", "trim") else None,
+                                       stop=a.stop if a.kind in ("open", "replace") else None)
             if a.kind == "replace":
                 context.state.book[a.symbol.upper()] = {"placed_on": context.now.strftime("%Y-%m-%d"),
                                                         "side": "long" if a.side == "buy" else "short",
@@ -288,7 +289,8 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             except Exception as exc:
                 _log(config, now, f"  failed: {o['ticker']}: {exc}")
                 continue
-            state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason)
+            state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason,
+                               stop=float(o["stop"]) if o.get("stop") else None)
             state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": float(o["value"])}
             gross += float(o["value"])
             placed.append(o["ticker"])
@@ -382,7 +384,7 @@ def summarize_day(config: dict, day: str) -> str:
     except Exception as exc:      # the list still goes out, without fill prices
         logger.warning("Fill prices for %s could not be read: %s", day, exc)
         fills = {}
-    lines = [summarize(transactions_on(state, day, fills), day)]
+    lines = [summarize(transactions_on(state, day, fills, config=config), day)]
     log = Path(config["results_dir"]) / "worker" / f"{day}.log"
     if log.is_file():
         notable = [line for line in log.read_text(encoding="utf-8").splitlines() if "[urgent]" in line or "[notable]" in line]

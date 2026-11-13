@@ -185,20 +185,32 @@ def feedback_copy(
 def scorecard(
     ticker: str = typer.Option(None, "--ticker", help="Also list this ticker's settled decisions"),
     as_of: str = typer.Option(None, "--as-of", help="Only outcomes known by this date, YYYY-MM-DD"),
+    score_r: bool = typer.Option(False, "--score-r", help="First fill in R for the decisions settled before R was kept (fetches their prices again)"),
 ):
-    """Show the feedback loop's track record: each agent's hit rate and settled decisions."""
+    """Show the feedback loop's track record: each agent's hit rate, the result in R, and settled decisions."""
     from tradingagents.feedback import FeedbackStore
 
     store = FeedbackStore(DEFAULT_CONFIG)
     if not store.enabled:
         console.print("[yellow]No feedback store is configured (TRADINGAGENTS_FEEDBACK_DB_URL).[/yellow]")
         raise typer.Exit(code=1)
+    if score_r:
+        from tradingagents.memory.settlement import fetch_window
+
+        done, failed = store.score_r(fetch_window)
+        console.print(f"R filled in for {done} settled decision(s)" + (f"; {len(failed)} could not be scored:" if failed else "."))
+        for ticker, day, reason in failed:
+            console.print(f"  {ticker} {day}: {reason}")
     pending = store.pending()
     text = store.render_context(ticker or "", as_of=as_of)
     if text:
         console.print(text)
     else:
         console.print("No settled decisions yet.")
+    record = store.r_record(as_of=as_of)
+    if record:
+        console.print("\nIn R (each call trading its own stop and target over its window): "
+                      + "; ".join(f"{name} {s['mean']:+.2f}R each over {s['n']} (total {s['total']:+.2f}R)" for name, s in record.items()))
     if pending:
         console.print(f"\n{len(pending)} decision(s) pending settlement: "
                       + ", ".join(f"{p['ticker']} {p['trade_date']}" for p in pending))
@@ -504,7 +516,7 @@ def transactions(
                 cache[d] = {}
         return cache[d]
 
-    console.print(summarize(transactions_on(state, day, fills_for(day), fills_for), day))
+    console.print(summarize(transactions_on(state, day, fills_for(day), fills_for, config=DEFAULT_CONFIG), day))
 
 
 @app.command()

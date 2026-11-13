@@ -15,6 +15,7 @@ from sqlalchemy.engine import Engine
 from tradingagents.agents.rating import RATING_REVIEW, run_rating
 from tradingagents.feedback import extract, scoring
 from tradingagents.feedback.schema import (
+    add_missing_columns,
     agent_scores,
     agent_verdicts,
     decisions,
@@ -52,6 +53,7 @@ class FeedbackStore:
         cfg = config or {}
         self.hold_band_pct = float(cfg.get("feedback_hold_band_pct", 2.0))
         self.context_decisions = int(cfg.get("feedback_context_decisions", 30))
+        self.default_stop_pct = float(cfg.get("default_stop_pct") or 2.0)
         self.engine = engine
         url = cfg.get("feedback_db_url")
         if self.engine is None and url:
@@ -63,6 +65,8 @@ class FeedbackStore:
             self.engine = create_engine(url, future=True)
         if self.engine is not None:
             metadata.create_all(self.engine)
+            for column in add_missing_columns(self.engine):
+                logger.info("The feedback store gained the column %s", column)
 
     @property
     def enabled(self) -> bool:
@@ -171,7 +175,8 @@ class FeedbackStore:
         """Write the outcome and the agent scores for ``decision`` over ``window``
         (a ``memory.settlement.Window``)."""
         scored = scoring.score(decision, window.raw_return, float(window.closes.min()),
-                               float(window.closes.max()), self.hold_band_pct)
+                               float(window.closes.max()), self.hold_band_pct,
+                               closes=window.closes, default_stop_pct=self.default_stop_pct)
         entry = window.entry
         outcome = {
             "decision_id": decision["id"], "settled_at": datetime.now(),
@@ -181,7 +186,7 @@ class FeedbackStore:
             "max_drawdown": float(window.closes.min() / entry - 1), "max_runup": float(window.closes.max() / entry - 1),
             "direction": scored.direction, "directional_return": scored.directional_return,
             "weighted_return": scored.weighted_return, "stop_hit": scored.stop_hit,
-            "verdict": scored.verdict, "reflection": reflection,
+            "r_multiple": scored.r_multiple, "verdict": scored.verdict, "reflection": reflection,
         }
         with self.engine.begin() as conn:
             conn.execute(outcomes.delete().where(outcomes.c.decision_id == decision["id"]))
@@ -212,6 +217,53 @@ class FeedbackStore:
             self.settle(decision, window, reflections(ticker, date) if reflections else None)
             result.settled.append((ticker, date))
         return result
+
+    def score_r(self, fetch_window: Callable) -> tuple[int, list[tuple[str, str, str]]]:
+        """Fill in R for the decisions settled before R was kept: how many were scored, and those that could not be.
+
+        Each directional outcome without an R has its window fetched again
+        (``fetch_window`` as in ``settle_due``) and its R written; nothing else
+        about the outcome changes.
+        """
+        if not self.enabled:
+            return 0, []
+        with self.engine.connect() as conn:
+            rows = [dict(r) for r in self._settled(conn, None) if r["r_multiple"] is None and r["direction"]]
+        done, failed = 0, []
+        for row in rows:
+            ticker, date = row["ticker"], row["trade_date"]
+            try:
+                window = fetch_window(ticker, date, row["holding_days"], row["benchmark"])
+            except Exception as exc:
+                failed.append((ticker, date, f"prices unavailable: {exc}"))
+                continue
+            stop = row["rm_stop_loss"] if row["rm_stop_loss"] is not None else row["trader_stop_loss"]
+            r = scoring.window_r(row["direction"], window.closes, stop, row["price_target"],
+                                 self.default_stop_pct) if window is not None else None
+            if r is None:
+                failed.append((ticker, date, "no window or no risk to measure against"))
+                continue
+            with self.engine.begin() as conn:
+                conn.execute(outcomes.update().where(outcomes.c.decision_id == row["id"]).values(r_multiple=r))
+            done += 1
+        return done, failed
+
+    def r_record(self, as_of: str | None = None, exited_on: str | None = None) -> dict:
+        """R over the settled directional decisions: all of them, and by side.
+
+        ``exited_on`` keeps only the outcomes whose window closed that day.
+        Each entry is ``{"n", "total", "mean"}``; a side with nothing scored is left out.
+        """
+        if not self.enabled:
+            return {}
+        with self.engine.connect() as conn:
+            rows = [r for r in self._settled(conn, as_of) if exited_on is None or r["exit_date"] == exited_on]
+        out = {}
+        for name, keep in (("all", lambda r: True), ("long", lambda r: r["direction"] > 0), ("short", lambda r: r["direction"] < 0)):
+            summary = scoring.r_summary(r["r_multiple"] for r in rows if keep(r))
+            if summary:
+                out[name] = summary
+        return out
 
     def attach_reflection(self, ticker: str, trade_date: str, reflection: str) -> None:
         """Keep the memory log's lesson with the outcome once it exists."""

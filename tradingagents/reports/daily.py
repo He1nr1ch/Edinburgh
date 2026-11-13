@@ -77,7 +77,7 @@ def gather(config: dict, day: str) -> dict:
     from tradingagents.book import load_rows
     from tradingagents.feedback import FeedbackStore
     from tradingagents.web import snapshots
-    from tradingagents.web.transactions import realised, transactions_on
+    from tradingagents.web.transactions import realised, realised_r, transactions_on
     from tradingagents.worker.state import WorkerState
 
     results = Path(config["results_dir"])
@@ -97,7 +97,7 @@ def gather(config: dict, day: str) -> dict:
                 cache[d] = {}
         return cache[d]
 
-    txns = transactions_on(state, day, fills_for(day) if state.orders_on(day) else {}, fills_for)
+    txns = transactions_on(state, day, fills_for(day) if state.orders_on(day) else {}, fills_for, config=config)
     for t in txns:
         t["cause"] = _cause(t["reason"])
     exits = [t for t in txns if t["flow"] == "out"]
@@ -134,10 +134,11 @@ def gather(config: dict, day: str) -> dict:
     decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{day}.json")))
 
     try:
-        card = FeedbackStore(config).scorecard()
+        store = FeedbackStore(config)
+        card, decisions_r = store.scorecard(), store.r_record()
     except Exception as exc:
         logger.warning("The feedback scorecard could not be read: %s", exc)
-        card = {}
+        card, decisions_r = {}, {}
 
     return {
         "day": day,
@@ -145,6 +146,10 @@ def gather(config: dict, day: str) -> dict:
         "equity": snap.get("equity"), "cash": snap.get("cash"), "prior_equity": prior.get("equity"),
         "equity_change": (snap.get("equity") - prior.get("equity")) if snap.get("equity") and prior.get("equity") else None,
         "realised": realised(txns), "unrealised": round(unrealised, 2) if positions else None,
+        # The day in R: each exit's result over the risk to the stop it was opened with.
+        "r": realised_r(txns),
+        "r_by_side": {side: s for side in ("long", "short") if (s := realised_r([t for t in txns if t["position"] == side]))},
+        "decisions_r": decisions_r,
         "positions": positions, "transactions": txns,
         "exits_by_cause": dict(Counter(t["cause"] for t in exits)),
         "entries": sum(1 for t in txns if t["flow"] == "in"),
@@ -170,13 +175,17 @@ def _facts_text(f: dict) -> str:
                      f"Equity {f['equity']:,.0f}{change}; cash {f['cash']:,.0f}; nothing realised today")
         if f["unrealised"] is not None:
             lines.append(f"Unrealised across {len(f['positions'])} open positions: {f['unrealised']:+,.0f}")
+    if f.get("r"):
+        lines.append(_r_line(f) + ". R is an exit's result over the risk it was opened with (entry to stop): "
+                     "a stop-out is about -1R, and the mean R per exit is the desk's edge")
     lines.append(f"Entries {f['entries']}; exits by cause {f['exits_by_cause'] or 'none'}")
     if f["book"]:
         lines.append(f"Book this morning: {len(f['book'])} orders, {f['book_held']} held at the close")
     if f["transactions"]:
         lines.append("Transactions:")
         for t in f["transactions"]:
-            res = f", P/L {t['pnl']:+,.2f} ({t['pnl_pct']:+.1f}%)" if t["pnl"] is not None else ""
+            in_r = f", {t['r']:+.2f}R on a {t['risk_pct']:.1f}% stop" if t.get("r") is not None else ""
+            res = f", P/L {t['pnl']:+,.2f} ({t['pnl_pct']:+.1f}%{in_r})" if t["pnl"] is not None else ""
             lines.append(f"- {t['time']} {t['action']} {t['position']} {t['ticker']} {t['qty']}{res}: {t['reason'][:220]}")
     if f["positions"]:
         lines.append("Open positions at the close (P/L %, distance to stop, distance to target, rating):")
@@ -214,7 +223,21 @@ def _facts_text(f: dict) -> str:
             if st.get("n"):
                 mean = f", {st['mean']:+.1%}" if st.get("mean") is not None else ""
                 lines.append(f"- {agent}: {st['hits']}/{st['n']}{mean}")
+    if f.get("decisions_r"):
+        lines.append("Settled decisions in R (each call trading its own stop and target over its window): " + _decisions_r_text(f["decisions_r"]))
     return "\n".join(lines)
+
+
+def _r_line(f: dict) -> str:
+    """The day's exits in R, with each side's share."""
+    from tradingagents.web.transactions import r_text
+
+    sides = "; ".join(f"{side} {s['total']:+.2f}R over {s['n']}" for side, s in (f.get("r_by_side") or {}).items())
+    return f"In R today: {r_text(f['r'])}" + (f" ({sides})" if sides else "")
+
+
+def _decisions_r_text(record: dict) -> str:
+    return "; ".join(f"{name} {s['mean']:+.2f}R each over {s['n']}" for name, s in record.items())
 
 
 def _prompt(facts: dict, prior_lessons: str) -> str:
@@ -272,6 +295,9 @@ def render(facts: dict, rev: DailyReview | None) -> str:
                    f"**Equity** {f['equity']:,.0f}{change} · **cash** {f['cash']:,.0f} · nothing realised")
         if f["unrealised"] is not None:
             out.append(f"**Unrealised** {f['unrealised']:+,.0f} across {len(f['positions'])} positions")
+    if f.get("r"):
+        out.append("  \n**" + _r_line(f).replace("In R today:", "In R today**", 1)
+                   + " · *R is an exit's result over the risk to the stop it was opened with*")
     out.append("")
     if rev:
         out += ["## What happened", rev.what_happened, "", "## What worked", rev.what_worked, "",
@@ -286,11 +312,11 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out += ["## Review", "The model did not return a review in form; the facts below stand on their own.", ""]
     out.append("## Transactions")
     if f["transactions"]:
-        out += ["| Time | Action | Ticker | Side | Shares | Fill | P/L | P/L % | Cause | Why |", "|---|---|---|---|---:|---:|---:|---:|---|---|"]
+        out += ["| Time | Action | Ticker | Side | Shares | Fill | P/L | P/L % | R | Cause | Why |", "|---|---|---|---|---:|---:|---:|---:|---:|---|---|"]
         for t in f["transactions"]:
             out.append(f"| {t['time']} | {t['action']} | {t['ticker']} | {t['position']} | {t['qty']} | "
                        f"{t['price'] if t['price'] else '—'} | {f'{t['pnl']:+,.2f}' if t['pnl'] is not None else '—'} | "
-                       f"{f'{t['pnl_pct']:+.1f}%' if t['pnl_pct'] is not None else '—'} | {t['cause']} | {t['reason'][:140].replace('|', '/')} |")
+                       f"{f'{t['pnl_pct']:+.1f}%' if t['pnl_pct'] is not None else '—'} | {f'{t['r']:+.2f}R' if t.get('r') is not None else '—'} | {t['cause']} | {t['reason'][:140].replace('|', '/')} |")
     else:
         out.append("No orders were sent.")
     out.append("")
@@ -339,6 +365,11 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         for agent, st in f["scorecard"].items():
             if st.get("n"):
                 out.append(f"| {agent} | {st['hits']}/{st['n']} | {f'{st['mean']:+.1%}' if st.get('mean') is not None else '—'} |")
+        out.append("")
+    if f.get("decisions_r"):
+        out += ["## Settled decisions in R", "Each call trading its own stop and target over its holding window.", "",
+                "| Calls | Scored | Total | Mean per call |", "|---|---:|---:|---:|"]
+        out += [f"| {name} | {s['n']} | {s['total']:+.2f}R | {s['mean']:+.2f}R |" for name, s in f["decisions_r"].items()]
         out.append("")
     return "\n".join(out)
 

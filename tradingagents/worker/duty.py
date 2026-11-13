@@ -23,6 +23,7 @@ class Action:
     qty: int
     reason: str
     value: float | None = None      # what the order is worth at the price it was sized at
+    stop: float | None = None       # the stop an opening order carries, kept with the order for its R
 
 
 @dataclass

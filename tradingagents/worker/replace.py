@@ -167,6 +167,6 @@ class ReplacementDuty:
                 f"{pick['side']} {pick['ticker']} replaces {ticker}",
                 reason + "\n".join(envelope_lines(choice)) + "\n\nCandidates by score: " + ", ".join(f"{o['ticker']} {o['live_score']:.2f}" for o in options),
                 Action(pick["ticker"], "replace", "buy" if pick["side"] == "long" else "sell", qty, reason,
-                       value=qty * pick["live_price"]),
+                       value=qty * pick["live_price"], stop=float(pick["stop"]) if pick.get("stop") else None),
             ))
         return findings

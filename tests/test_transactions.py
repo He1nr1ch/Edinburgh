@@ -111,3 +111,42 @@ def test_an_exit_sent_by_the_watcher_records_the_positions_entry_price(tmp_path,
     ctx = WorkerContext(Account(100_000, 0, True, (Holding("LEN", -54, -4_950.0, 90.08, "us_equity"),)), datetime.now(UTC), cfg, state)
     runner._act(Finding("stops", "LEN", "urgent", "h", "d", Action("LEN", "exit", "buy", 54, "stop")), ctx, True, set(), {}, False)
     assert state.orders[-1]["entry_price"] == 90.08
+
+
+@pytest.mark.unit
+def test_an_exit_states_its_result_in_r_over_the_risk_it_was_opened_with(tmp_path):
+    import json
+
+    s = WorkerState.load(tmp_path / "state.json")
+    at = lambda d, h, m: datetime(2026, 11, d, h, m, tzinfo=UTC)  # noqa: E731
+    s.record_order("GD", "open", "buy", 16, "in1", at(6, 14, 30), "the day's book", stop=350.0)          # the stop kept with the order
+    s.record_order("GD", "exit", "sell", 16, "out1", at(9, 16, 0), "target", entry_price=358.05)
+    s.record_order("TROW", "open", "sell", 18, "in2", at(6, 14, 30), "the day's book (b.csv)")            # from before stops were kept
+    s.record_order("TROW", "exit", "buy", 18, "out2", at(9, 15, 50), "stop", entry_price=109.10)
+    s.record_order("ACGL", "replace", "buy", 18, "in3", at(6, 15, 0), "replaces X")                       # no book row: its decision's stop
+    s.record_order("ACGL", "trim", "sell", 9, "out3", at(9, 15, 55), "news", entry_price=100.0)
+    s.record_order("LEN", "open", "buy", 10, "in4", at(6, 14, 30), "the day's book (b.csv)")              # no stop anywhere: the default
+    s.record_order("LEN", "exit", "sell", 10, "out4", at(9, 15, 58), "stop", entry_price=100.0)
+    (tmp_path / "b.csv").write_text("ticker,side,stop\nTROW,short,111.36\nLEN,long,\n")
+    s.day("2026-11-06")["book_path"] = str(tmp_path / "b.csv")
+    for day, stop in (("2026-11-05", 96.0), ("2026-11-09", 99.0)):                                          # the later decision does not move the risk
+        folder = tmp_path / "backtest" / "r" / "ACGL" / "TradingAgentsStrategy_logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"full_states_log_{day}.json").write_text(json.dumps({
+            "company_of_interest": "ACGL", "final_rating": "Buy", "risk_assessment": f"**Stop Loss**: {stop}\n"}))
+    fills = {"out1": {"filled_avg_price": 379.53}, "out2": {"filled_avg_price": 111.50},
+             "out3": {"filled_avg_price": 106.0}, "out4": {"filled_avg_price": 97.0}}
+    cfg = {"results_dir": str(tmp_path), "default_stop_pct": 2.0}
+
+    rows = {r["ticker"]: r for r in transactions.transactions_on(s, "2026-11-09", fills, config=cfg)}
+
+    assert (rows["GD"]["stop"], rows["GD"]["risk_pct"], rows["GD"]["r"]) == (350.0, 2.25, 2.67)           # +6% on a 2.25% stop
+    assert (rows["TROW"]["stop"], rows["TROW"]["risk_pct"], rows["TROW"]["r"]) == (111.36, 2.07, -1.06)   # through the stop: a little over 1R
+    assert (rows["ACGL"]["stop"], rows["ACGL"]["risk_pct"], rows["ACGL"]["r"]) == (96.0, 4.0, 1.5)        # a trim is scored like an exit
+    assert (rows["LEN"]["stop"], rows["LEN"]["risk_pct"], rows["LEN"]["r"]) == (98.0, 2.0, -1.5)
+    summary = transactions.realised_r(list(rows.values()))
+    assert summary == {"n": 4, "total": 1.61, "mean": 0.4}
+    text = transactions.summarize(list(rows.values()), "2026-11-09")
+    assert "+1.61R over 4 exits, +0.40R each." in text and "(-2.2%, -1.06R on a 2.1% stop)" in text
+    without = transactions.transactions_on(s, "2026-11-09", fills)                                        # no config: no R, as before
+    assert all(r["r"] is None for r in without) and transactions.realised_r(without) is None

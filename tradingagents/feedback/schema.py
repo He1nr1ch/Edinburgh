@@ -78,6 +78,7 @@ outcomes = Table(
     Column("directional_return", Float, nullable=False),         # raw_return * direction
     Column("weighted_return", Float),                            # directional_return * position_size_pct / 100
     Column("stop_hit", Boolean),
+    Column("r_multiple", Float),                                 # the result in R: return over the risk to the stop; NULL for a Hold
     Column("verdict", String(16), nullable=False),               # win | loss | flat | missed | avoided
     Column("reflection", Text),
 )
@@ -135,3 +136,34 @@ desk_verdicts = Table(
     Column("attempts", Integer),
     Column("error", Text),
 )
+
+
+def add_missing_columns(engine) -> list[str]:
+    """Add the columns a table lacks, for a database made before they existed.
+
+    ``create_all`` makes missing tables but leaves an existing one as it is.
+    Only columns that may be NULL are added, so the rows already there stand.
+    Returns what was added, as ``table.column``.
+    """
+    from sqlalchemy import inspect, text
+
+    added = []
+    present = inspect(engine)
+    for table in metadata.sorted_tables:
+        if not present.has_table(table.name):
+            continue
+        had = {c["name"] for c in present.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in had or not column.nullable:
+                continue
+            kind = column.type.compile(dialect=engine.dialect)
+            try:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {kind}"))
+            except Exception:
+                # Another process sharing the database may have added it in the meantime.
+                if column.name not in {c["name"] for c in inspect(engine).get_columns(table.name)}:
+                    raise
+                continue
+            added.append(f"{table.name}.{column.name}")
+    return added

@@ -57,6 +57,9 @@ def gather(config: dict, week_ending: str) -> dict:
             by_side[t["position"]]["pnl"] += t["pnl"]
             by_side[t["position"]]["wins"] += int(t["pnl"] > 0)
     realised = [d.get("realised") for d in days if d.get("realised") is not None]
+    from tradingagents.feedback.scoring import r_summary
+
+    r_by_side = {side: s for side in ("long", "short") if (s := r_summary(t.get("r") for t in exits if t["position"] == side))}
     first, last = (days[0], days[-1]) if days else ({}, {})
     lessons = Lessons(config["lessons_path"])
     return {
@@ -64,6 +67,10 @@ def gather(config: dict, week_ending: str) -> dict:
         "equity_start": first.get("prior_equity") or first.get("equity"), "equity_end": last.get("equity"),
         "realised_week": round(sum(realised), 2) if realised else None,
         "by_day": [(d["day"], d.get("realised"), d.get("equity")) for d in days],
+        # The week in R: each exit's result over the risk to the stop it was opened with.
+        "r_week": r_summary(t.get("r") for t in exits), "r_by_side": r_by_side,
+        "r_by_day": {d["day"]: d["r"] for d in days if d.get("r")},
+        "decisions_r": last.get("decisions_r") or {},
         "exits": len(exits), "entries": sum(d.get("entries", 0) for d in days),
         "by_cause": dict(by_cause), "by_side": dict(by_side),
         "daily_lessons": [l for d in days for l in ((d.get("review") or {}).get("lessons") or [])],
@@ -79,6 +86,9 @@ def _facts_text(w: dict) -> str:
         lines.append(f"Equity {w['equity_start']:,.0f} → {w['equity_end']:,.0f} ({w['equity_end'] - w['equity_start']:+,.0f})")
     if w["realised_week"] is not None:
         lines.append(f"Realised over the week: {w['realised_week']:+,.2f}")
+    if w.get("r_week"):
+        lines.append(_r_line(w) + ". R is an exit's result over the risk it was opened with (entry to stop): "
+                     "a stop-out is about -1R, and the mean R per exit is the desk's edge")
     lines.append("By day (realised, equity at close): " + "; ".join(
         f"{d} {r:+,.0f}" if r is not None else f"{d} —" for d, r, _ in w["by_day"]))
     lines.append(f"Entries {w['entries']}, exits {w['exits']}. Exits by cause: "
@@ -88,6 +98,9 @@ def _facts_text(w: dict) -> str:
         lines.append("Feedback scorecard (settled decisions): " + "; ".join(
             f"{a} {st['hits']}/{st['n']}" + (f" ({st['mean']:+.1%})" if st.get("mean") is not None else "")
             for a, st in w["scorecard"].items() if st.get("n")))
+    if w.get("decisions_r"):
+        lines.append("Settled decisions in R (each call trading its own stop and target over its window): "
+                     + "; ".join(f"{name} {s['mean']:+.2f}R each over {s['n']}" for name, s in w["decisions_r"].items()))
     for d in w["days"]:
         rev = d.get("review") or {}
         if rev:
@@ -99,6 +112,14 @@ def _facts_text(w: dict) -> str:
         lines.append("\nStanding lessons before this week:")
         lines += [f"- ({l.get('since')}) {l['agent']}: {l['lesson']}" for l in w["standing"]]
     return "\n".join(lines)
+
+
+def _r_line(w: dict) -> str:
+    """The week's exits in R, with each side's share."""
+    from tradingagents.web.transactions import r_text
+
+    sides = "; ".join(f"{side} {s['total']:+.2f}R over {s['n']}" for side, s in (w.get("r_by_side") or {}).items())
+    return f"In R over the week: {r_text(w['r_week'])}" + (f" ({sides})" if sides else "")
 
 
 def _prompt(w: dict) -> str:
@@ -126,8 +147,12 @@ def render(w: dict, rev: WeeklyReview | None) -> str:
     if w["equity_start"] and w["equity_end"]:
         out.append(f"**Equity** {w['equity_start']:,.0f} → {w['equity_end']:,.0f} ({w['equity_end'] - w['equity_start']:+,.0f})"
                    + (f" · **realised** {w['realised_week']:+,.2f}" if w["realised_week"] is not None else ""))
-    out += ["", "| Day | Realised | Equity at close |", "|---|---:|---:|"]
-    out += [f"| {d} | {f'{r:+,.2f}' if r is not None else '—'} | {f'{e:,.0f}' if e else '—'} |" for d, r, e in w["by_day"]]
+    if w.get("r_week"):
+        out += ["", _r_line(w) + ". *R is an exit's result over the risk to the stop it was opened with.*"]
+    by_day_r = w.get("r_by_day") or {}
+    out += ["", "| Day | Realised | R | Equity at close |", "|---|---:|---:|---:|"]
+    out += [f"| {d} | {f'{r:+,.2f}' if r is not None else '—'} | {f'{by_day_r[d]['total']:+.2f}R' if d in by_day_r else '—'} | "
+            f"{f'{e:,.0f}' if e else '—'} |" for d, r, e in w["by_day"]]
     out += ["", f"**Entries** {w['entries']} · **exits** {w['exits']}", "", "| Exit cause | Count | P/L |", "|---|---:|---:|"]
     out += [f"| {c} | {v['n']} | {v['pnl']:+,.2f} |" for c, v in w["by_cause"].items()]
     out += ["", "| Side | Exits | Winners | P/L |", "|---|---:|---:|---:|"]

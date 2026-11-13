@@ -317,3 +317,68 @@ def test_the_risk_manager_is_shown_the_track_record():
     create_risk_manager(llm)(state)
 
     assert "Aggressive 0/2 right" in captured["prompt"]
+
+
+# --- R: the result over the risk to the stop ------------------------------------------
+
+@pytest.mark.unit
+@pytest.mark.parametrize("direction, entry, stop, expected", [
+    (1, 100.0, 98.0, 0.02),        # a long's stop below its entry
+    (-1, 100.0, 104.0, 0.04),      # a short's stop above it
+    (1, 100.0, 103.0, 0.02),       # a stop on the profit side protects nothing: the default
+    (1, 100.0, None, 0.02),        # no stop: the default
+    (0, 100.0, 98.0, None),        # a Hold risks nothing
+])
+def test_the_risk_is_the_distance_to_the_stop_or_the_default(direction, entry, stop, expected):
+    risk = scoring.risk_fraction(direction, entry, stop, 2.0)
+    assert risk == (pytest.approx(expected) if expected is not None else None)
+
+
+@pytest.mark.unit
+def test_r_is_the_result_over_the_risk():
+    assert scoring.r_multiple(0.06, 0.02) == pytest.approx(3.0)        # +6% on a 2% stop
+    assert scoring.r_multiple(-0.02, 0.02) == pytest.approx(-1.0)      # a stop-out
+    assert scoring.r_multiple(0.06, None) is None and scoring.r_multiple(None, 0.02) is None
+
+
+@pytest.mark.unit
+def test_a_window_is_scored_in_r_trading_its_own_levels():
+    assert scoring.window_r(1, [100, 101, 103, 102, 104, 105], 98.0, 110.0, 2.0) == pytest.approx(2.5)     # held to the end
+    assert scoring.window_r(1, [100, 99, 97.5, 104, 108, 110], 98.0, 110.0, 2.0) == pytest.approx(-1.25)   # stopped; the recovery is not earned
+    assert scoring.window_r(1, [100, 103, 106.5, 101, 99, 97], 98.0, 106.0, 2.0) == pytest.approx(3.25)    # target taken; the fall is not suffered
+    assert scoring.window_r(-1, [100, 98, 96, 95, 94, 94], 104.0, 90.0, 2.0) == pytest.approx(1.5)         # a short, 4% risk
+    assert scoring.window_r(-1, [100, 105, 90, 90, 90, 90], 104.0, 90.0, 2.0) == pytest.approx(-1.25)      # a short stopped
+    assert scoring.window_r(1, [100, 101, 102, 103, 104, 105], None, None, 2.0) == pytest.approx(2.5)      # no stop: the default
+    assert scoring.window_r(0, [100, 101], 98.0, None, 2.0) is None
+
+
+@pytest.mark.unit
+def test_settling_keeps_r_with_the_outcome(store):
+    store.record("NVDA", "2026-01-05", _state())                    # Buy; stop 209 on an entry of 220: 5% risk
+    store.record("AAPL", "2026-01-05", _state(final_rating="Hold", final_trade_decision="**Rating**: Hold"))
+    store.settle_due(lambda t, d, days, bench: _window([220.0, 224.0, 217.8, 226.0, 230.0, 233.2]))
+    with store.engine.connect() as conn:
+        r = dict(conn.execute(select(decisions.c.ticker, outcomes.c.r_multiple).join(outcomes)).all())
+    assert r["NVDA"] == pytest.approx(0.06 / 0.05) and r["AAPL"] is None
+    record = store.r_record()
+    assert record["all"] == record["long"] == {"n": 1, "total": 1.2, "mean": 1.2} and "short" not in record
+    assert store.r_record(exited_on="2026-01-13")["all"]["n"] == 1 and store.r_record(exited_on="2026-01-14") == {}
+
+
+@pytest.mark.unit
+def test_a_database_from_before_r_gains_the_column_and_its_outcomes_can_be_scored():
+    engine = create_engine("sqlite://")
+    old = FeedbackStore({}, engine=engine)
+    old.record("NVDA", "2026-01-05", _state())
+    old.settle_due(lambda *a: _window([220.0, 224.0, 217.8, 226.0, 230.0, 233.2]))
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE outcomes DROP COLUMN r_multiple")     # as the table was before R
+
+    store = FeedbackStore({}, engine=engine)                                    # opening it adds the column
+
+    with engine.connect() as conn:
+        assert conn.execute(select(outcomes.c.r_multiple)).scalar() is None
+    assert store.r_record() == {}
+    done, failed = store.score_r(lambda *a: _window([220.0, 224.0, 217.8, 226.0, 230.0, 233.2]))
+    assert (done, failed) == (1, []) and store.r_record()["all"]["mean"] == 1.2
+    assert store.score_r(lambda *a: 1 / 0) == (0, [])                           # nothing left to score, nothing fetched
