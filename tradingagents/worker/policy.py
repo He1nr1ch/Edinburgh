@@ -11,6 +11,8 @@ fixed rules, so the same judgement always leads to the same order:
 from __future__ import annotations
 
 import math
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from tradingagents.dataflows.vendors.alpaca.trading import Holding
 from tradingagents.worker.duty import Action
@@ -43,8 +45,27 @@ def action_for(holding: Holding, materiality: str, direction: str, surprise: boo
     return None
 
 
+ET = ZoneInfo("America/New_York")
+
+
+def _now() -> datetime:
+    return datetime.now(ET)
+
+
+def too_early(config: dict, now: datetime | None = None) -> str | None:
+    """Why no order may go out yet today, or None once ``worker_trade_from`` (ET) has come."""
+    start = str(config.get("worker_trade_from") or "").strip()
+    if not start:
+        return None
+    hour, minute = (int(x) for x in start.split(":"))
+    local = (now or _now()).astimezone(ET)
+    if (local.hour, local.minute) < (hour, minute):
+        return f"no trades before {hour:02d}:{minute:02d} ET (worker_trade_from)"
+    return None
+
+
 def refusal(action: Action, *, market_open: bool, paper: bool, pending: set[str],
-            config: dict) -> str | None:
+            config: dict, now: datetime | None = None) -> str | None:
     """Why the guardrails stop ``action``, or None when it may be sent.
 
     There is no limit on orders a day: a symbol trades again whenever new news
@@ -58,6 +79,9 @@ def refusal(action: Action, *, market_open: bool, paper: bool, pending: set[str]
         return "the account is live and worker_allow_live is off"
     if not market_open:
         return "the market is closed"
+    early = too_early(config, now)
+    if early:
+        return early
     if action.symbol in pending:
         return f"an earlier order for {action.symbol} has not filled yet"
     return None

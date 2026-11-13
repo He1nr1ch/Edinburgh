@@ -184,6 +184,12 @@ def follow(config: dict, dry_run: bool = False, main: Account | None = None, mar
     if not market_open:
         _log(config, now, f"{len(todo)} order(s) wanted for {name} but the market is closed; next pass")
         return []
+    from tradingagents.worker.policy import too_early
+
+    early = too_early(config)
+    if early:
+        _log(config, now, f"{len(todo)} order(s) wanted for {name}; {early}")
+        return []
     sent = []
     for o in todo:
         label = f"{o['side']} {o['qty']} {o['symbol']} ({o['why']})"

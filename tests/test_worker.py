@@ -249,3 +249,142 @@ def test_the_watcher_judges_news_against_the_desks_case(tmp_path, monkeypatch):
     news.WatcherDuty().run(ctx)
     failed = FeedbackStore(cfg).desk_verdicts(kind="news")[-1]
     assert not failed["ok"] and "not the schema" in failed["error"] and failed["call"] is None
+
+
+@pytest.mark.unit
+def test_a_decision_for_the_other_side_does_not_speak_for_the_position(tmp_path):
+    """The review closes a long now rated Underweight; until it has, the short's stop above the price is not the long's."""
+    from tradingagents.web import data
+    from tradingagents.worker.stops import StopDuty, TargetDuty, standing_stop, standing_target
+
+    _decision(tmp_path, "CPAY", "2026-11-12", final_rating="Underweight",
+              risk_assessment="**Maximum Position**: 2\n\n**Stop Loss**: 483.50\n", final_trade_decision="**Price Target**: 405\n")
+    _decision(tmp_path, "GD", "2026-11-12", final_rating="Overweight",
+              risk_assessment="**Maximum Position**: 2\n\n**Stop Loss**: 337.00\n", final_trade_decision="**Price Target**: 395\n")
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "default_stop_pct": 2.0}
+    long_cpay = Holding("CPAY", 9, 9 * 459.37, 459.74, "us_equity")       # long, the desk now says short
+    short_gd = Holding("GD", -11, -11 * 364.94, 364.65, "us_equity")      # short, the desk now says long
+    decisions = data.find_decisions(tmp_path)
+
+    assert standing_stop(long_cpay, decisions, 2.0) == (pytest.approx(450.55, abs=0.01), "default 2%")
+    assert standing_stop(short_gd, decisions, 2.0) == (pytest.approx(371.94, abs=0.01), "default 2%")
+    assert standing_target(long_cpay, decisions) is None and standing_target(short_gd, decisions) is None
+
+    ctx = WorkerContext(Account(100_000, 0, True, (long_cpay, short_gd)), datetime.now(UTC), cfg, None)
+    assert StopDuty().run(ctx) == [] and TargetDuty().run(ctx) == []
+
+    # The default still guards it: 2% against the long from its entry closes it.
+    fallen = Holding("CPAY", 9, 9 * 449.0, 459.74, "us_equity")
+    ctx = WorkerContext(Account(100_000, 0, True, (fallen,)), datetime.now(UTC), cfg, None)
+    assert [(f.symbol, f.action.side, f.action.qty) for f in StopDuty().run(ctx)] == [("CPAY", "sell", 9)]
+
+
+@pytest.mark.unit
+def test_an_exit_never_sells_or_covers_more_than_is_held_now(monkeypatch, tmp_path):
+    """The pass's picture of the account is minutes old when its orders go out: an exit for a position
+    the review has already closed would open it the other way round."""
+    from tradingagents.worker import runner
+    from tradingagents.worker.duty import Finding
+
+    sent = []
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or "ord-1")
+    monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, open_now: 0)
+    state = WorkerState.load(tmp_path / "s.json")
+    ctx = WorkerContext(Account(100_000, 0, True, (LONG, SHORT)), datetime.now(UTC), CONFIG, state)
+
+    def act(action, live):
+        f = Finding("stops", action.symbol, "urgent", "h", "d", action)
+        runner._act(f, ctx, market_open=True, pending=set(), open_now={}, dry_run=False, live=live)
+        return f
+
+    gone = act(Action("JPM", "exit", "sell", 40, "stop"), {"T": -216})                  # already closed
+    assert sent == [] and gone.outcome == "not sent: JPM is no longer held long"
+    flipped = act(Action("JPM", "exit", "sell", 40, "stop"), {"JPM": -40})              # held the other way now
+    assert sent == [] and "no longer held long" in flipped.outcome
+    covered = act(Action("T", "exit", "buy", 216, "stop"), {})
+    assert sent == [] and covered.outcome == "not sent: T is no longer held short"
+
+    live = {"JPM": 15}
+    part = act(Action("JPM", "exit", "sell", 40, "stop"), live)                         # trimmed since the pass began
+    assert sent == [("JPM", 15, "sell")] and part.action.qty == 15 and live["JPM"] == 0
+    again = act(Action("JPM", "exit", "sell", 40, "target"), live)                      # a second exit in the same batch
+    assert sent == [("JPM", 15, "sell")] and "no longer held" in again.outcome
+
+    act(Action("AMZN", "replace", "sell", 5, "bench"), {})                              # an opening order is not capped
+    assert sent[-1] == ("AMZN", 5, "sell")
+
+
+@pytest.mark.unit
+def test_each_dutys_orders_go_out_before_the_next_duty_runs(monkeypatch, tmp_path):
+    """A stop found in the first second does not wait for the news duty's ten minutes with the model."""
+    from tradingagents.worker import runner
+    from tradingagents.worker.duty import Finding
+
+    events = []
+    holdings = [LONG]
+    monkeypatch.setattr(runner.trading, "get_account", lambda *a, **k: Account(100_000, 0, True, tuple(holdings)))
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: type("C", (), {"is_open": True})())
+    monkeypatch.setattr(runner.trading, "open_orders", lambda *a, **k: {})
+    monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, open_now: 0)
+    monkeypatch.setattr(runner, "write_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+
+    def submit(symbol, qty, side):
+        events.append(f"order {side} {qty} {symbol}")
+        holdings.clear()                     # it fills at once: the position is gone
+        return "ord-1"
+    monkeypatch.setattr(runner.trading, "submit_market_order", submit)
+
+    class Stops:
+        name = "stops"
+        def run(self, context):
+            events.append("stops ran")
+            return [Finding("stops", "JPM", "urgent", "h", "d", Action("JPM", "exit", "sell", 40, "stop"))]
+
+    class News:
+        name = "news"
+        def run(self, context):              # slow, and still looking at the pass's first picture of the account
+            events.append("news ran")
+            return [Finding("news", "JPM", "urgent", "h", "d", Action("JPM", "exit", "sell", 40, "adverse news"))]
+
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json"), "mirror_enabled": False}
+    findings = runner.run_pass(cfg, None, [Stops(), News()])
+    assert events == ["stops ran", "order sell 40 JPM", "news ran"]
+    assert findings[0].outcome.startswith("sent") and findings[1].outcome == "not sent: JPM is no longer held long"
+    assert len(WorkerState.load(tmp_path / "s.json").orders) == 1
+
+
+@pytest.mark.unit
+def test_no_order_goes_out_before_the_trading_window_opens(monkeypatch, tmp_path):
+    from zoneinfo import ZoneInfo
+
+    from tradingagents.worker import runner
+    from tradingagents.worker.policy import too_early
+
+    et = ZoneInfo("America/New_York")
+    cfg = {**CONFIG, "worker_trade_from": "10:30"}
+    at = lambda h, m: datetime(2026, 11, 16, h, m, tzinfo=et)       # noqa: E731
+    exit_ = Action("JPM", "exit", "sell", 40, "stop")
+    ok = dict(market_open=True, paper=True, pending=set())
+
+    assert too_early(cfg, at(9, 30)) == "no trades before 10:30 ET (worker_trade_from)"
+    assert too_early(cfg, at(10, 29)) and too_early(cfg, at(10, 30)) is None and too_early(cfg, at(15, 59)) is None
+    assert too_early(cfg, datetime(2026, 11, 16, 15, 0, tzinfo=UTC)) is not None          # 10:00 ET, whatever the clock's zone
+    assert too_early({**cfg, "worker_trade_from": ""}, at(9, 30)) is None
+    assert "no trades before 10:30" in refusal(exit_, **ok, config=cfg, now=at(9, 45))    # a stop waits as well
+    assert refusal(exit_, **ok, config=cfg, now=at(10, 30)) is None
+    assert DEFAULT_CONFIG["worker_trade_from"] == "10:30"
+
+    # The day's loop neither places the book nor runs a pass until the window opens, then does both, the book once.
+    calls, clock = [], iter([True, True, False])
+    early = iter(["no trades before 10:30 ET", None, None])
+    monkeypatch.setattr(runner, "too_early", lambda config, now=None: next(early))
+    monkeypatch.setattr(runner, "place_book", lambda config, dry_run=False: calls.append("book") or [])
+    monkeypatch.setattr(runner, "run_pass", lambda *a, **k: calls.append("pass") or [])
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: type("C", (), {"is_open": next(clock)})())
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "summarize_day", lambda *a, **k: "")
+    monkeypatch.setattr(runner, "run_reports", lambda *a, **k: None)
+    runner.run_day({**cfg, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json")}, None, [], 5)
+    assert calls == ["book", "pass", "pass"]

@@ -67,6 +67,18 @@ def _no_network(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _midday(monkeypatch):
+    """Tests run as if at noon Eastern, inside the trading window (``worker_trade_from``),
+    so none passes or fails by the hour it is run at. A test of the window gives its own time."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from tradingagents.worker import policy
+
+    monkeypatch.setattr(policy, "_now", lambda: datetime(2026, 11, 16, 12, 0, tzinfo=ZoneInfo("America/New_York")))
+
+
+@pytest.fixture(autouse=True)
 def _at_a_terminal(monkeypatch):
     """Tests of the interactive steps run as if at a terminal; pytest's stdin is
     not one. A test of an unattended run sets isatty to False itself."""

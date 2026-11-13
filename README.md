@@ -207,14 +207,20 @@ recomputed at live prices wherever a waiting call is chosen: the bench, the open
 when the gross target has room for only some, and the Watcher's replacement), and price the SPY call hedge for a net-short book into the same
 CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
 the email says so); the job times itself, each part and the whole, into a timing file
-beside the book and the morning email. At the open it first closes any holding whose newest decision no longer backs its side, then
+beside the book and the morning email. No order goes out before `worker_trade_from` (10:30 ET, when the opening
+spreads have narrowed; empty trades from the open), for the desk and the mirror account alike, and the Watcher's
+passes start then too. At that time it first closes any holding whose newest decision no longer backs its side, then
 places the book's orders within the gross target, counting what is still held (`worker_place_book`),
 buys the hedge's calls unless the ledger shows calls still held, and records the
 ones it buys in the ledger; the Watcher's guards look at equities only. Then
 the Watcher runs over the account's equity positions until the close, with
 four guards on every pass. The stop guard and the target guard close a
 position through its stop (the Risk Manager's, the Trader's, or the 2% default
-from entry) or its target, no model asked. The news guard reads what was
+from entry) or its target, no model asked; a decision that has turned to the
+other side does not speak for the position, whose default stop stands until the
+review closes it. Each guard's orders go out as soon as it has spoken, and an
+exit or a trim never sells or covers more than the account holds at that
+moment. The news guard reads what was
 published since the last pass and has the model judge it against the desk's
 own case, the Portfolio Manager's thesis and the news the desk had read when it
 decided: adverse, material news the case did not account for exits (high) or
@@ -356,7 +362,7 @@ Dublin uses) holds every equity position of the main account the other way round
 number of shares (`mirror.py`): where the desk is long she is short, and where it is short she
 is long. Her stop is the desk's target and her target the desk's stop, which the geometry gives
 for free, and she leaves a name the moment the desk does, for whatever reason it did. Nothing
-is decided for her: after every Watcher pass, and after the book is placed at the open, the
+is decided for her: after every Watcher pass, and after the book is placed, the
 worker reads both accounts and sends the market orders that make her equity positions the
 negation of the desk's. A name whose desk order has not filled waits for the next pass; a name
 that must change side is flattened first and opened the other way on the pass after; a name

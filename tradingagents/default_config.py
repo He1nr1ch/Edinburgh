@@ -60,6 +60,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DAILY_ANALYSTS":          "daily_analysts",
     "TRADINGAGENTS_WORKER_PLACE_BOOK":       "worker_place_book",
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
+    "TRADINGAGENTS_WORKER_TRADE_FROM":       "worker_trade_from",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
     "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
@@ -345,6 +346,12 @@ def build_default_config() -> dict:
         "worker_trading_enabled": True,
         "worker_allow_live": False,
         "worker_interval_minutes": 5,
+        # No order of any kind goes out before this time of day (ET, "HH:MM"): not the
+        # book, not a review exit, not a stop, and not the mirror account's either. The
+        # first minutes after the open are the dearest of the day to trade in: the
+        # desk's first week paid 0.32% a side in the first five and 0.07% after 10:30.
+        # "" trades from the open.
+        "worker_trade_from": "10:30",
         "worker_trim_fraction": 0.5,        # adverse, notable, unexpected news: sell this share of the position
         "worker_add_fraction": 0.25,        # favorable, urgent, unexpected news: add this share of it
         "worker_position_cap_pct": 10.0,    # an add never takes a position past this % of equity

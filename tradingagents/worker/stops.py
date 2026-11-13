@@ -27,7 +27,12 @@ def standing_stop(h: Holding, decisions: dict[str, data.DecisionRef], default_st
     rating = "Buy" if h.qty > 0 else "Sell"
     if ref is not None:
         summary = data.decision_summary(data.load_decision(ref), h.avg_entry_price, default_stop_pct)
-        if summary["stop"] and summary["side"] in ("long", "short"):
+        # Only a decision for the side that is held speaks for the position. One
+        # that has since turned the other way carries the other side's stop, on
+        # the profit side of this position: read as its own, a long would be
+        # "through its stop" at any price. The review closes such a position at
+        # the open; until then the default from the entry price stands.
+        if summary["stop"] and summary["side"] == h.side:
             return summary["stop"], summary["stop_from"]
     return stop_for(Call(h.symbol, rating, None), h.avg_entry_price, default_stop_pct)
 
@@ -45,7 +50,9 @@ def standing_target(h: Holding, decisions: dict[str, data.DecisionRef]) -> float
     if ref is None:
         return None
     summary = data.decision_summary(data.load_decision(ref), None, 0)
-    return summary["target"] if summary["side"] in ("long", "short") else None
+    # As with the stop: a decision for the other side has its target on this
+    # position's losing side, and is not this position's target.
+    return summary["target"] if summary["side"] == h.side else None
 
 
 def reached(h: Holding, target: float) -> bool:

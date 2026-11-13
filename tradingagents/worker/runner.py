@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -20,7 +21,7 @@ from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
 from tradingagents.worker.notify import send_email
-from tradingagents.worker.policy import refusal
+from tradingagents.worker.policy import refusal, too_early
 from tradingagents.worker.state import WorkerState
 from tradingagents.web.snapshots import write_snapshot
 
@@ -58,11 +59,33 @@ def _log(config: dict, now: datetime, text: str) -> None:
         f.write(f"{now:%H:%M:%S} {text}\n")
 
 
+def _closable(a: Action, live: dict[str, float]) -> int:
+    """How many of the shares an exit or trim asks for are there to close: none when the position is gone or on the other side."""
+    have = live.get(a.symbol.upper(), 0)
+    if not have or (have > 0) != (a.side == "sell"):
+        return 0
+    return min(a.qty, int(abs(have)))
+
+
 def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str],
-         open_now: dict[str, str], dry_run: bool) -> None:
+         open_now: dict[str, str], dry_run: bool, live: dict[str, float] | None = None) -> None:
+    """Send the finding's order if the guardrails allow it.
+
+    ``live`` is the account as it stands now (symbol -> signed shares), read
+    just before the orders go out. An exit or a trim never sells or covers
+    more than it shows: the pass's own picture of the account is minutes old
+    by then, and an exit for a position already closed would open it the
+    other way round.
+    """
     a = f.action
     why_not = refusal(a, market_open=market_open, paper=context.account.paper,
                       pending=pending, config=context.config)
+    if not why_not and live is not None and a.kind in ("exit", "trim"):
+        closable = _closable(a, live)
+        if closable < 1:
+            why_not = f"{a.symbol} is no longer held {'long' if a.side == 'sell' else 'short'}"
+        elif closable < a.qty:
+            a = f.action = replace(a, qty=closable)
     # A close or trim first cancels the symbol's waiting orders: Alpaca holds the
     # shares a waiting sell has claimed, and a take-profit left behind after the
     # position is closed would fill later and open it the other way round.
@@ -85,12 +108,36 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
                                                         "side": "long" if a.side == "buy" else "short",
                                                         "value": a.value}
             pending.add(a.symbol)
+            if live is not None:
+                live[a.symbol.upper()] = live.get(a.symbol.upper(), 0) + (a.qty if a.side == "buy" else -a.qty)
             f.outcome = f"sent, order {order_id}" + (
                 f"; cancelled {cancelled} waiting order(s) first"
                 + ("; the shares left have no bracket now" if a.kind == "trim" else "")
                 if cancelled else "")
         except Exception as exc:
             f.outcome = f"failed: {exc}"
+
+
+def _send(batch: list[Finding], context: WorkerContext, market_open: bool, dry_run: bool) -> None:
+    """Send one duty's orders now, against the account and the open orders as they stand this moment."""
+    if not any(f.action for f in batch):
+        return
+    try:
+        open_now = trading.open_orders()
+        live = {h.symbol.upper(): h.qty for h in trading.get_account().holdings}
+    except Exception as exc:
+        for f in batch:
+            if f.action:
+                f.outcome = f"failed: the account could not be read before sending: {exc}"
+        return
+    # Only the worker's own orders, sent and not yet filled, hold a symbol back;
+    # orders placed by anything else (a bracket's take-profit) do not.
+    mine = {o["order_id"] for o in context.state.orders}
+    pending = {sym for order_id, sym in open_now.items() if order_id in mine}
+    for f in batch:
+        if f.action:
+            _act(f, context, market_open, pending, open_now, dry_run, live)
+    context.state.save()
 
 
 def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> list[Finding]:
@@ -102,19 +149,16 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
         market_open = trading.get_clock().is_open
         context = WorkerContext(account, now, config, state, llm)
         findings: list[Finding] = []
+        # Each duty's orders go out as soon as it has spoken, not at the end of
+        # the pass: the news duty asks the model and can take ten minutes, and a
+        # stop found in the first second must not wait for it.
         for duty in duties:
             try:
-                findings.extend(duty.run(context))
+                found = duty.run(context)
             except Exception as exc:     # a failing duty is reported, not fatal to the others
-                findings.append(Finding(duty.name, "-", "notable", f"the {duty.name} duty failed", str(exc)))
-        open_now = trading.open_orders() if any(f.action for f in findings) else {}
-        # Only the worker's own orders, sent and not yet filled, hold a symbol back;
-        # orders placed by anything else (a bracket's take-profit) do not.
-        mine = {o["order_id"] for o in state.orders}
-        pending = {sym for order_id, sym in open_now.items() if order_id in mine}
-        for f in findings:
-            if f.action:
-                _act(f, context, market_open, pending, open_now, dry_run)
+                found = [Finding(duty.name, "-", "notable", f"the {duty.name} duty failed", str(exc))]
+            _send(found, context, market_open, dry_run)
+            findings.extend(found)
         state.save()
         follow_mirror(config, dry_run, market_open)
         # The day's record for the positions page: the last pass of the day
@@ -183,7 +227,11 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         today = now.strftime("%Y-%m-%d")
         state = WorkerState.load(config["worker_state_path"])
         day = state.day(today)
-        if day["placed"] or not config.get("worker_place_book", True):
+        # ``placed_at`` marks the day's placement as done, whatever it placed: the
+        # day's loop asks on every turn until the trading window has opened.
+        if day.get("placed_at") or day["placed"] or not config.get("worker_place_book", True):
+            return []
+        if too_early(config):
             return []
         ledger = Path(config["hedge_ledger_path"])
         hedged = open_hedges(ledger, today)
@@ -296,6 +344,8 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             placed.append(o["ticker"])
             _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} (order {order_id})")
         day["placed"] = placed
+        if not dry_run:
+            day["placed_at"] = now.isoformat()
         state.save()
         _log(config, now, f"book placed: {len(placed)} order(s) from {book_path.name}")
         follow_mirror(config, dry_run, market_open)
@@ -411,9 +461,22 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
     state = WorkerState.load(config["worker_state_path"])
     state.day(today)["build"] = build.describe()
     state.save()
-    place_book(config, dry_run)
+    waiting = placed = False
     while True:
-        run_pass(config, llm, duties, dry_run)
+        # Before ``worker_trade_from`` nothing trades, so nothing is looked at
+        # either: a stop found then could only be reported, pass after pass, and
+        # a replacement chosen then would spend its bench candidate on an order
+        # that is refused. The sweep keeps turning; the first pass after the
+        # window opens reads the news back to the previous close.
+        early = too_early(config)
+        if early and not waiting:
+            _log(config, datetime.now(UTC).astimezone(), f"the market is open; {early}")
+            waiting = True
+        if not early:
+            if not placed:
+                place_book(config, dry_run)
+                placed = True
+            run_pass(config, llm, duties, dry_run)
         if sweep is not None:
             tick_sweep(sweep, config, market_open=True)
         with run_config(config):
