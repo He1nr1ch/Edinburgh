@@ -21,7 +21,8 @@ from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
 from tradingagents.worker.notify import send_email
-from tradingagents.worker.policy import refusal, too_early
+from tradingagents.dataflows.vendors.alpaca import latest_price
+from tradingagents.worker.policy import refusal, stale_levels, too_early
 from tradingagents.worker.state import WorkerState
 from tradingagents.web.snapshots import write_snapshot
 
@@ -187,6 +188,22 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
     return findings
 
 
+def _number(text) -> float | None:
+    try:
+        return float(text) if text not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_price(ticker: str) -> float | None:
+    """The latest price, or None when it cannot be read (the name is then not opened)."""
+    try:
+        return latest_price(ticker)
+    except Exception as exc:
+        logger.warning("No live price for %s: %s", ticker, exc)
+        return None
+
+
 def review_exits(holdings, decisions) -> list[tuple]:
     """Held positions whose newest decision no longer backs their side, with the rating that says so.
 
@@ -327,6 +344,14 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             if why_not:
                 _log(config, now, f"  not placed: {o['ticker']}: {why_not}")
                 continue
+            # The book was sized on the last close; it opens hours later. A name
+            # now through its stop, or with too little left to its target, is
+            # not opened (the Watcher asks the same of a bench candidate).
+            stale = stale_levels(o["side"], _live_price(o["ticker"]), _number(o.get("stop")), _number(o.get("target")),
+                                 float(config.get("min_target_pct") or 0))
+            if stale:
+                _log(config, now, f"  not placed: {o['ticker']}: {stale}")
+                continue
             if dry_run:
                 _log(config, now, f"  dry run: would open {o['side']} {qty} {o['ticker']}")
                 placed.append(o["ticker"])
@@ -459,7 +484,12 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
     today = datetime.now(ET).strftime("%Y-%m-%d")
     _log(config, datetime.now(UTC).astimezone(), build.log_banner(f"trading day {today}"))
     state = WorkerState.load(config["worker_state_path"])
-    state.day(today)["build"] = build.describe()
+    # A deploy during the session restarts this process: the builds are kept in
+    # order, so the record does not credit the morning's trades to the new one.
+    running, day_rec = build.describe(), state.day(today)
+    if running not in day_rec.get("build", ""):
+        day_rec["build"] = (f"{day_rec['build']}; then {running} from {datetime.now(ET):%H:%M} ET"
+                            if day_rec.get("build") else running)
     state.save()
     waiting = placed = False
     while True:

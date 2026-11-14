@@ -103,6 +103,7 @@ def test_placing_the_book_at_the_open_once_and_only_what_is_not_held(tmp_path, m
         "SPY261204C00740000,call (monthly hedge),,,,,16.52,1,1652,,,\n")
     sent = []
     monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 90_000, True, (Holding("GD", 16, 5_900.0, 364.87, "us_equity"),)))
+    monkeypatch.setattr(runner, "latest_price", lambda t: 29.80)
     monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
     monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
     monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
@@ -135,6 +136,7 @@ def test_the_hedge_is_not_bought_again_while_the_calls_held_have_not_expired(tmp
                                                            "expiry": "2099-11-27", "bought_on": "2026-11-04", "cost": 1500.0}]))
     sent = []
     monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 90_000, True, ()))
+    monkeypatch.setattr(runner, "latest_price", lambda t: 29.80)
     monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
     monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
     monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
@@ -170,6 +172,7 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
     state.book = {"FIS": {"placed_on": "2026-11-06", "side": "short", "value": 4643.0}, "GD": {"placed_on": "2026-11-06", "side": "long", "value": 5838.0}}
     state.record_order("FIS", "exit", "buy", 156, "ord-1", datetime.now(UTC), "price 31.90 is through the stop 31.68 (Risk Manager)")
     account = Account(100_000, 0, True, (Holding("GD", 16, 5_900.0, 364.87, "us_equity"),))   # FIS is gone
+    monkeypatch.setattr(replace.trading, "get_account", lambda: account)
     ctx = WorkerContext(account, datetime(2026, 11, 6, 15, 0, tzinfo=UTC), cfg, state, llm)
 
     (finding,) = replace.ReplacementDuty().run(ctx)
@@ -351,6 +354,7 @@ def test_the_open_closes_holdings_the_review_no_longer_backs_and_keeps_the_book_
     holdings = (Holding("GD", 16, 5_800.0, 364.87, "us_equity"), Holding("JPM", 100, 35_000.0, 340.0, "us_equity"))
     sent, cancelled = [], []
     monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 60_000, True, holdings))
+    monkeypatch.setattr(runner, "latest_price", lambda t: 100.0)
     monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
     monkeypatch.setattr(runner.trading, "open_orders", lambda: {"tp-1": "GD"})
     monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, o: cancelled.append(s) or 1)
@@ -362,3 +366,33 @@ def test_the_open_closes_holdings_the_review_no_longer_backs_and_keeps_the_book_
     assert sent[0] == ("GD", 16, "sell") and cancelled == ["GD"]                # the review's exit, its bracket cancelled first
     # JPM's 35,000 is still held: AAA's 40,000 fits (75,000), BBB's 30,000 would not; CCC's 10,000 would not either.
     assert placed == ["AAA"] and [s for s in sent[1:]] == [("AAA", 400, "buy")]
+
+
+@pytest.mark.unit
+def test_the_book_does_not_open_a_name_that_is_through_its_stop_by_the_time_it_is_placed(tmp_path, monkeypatch):
+    """COHR on 2026-11-11: sized long on the close with a stop under it, 237 at the open and already below it."""
+    from tradingagents.worker import runner
+
+    sizing = tmp_path / "backtest" / "sizing"
+    sizing.mkdir(parents=True)
+    (sizing / "run_a_2026-11-10.csv").write_text(
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target\n"
+        "COHR,long,Overweight,Neutral,5,3.2,250.0,13,3250,247.5,Risk Manager,296.56\n"
+        "EXPE,long,Overweight,Neutral,5,2.0,250.0,8,2000,240.0,Risk Manager,290\n"
+        "KIM,long,Overweight,Neutral,4,2.0,25.88,77,1993,25.0,Risk Manager,30\n"
+        "DARK,long,Overweight,Neutral,4,2.0,50.0,40,2000,48.0,Risk Manager,60\n")
+    live = {"COHR": 237.14, "EXPE": 251.4, "KIM": 29.5}          # KIM has run to within 1.7% of its target; DARK has no price
+    sent = []
+    monkeypatch.setattr(runner, "latest_price", lambda t: live.get(t))
+    monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 100_000, True, ()))
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
+    monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+    cfg = _cfg(tmp_path)
+
+    assert runner.place_book(cfg) == ["EXPE"] and sent == [("EXPE", 8, "buy")]
+    assert set(WorkerState.load(cfg["worker_state_path"]).book) == {"EXPE"}
+    log = next((tmp_path / "worker").glob("*.log")).read_text()
+    assert "not placed: COHR: the price 237.14 is already through its stop 247.50" in log
+    assert "not placed: KIM: only +1.7% is left to its target" in log and "not placed: DARK: no live price" in log

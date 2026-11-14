@@ -101,6 +101,7 @@ def test_the_opening_placement_takes_the_best_scored_rows_first(tmp_path, monkey
         "MID,short,Underweight,Neutral,10,-10,100,-200,20000,105,Risk Manager,80,2.8\n")
     sent = []
     monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 100_000, True, ()))
+    monkeypatch.setattr(runner, "latest_price", lambda t: 100.0)
     monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
     monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
     monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append(s) or f"ord-{s}")

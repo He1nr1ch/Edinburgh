@@ -202,7 +202,8 @@ than the worker. With qwen's thinking on a ticker takes about eleven minutes and
 under two days; when the session closes the cycle restarts on the holdings against the new
 close. At `daily_book_time` (9 AM ET) on a day the market opens it builds the book. Size the book from every decision under
 `decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together
-(the score, in `ranking.py`, is reward to risk × conviction × stance × freshness × balance,
+(a call whose close is already through the desk's own stop is not taken: the 2% default is for a call with no stop, not one whose stop has been hit;
+the score, in `ranking.py`, is reward to risk × conviction × stance × freshness × balance,
 recomputed at live prices wherever a waiting call is chosen: the bench, the opening placement
 when the gross target has room for only some, and the Watcher's replacement), and price the SPY call hedge for a net-short book into the same
 CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
@@ -211,12 +212,13 @@ beside the book and the morning email. No order goes out before `worker_trade_fr
 spreads have narrowed; empty trades from the open), for the desk and the mirror account alike, and the Watcher's
 passes start then too. At that time it first closes any holding whose newest decision no longer backs its side, then
 places the book's orders within the gross target, counting what is still held (`worker_place_book`),
+leaving out a name whose live price is by then through its stop or within the minimum move of its target,
 buys the hedge's calls unless the ledger shows calls still held, and records the
 ones it buys in the ledger; the Watcher's guards look at equities only. Then
 the Watcher runs over the account's equity positions until the close, with
 four guards on every pass. The stop guard and the target guard close a
-position through its stop (the Risk Manager's, the Trader's, or the 2% default
-from entry) or its target, no model asked; a decision that has turned to the
+position through its stop (the Risk Manager's or the Trader's as the desk gave it, or the 2% default
+from entry when it gave none) or its target, no model asked; a decision that has turned to the
 other side does not speak for the position, whose default stop stands until the
 review closes it. Each guard's orders go out as soon as it has spoken, and an
 exit or a trim never sells or covers more than the account holds at that
@@ -226,7 +228,7 @@ own case, the Portfolio Manager's thesis and the news the desk had read when it
 decided: adverse, material news the case did not account for exits (high) or
 halves (medium) the position; favorable, material, unaccounted-for news adds a
 quarter, up to `worker_position_cap_pct`. The replacement guard sees a book
-position that has closed and asks the model to pick its replacement from the
+position that has closed (by the broker's own account read at that moment, not the pass's earlier picture of it) and asks the model to pick its replacement from the
 bench, among the candidates that still clear the rules at live prices, and
 opens it with the freed capital. A close or trim first cancels the symbol's
 waiting orders. It trades a paper account only,

@@ -161,6 +161,7 @@ def _replacement_context(tmp_path, monkeypatch, structured):
         "NOW,short,Underweight,Neutral,3,108.81,114.69,Risk Manager,95,12.7\n")
     monkeypatch.setattr(replace, "latest_price", lambda t: 109.0)
     monkeypatch.setattr(replace.trading, "open_orders", lambda: {})
+    monkeypatch.setattr(replace.trading, "get_account", lambda: Account(100_000, 0, True, ()))
     llm = MagicMock()
     llm.with_structured_output.return_value = structured
     cfg = {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "state.json")}

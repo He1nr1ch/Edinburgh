@@ -187,3 +187,23 @@ def test_calls_name_who_gave_the_stop(tmp_path):
     }))
     (call,) = load_calls(tmp_path, "2026-11-04")
     assert (call.stop, call.stop_from, call.target) == (31.68, "Trader", 25.0)
+
+
+@pytest.mark.unit
+def test_a_call_already_through_the_desks_stop_is_not_taken():
+    """FDX on 2026-11-12: short with the Risk Manager's stop at 318 and a close of 319.30. It went
+    into the bench with a 2% stop nobody chose, and into the account the next morning."""
+    from tradingagents.sizing import bench_for, worth_trading
+
+    fdx = Call("FDX", "Underweight", 3, target=270.0, stop=318.0, stop_from="Risk Manager")
+    cohr = Call("COHR", "Overweight", 5, target=296.56, stop=247.5, stop_from="Risk Manager")
+    assert "already through the desk's stop (318.00 against a close of 319.30)" in worth_trading(fdx, 319.30, 5)
+    assert "already through the desk's stop" in worth_trading(cohr, 237.14, 5)
+    assert "already through the desk's stop" in worth_trading(fdx, 319.30, 0)        # with no target floor too
+    assert worth_trading(fdx, 303.0, 5) is None and worth_trading(cohr, 269.0, 5) is None
+    assert worth_trading(Call("X", "Overweight", 5, target=120.0), 100.0, 5) is None  # no stop given: the default applies
+
+    prices = {"FDX": 319.30, "COHR": 237.14}
+    book = size_book([fdx, cohr], prices, 100_000, min_target_pct=5)
+    assert book.orders == [] and all("through the desk's stop" in why for _, why in book.skipped)
+    assert bench_for([fdx, cohr], prices, set(), 5, 10) == []

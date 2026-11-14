@@ -388,3 +388,77 @@ def test_no_order_goes_out_before_the_trading_window_opens(monkeypatch, tmp_path
     monkeypatch.setattr(runner, "run_reports", lambda *a, **k: None)
     runner.run_day({**cfg, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json")}, None, [], 5)
     assert calls == ["book", "pass", "pass"]
+
+
+@pytest.mark.unit
+def test_the_desks_stop_stands_for_a_position_entered_beyond_it(tmp_path):
+    """Short FDX entered at 322.10 with the desk's stop at 318: the stop is the desk's, not 2% from the entry."""
+    from tradingagents.web import data
+    from tradingagents.worker.stops import StopDuty, standing_stop
+
+    _decision(tmp_path, "FDX", "2026-11-13", final_rating="Underweight",
+              risk_assessment="**Maximum Position**: 3\n\n**Stop Loss**: 318.0\n", final_trade_decision="**Price Target**: 288\n")
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "default_stop_pct": 2.0}
+    above = Holding("FDX", -3, -3 * 320.0, 322.10, "us_equity")
+    below = Holding("FDX", -3, -3 * 316.0, 322.10, "us_equity")
+    assert standing_stop(above, data.find_decisions(tmp_path), 2.0) == (318.0, "Risk Manager")
+
+    (finding,) = StopDuty().run(WorkerContext(Account(100_000, 0, True, (above,)), datetime.now(UTC), cfg, None))
+    assert "stop hit at 318.00 (Risk Manager)" in finding.headline and finding.action.side == "buy"
+    assert StopDuty().run(WorkerContext(Account(100_000, 0, True, (below,)), datetime.now(UTC), cfg, None)) == []
+
+
+@pytest.mark.unit
+def test_a_call_sized_on_the_close_is_judged_again_at_the_live_price():
+    from tradingagents.worker.policy import stale_levels
+
+    assert stale_levels("long", 237.14, 247.5, 296.56, 5) == "the price 237.14 is already through its stop 247.50"
+    assert stale_levels("short", 325.29, 322.63, 250.77, 5) == "the price 325.29 is already through its stop 322.63"
+    assert "only +1.7% is left to its target" in stale_levels("long", 29.5, 25.0, 30.0, 5)
+    assert stale_levels("long", 269.0, 247.5, 296.56, 5) is None and stale_levels("short", 303.0, 318.0, 270.0, 5) is None
+    assert stale_levels("long", None, 95.0, 120.0, 5) == "no live price"
+    assert stale_levels("long", 100.0, None, 120.0, 5) is None                         # no stop given: the default applies
+
+
+@pytest.mark.unit
+def test_a_book_position_the_pass_has_not_seen_yet_is_not_replaced(tmp_path, monkeypatch):
+    """2026-11-12, 09:30: PSX was opened as the pass began, so the pass's account did not show it; by the
+    time the replacement duty ran the order had filled and was not waiting either. TRV "replaced" it
+    while it stood. The duty reads the broker itself, and the broker shows PSX held."""
+    from tradingagents.worker import replace
+
+    state = WorkerState.load(tmp_path / "state.json")
+    state.book = {"PSX": {"placed_on": "2026-11-12", "side": "short", "value": 2335.0}}
+    monkeypatch.setattr(replace.trading, "open_orders", lambda: {})
+    monkeypatch.setattr(replace.trading, "get_account",
+                        lambda: Account(100_000, 0, True, (Holding("PSX", -9, -2335.0, 259.49, "us_equity"),)))
+    monkeypatch.setattr(replace, "latest_bench", lambda *a: pytest.fail("nothing left the book"))
+    stale = WorkerContext(Account(100_000, 0, True, ()), datetime(2026, 11, 12, 14, 30, tzinfo=UTC),
+                          {**CONFIG, "results_dir": str(tmp_path)}, state)
+
+    assert replace.ReplacementDuty().run(stale) == [] and "PSX" in state.book
+
+    # Still on its way to the exchange: waiting, not gone.
+    monkeypatch.setattr(replace.trading, "open_orders", lambda: {"ord-1": "PSX"})
+    monkeypatch.setattr(replace.trading, "get_account", lambda: Account(100_000, 0, True, ()))
+    assert replace.ReplacementDuty().run(stale) == [] and "PSX" in state.book
+
+
+@pytest.mark.unit
+def test_the_days_record_keeps_every_build_that_ran_in_the_session(tmp_path, monkeypatch):
+    from tradingagents.worker import runner
+
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "state.json")}
+    monkeypatch.setattr(runner, "too_early", lambda config, now=None: None)
+    monkeypatch.setattr(runner, "place_book", lambda *a, **k: [])
+    monkeypatch.setattr(runner, "run_pass", lambda *a, **k: [])
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: type("C", (), {"is_open": False})())
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+    monkeypatch.setattr(runner, "summarize_day", lambda *a, **k: "")
+    monkeypatch.setattr(runner, "run_reports", lambda *a, **k: None)
+
+    for running in ("1.2026.11.11.19 (d668d94)", "1.2026.11.11.19 (d668d94)", "1.2026.11.13.12 (4fc228e)"):
+        monkeypatch.setattr(runner.build, "describe", lambda running=running: running)
+        runner.run_day(cfg, None, [], 5)
+    (record,) = [d["build"] for d in WorkerState.load(cfg["worker_state_path"]).days.values()]
+    assert record.startswith("1.2026.11.11.19 (d668d94); then 1.2026.11.13.12 (4fc228e) from ") and record.count("then") == 1

@@ -115,6 +115,12 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     assert facts["equity"] == 99_800 and facts["equity_change"] == -200 and facts["realised"] == -43.2
     assert facts["exits_by_cause"] == {"stop": 1} and facts["entries"] == 3 and facts["book_held"] == 1
     assert len(facts["findings"]) == 2 and facts["sweep"]["queued"] == 2 and facts["sweep"]["decided_today"] == 1
+    # The sweep dates a decision by the close it analyses: counted on the sweep's date, not the calendar's.
+    (tmp_path / "memory" / "sweep.json").write_text(json.dumps({"cycle": 2, "date": "2026-11-06", "queue": [], "analysed_this_cycle": 3}))
+    earlier = daily.gather(cfg, "2026-11-09")["sweep"]
+    assert (earlier["decided_on"], earlier["decided_today"]) == ("2026-11-06", 0)
+    assert "decisions on record for 2026-11-06's close" in daily._facts_text(daily.gather(cfg, "2026-11-09"))
+    (tmp_path / "memory" / "sweep.json").write_text(json.dumps({"cycle": 1, "date": "2026-11-09", "queue": ["A", "B"], "analysed_this_cycle": 40}))
     assert facts["build"].startswith("1.2026.11.09.22")
     # TROW short from 109.10 with the book's stop at 111.36 (2.07% of risk), bought back at 111.50: a little over 1R lost.
     assert facts["r"] == {"n": 1, "total": -1.06, "mean": -1.06} and facts["r_by_side"] == {"short": facts["r"]}

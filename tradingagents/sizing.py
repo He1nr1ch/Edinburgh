@@ -60,13 +60,24 @@ def stop_for(call: Call, close: float, default_pct: float) -> tuple[float, str]:
     return round(close * (1 - side * default_pct / 100), 2), f"default {default_pct:g}%"
 
 
+def through_stop(side: int, price: float | None, stop: float | None) -> bool:
+    """Whether ``price`` is at or through the desk's ``stop`` for a position on ``side`` (+1 long, -1 short)."""
+    return bool(side and price and stop and (stop - price) * side >= 0)
+
+
 def worth_trading(call: Call, close: float | None, min_target_pct: float) -> str | None:
     """Why ``call`` is not taken, or None when it is.
 
-    The user's rule: a trade needs a target more than ``min_target_pct`` from
-    the close in its own direction. A call with no target, or one on the wrong
-    side, has no expected profit to show and is not taken either.
+    A call whose close is already through the desk's own stop is not taken:
+    the desk named the price at which its case is wrong, and the market is
+    past it. (Opened anyway, it would carry the default stop in place of the
+    desk's, a level nobody chose.) Then the user's rule: a trade needs a
+    target more than ``min_target_pct`` from the close in its own direction.
+    A call with no target, or one on the wrong side, has no expected profit
+    to show and is not taken either.
     """
+    if through_stop(SIDE.get(call.rating, 0), close, call.stop):
+        return f"already through the desk's stop ({call.stop:,.2f} against a close of {close:,.2f})"
     if min_target_pct <= 0:
         return None
     move = call.target_move_pct(close)

@@ -45,6 +45,28 @@ def action_for(holding: Holding, materiality: str, direction: str, surprise: boo
     return None
 
 
+def stale_levels(side: str, price: float | None, stop: float | None, target: float | None,
+                 min_target_pct: float) -> str | None:
+    """Why a call sized at an earlier price is not opened at ``price`` now, or None when it still stands.
+
+    The book and the bench are built on the last close and opened hours
+    later. By then the price may be through the call's stop, or so near its
+    target that less than the desk's minimum move is left.
+    """
+    from tradingagents.sizing import through_stop
+
+    if not price:
+        return "no live price"
+    d = 1 if side == "long" else -1
+    if through_stop(d, price, stop):
+        return f"the price {price:,.2f} is already through its stop {stop:,.2f}"
+    if target and min_target_pct > 0:
+        move = d * (target / price - 1) * 100
+        if move <= min_target_pct:
+            return f"only {move:+.1f}% is left to its target {target:,.2f} from {price:,.2f}"
+    return None
+
+
 ET = ZoneInfo("America/New_York")
 
 

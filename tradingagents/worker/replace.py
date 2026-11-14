@@ -26,6 +26,7 @@ from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import desk_lessons
 from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
 from tradingagents.worker.duty import Action, Finding, WorkerContext
+from tradingagents.worker.policy import stale_levels
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +61,10 @@ def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct
         except (TypeError, ValueError):
             continue
         price = latest_price(t)
-        if not price:
+        if stale_levels(row["side"], price, stop, target, min_target_pct):
             continue
         side = 1 if row["side"] == "long" else -1
         move = side * (target / price - 1) * 100
-        if move <= min_target_pct:
-            continue
-        if stop and (stop - price) * side >= 0:
-            continue        # already through its stop
         reward, risk = levels_pct(side, price, target, stop, default_stop_pct)
         s = score_call(reward, risk, row.get("rating", ""), row.get("risk_level"),
                        age_days(row.get("decided"), today), balances_book(side, net_value), min_risk_pct=default_stop_pct)
@@ -104,8 +101,16 @@ class ReplacementDuty:
         state = context.state
         if not state.book:
             return []
-        held = {h.symbol.upper() for h in context.account.holdings}
-        pending = set(trading.open_orders().values())
+        # What has left is read from the broker now, the open orders first and
+        # the positions after: an order that fills between the two reads then
+        # shows as a position. The pass's own picture of the account is as old
+        # as the duties before this one took (the news duty asks the model, ten
+        # minutes or more); judged against it, a book position opened moments
+        # before the pass began was neither held (then) nor waiting (now), and
+        # it was "replaced" while it stood: the book grew by one each time.
+        pending = {s.upper() for s in trading.open_orders().values()}
+        account = trading.get_account()
+        held = {h.symbol.upper() for h in account.holdings}
         gone = [t for t in list(state.book) if t not in held and t not in pending]
         if not gone:
             return []
@@ -119,8 +124,8 @@ class ReplacementDuty:
             departed = entry
             closed_by = next((o for o in reversed(state.orders) if o["symbol"] == ticker and o["kind"] == "exit"), None)
             departed = {**departed, "ticker": ticker, "why": (closed_by or {}).get("reason", "it is no longer held")}
-            net = sum(h.market_value for h in context.account.holdings if h.asset_class == "us_equity")
-            options = candidates(bench, held | set(state.book), used, float(context.config["min_target_pct"]),
+            net = sum(h.market_value for h in account.holdings if h.asset_class == "us_equity")
+            options = candidates(bench, held | pending | set(state.book), used, float(context.config["min_target_pct"]),
                                  net, today, float(context.config.get("default_stop_pct") or 2.0))
             if not options:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; no replacement on the bench",
@@ -149,7 +154,7 @@ class ReplacementDuty:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; the Watcher opens nothing",
                                         choice.reason if choice else "the model's answer did not meet its contract"))
                 continue
-            cap_value = context.account.equity * float(context.config["worker_position_cap_pct"]) / 100
+            cap_value = account.equity * float(context.config["worker_position_cap_pct"]) / 100
             value = min(float(departed.get("value") or 0) or cap_value, cap_value)
             qty = math.floor(value / pick["live_price"])
             if qty < 1:

@@ -131,7 +131,12 @@ def gather(config: dict, day: str) -> dict:
     except Exception as exc:
         logger.warning("The error log could not be read: %s", exc)
         model_errors = {}
-    decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{day}.json")))
+    # The sweep dates a decision by the close it analyses, the last one before
+    # the session, so none carries the day's own date until after its close.
+    # Counted on that date: counted on the day's, the figure was always 0 and
+    # read as a sweep that decides nothing.
+    decided_on = sweep.get("date") or day
+    decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{decided_on}.json")))
 
     try:
         store = FeedbackStore(config)
@@ -156,7 +161,7 @@ def gather(config: dict, day: str) -> dict:
         "findings": findings,
         "book": book_rows, "book_held": sum(1 for r in book_rows if r["ticker"] in held),
         "sweep": {"cycle": sweep.get("cycle"), "date": sweep.get("date"), "queued": len(sweep.get("queue", [])),
-                  "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today,
+                  "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today, "decided_on": decided_on,
                   "progress": sweep_progress(sweep)},
         "usage": {"total": spend.get("total", {}), "by_agent": spend.get("by_agent", {}), "by_host": spend.get("by_host", {})},
         "errors": model_errors,
@@ -201,7 +206,8 @@ def _facts_text(f: dict) -> str:
     s = f["sweep"]
     if s.get("cycle"):
         lines.append(f"Sweep: cycle {s['cycle']} on {s['date']}'s close, {s['analysed_this_cycle']} analysed this cycle, "
-                     f"{s['queued']} queued; {s['decided_today']} decisions dated today"
+                     f"{s['queued']} queued; {s['decided_today']} decisions on record for {s.get('decided_on') or s['date']}'s close "
+                     "(the sweep dates a decision by the close it analyses, so none is dated today until tonight)"
                      + (f"; pace {s['progress']['minutes_per_ticker']:.1f} min per ticker" if (s.get('progress') or {}).get('minutes_per_ticker') else ""))
     u = f.get("usage") or {}
     if (u.get("total") or {}).get("calls"):
@@ -336,7 +342,7 @@ def render(facts: dict, rev: DailyReview | None) -> str:
     s = f["sweep"]
     if s.get("cycle"):
         out += ["## Sweep", f"Cycle {s['cycle']} on {s['date']}'s close: {s['analysed_this_cycle']} analysed this cycle, "
-                f"{s['queued']} queued, {s['decided_today']} decisions dated {f['day']}."
+                f"{s['queued']} queued, {s['decided_today']} decisions on record for {s.get('decided_on') or s['date']}'s close."
                 + (f" Pace {s['progress']['minutes_per_ticker']:.1f} min per ticker." if (s.get('progress') or {}).get('minutes_per_ticker') else ""), ""]
     u = f.get("usage") or {}
     if (u.get("total") or {}).get("calls"):

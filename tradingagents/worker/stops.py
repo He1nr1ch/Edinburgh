@@ -3,8 +3,8 @@
 The desk's stops are levels in a file, not orders at the broker, so nothing
 would act on them by itself. Each pass checks every watched position's price
 against the stop that stands for it: the Risk Manager's or the Trader's from
-its decision, else the 2% default measured from the entry price (the sizing
-rules, so the page and the Watcher agree). No model is asked: a breach is
+its decision, as the desk gave it; the 2% default, measured from the entry
+price, only when the desk gave none. No model is asked: a breach is
 arithmetic, and the exit goes out on the same pass.
 """
 
@@ -26,7 +26,11 @@ def standing_stop(h: Holding, decisions: dict[str, data.DecisionRef], default_st
     ref = decisions.get(h.symbol.upper())
     rating = "Buy" if h.qty > 0 else "Sell"
     if ref is not None:
-        summary = data.decision_summary(data.load_decision(ref), h.avg_entry_price, default_stop_pct)
+        # The desk's stop as it gave it, not re-read against the entry price: a
+        # stop the position was entered beyond is still the price at which the
+        # desk says its case is wrong, and a default put in its place is a
+        # level nobody chose.
+        summary = data.decision_summary(data.load_decision(ref), None, default_stop_pct)
         # Only a decision for the side that is held speaks for the position. One
         # that has since turned the other way carries the other side's stop, on
         # the profit side of this position: read as its own, a long would be

@@ -142,7 +142,7 @@ def test_the_morning_book_is_built_from_the_fresh_decisions(tmp_path, monkeypatc
     decision("c1r1_a", "GD", "2026-11-09", "Overweight", 345, 386)
     decision("c1r2_b", "NKE", "2026-11-09", "Underweight", 41.5, 36.91)
     decision("old", "ADBE", "2026-11-01", "Underweight", 250, 207)              # 8 days old: out of the window
-    monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {t: 100.0 for t in tickers})
+    monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {"GD": 364.0, "NKE": 40.5, "ADBE": 240.0})
     cfg = {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "daily_hedge": False, "decision_max_age_days": 5}
 
     built = daily.build_morning_book(cfg, 100_000, date="2026-11-09")
