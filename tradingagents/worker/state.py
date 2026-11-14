@@ -68,11 +68,14 @@ class WorkerState:
         return [o for o in self.orders if str(o.get("at", "")).startswith(day)]
 
     def record_order(self, symbol: str, kind: str, side: str, qty: int, order_id: str, at: datetime,
-                     reason: str = "", entry_price: float | None = None, stop: float | None = None) -> None:
+                     reason: str = "", entry_price: float | None = None, stop: float | None = None,
+                     decided: str | None = None) -> None:
         """Record an order sent. An exit or a trim carries the position's average entry price
         at the time, so its result can be stated without reconstructing the entry later. An
         order that opens a position carries the stop it was opened with, so its result can
-        be stated in R whatever the desk decides about the ticker afterwards."""
+        be stated in R whatever the desk decides about the ticker afterwards, and the
+        analysis date of the decision it came from (``decided``), so the lists can say
+        how old the desk's call was when the position was opened."""
         record = {"symbol": symbol, "kind": kind, "side": side, "qty": qty,
                   "order_id": order_id, "at": at.isoformat(), "reason": reason}
         record.update(self._tag(symbol, kind, side, at))
@@ -80,6 +83,8 @@ class WorkerState:
             record["entry_price"] = float(entry_price)
         if stop:
             record["stop"] = float(stop)
+        if decided:
+            record["decided"] = str(decided)
         self.orders.append(record)
 
     # --- positions ---------------------------------------------------------

@@ -344,7 +344,9 @@ After the close the worker writes the daily report (`reports/daily/<date>.md`; `
 report --date` by hand): equity and the day's realised and unrealised result, every transaction
 with its cause and P/L and the position it belongs to (each position gets an ID such as `FDX-20261113-S` and its entry date when it is opened,
 and every add, trim and exit carries both, so two positions in one ticker are told apart and a carried-over one from one opened today;
-a position the worker has no opening order for reads `-unrecorded-`), the open positions against their stops and targets, the Watcher's
+a position the worker has no opening order for reads `-unrecorded-`;
+an entry also carries the date of the decision it was opened on, so the lists say how old the desk's call was at entry,
+one day being the freshest, since a decision is dated by the close it analysed), the open positions against their stops and targets, the Watcher's
 findings, the book, the sweep's coverage and the feedback scorecard, then the deep model's
 review in the voice of the desk's reflections: what happened, what worked, what did not, up to
 five lessons each addressed to one agent or to the desk's rules, and any rule changes the day

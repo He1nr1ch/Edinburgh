@@ -181,6 +181,7 @@ def test_a_book_position_that_sold_out_is_replaced_from_the_bench_by_the_watcher
     assert (finding.action.symbol, finding.action.kind, finding.action.side, finding.action.qty) == ("NOW", "replace", "sell", 42)   # 4,643 / 109
     assert finding.action.value == pytest.approx(42 * 109.0)
     assert "FIS" not in state.book and state.day("2026-11-06")["replaced"] == {"FIS": "NOW"}
+    assert finding.action.decided is None                                # this bench file is from before the date was kept
 
     from tradingagents.feedback import FeedbackStore
     (kept,) = FeedbackStore(cfg).desk_verdicts(kind="replacement")
@@ -376,11 +377,11 @@ def test_the_book_does_not_open_a_name_that_is_through_its_stop_by_the_time_it_i
     sizing = tmp_path / "backtest" / "sizing"
     sizing.mkdir(parents=True)
     (sizing / "run_a_2026-11-10.csv").write_text(
-        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target\n"
-        "COHR,long,Overweight,Neutral,5,3.2,250.0,13,3250,247.5,Risk Manager,296.56\n"
-        "EXPE,long,Overweight,Neutral,5,2.0,250.0,8,2000,240.0,Risk Manager,290\n"
-        "KIM,long,Overweight,Neutral,4,2.0,25.88,77,1993,25.0,Risk Manager,30\n"
-        "DARK,long,Overweight,Neutral,4,2.0,50.0,40,2000,48.0,Risk Manager,60\n")
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target,score,decided\n"
+        "COHR,long,Overweight,Neutral,5,3.2,250.0,13,3250,247.5,Risk Manager,296.56,,2026-11-09\n"
+        "EXPE,long,Overweight,Neutral,5,2.0,250.0,8,2000,240.0,Risk Manager,290,,2026-11-10\n"
+        "KIM,long,Overweight,Neutral,4,2.0,25.88,77,1993,25.0,Risk Manager,30,,2026-11-10\n"
+        "DARK,long,Overweight,Neutral,4,2.0,50.0,40,2000,48.0,Risk Manager,60,,2026-11-10\n")
     live = {"COHR": 237.14, "EXPE": 251.4, "KIM": 29.5}          # KIM has run to within 1.7% of its target; DARK has no price
     sent = []
     monkeypatch.setattr(runner, "latest_price", lambda t: live.get(t))
@@ -393,6 +394,8 @@ def test_the_book_does_not_open_a_name_that_is_through_its_stop_by_the_time_it_i
 
     assert runner.place_book(cfg) == ["EXPE"] and sent == [("EXPE", 8, "buy")]
     assert set(WorkerState.load(cfg["worker_state_path"]).book) == {"EXPE"}
+    (opened,) = WorkerState.load(cfg["worker_state_path"]).orders
+    assert opened["decided"] == "2026-11-10" and opened["position_id"].startswith("EXPE-")
     log = next((tmp_path / "worker").glob("*.log")).read_text()
     assert "not placed: COHR: the price 237.14 is already through its stop 247.50" in log
     assert "not placed: KIM: only +1.7% is left to its target" in log and "not placed: DARK: no live price" in log

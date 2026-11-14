@@ -147,6 +147,8 @@ def test_the_morning_book_is_built_from_the_fresh_decisions(tmp_path, monkeypatc
 
     built = daily.build_morning_book(cfg, 100_000, date="2026-11-09")
     assert sorted(o.ticker for o in built.book.orders) == ["GD", "NKE"]
+    assert {o.decided for o in built.book.orders} == {"2026-11-09"}                      # each order knows its decision's date
+    assert all(r["decided"] == "2026-11-09" for r in bk.load_rows(built.book_path)) if built.book_path else True
     assert built.timing["calls_in_window"] == 2 and built.timing["decided_between"] == ["2026-11-09", "2026-11-09"]
     assert built.book_path.name.startswith("fresh_20261109_2026-11-09")
     assert "book from 2 decisions dated 2026-11-09 to 2026-11-09" in daily.describe_timing(built.timing)

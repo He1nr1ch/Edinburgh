@@ -207,3 +207,28 @@ def test_orders_from_before_positions_were_tagged_are_read_from_the_orders_befor
     assert rows["out3"]["position_id"] == "GLW-unrecorded-L"                                          # the long it opened
     assert rows["out1"]["stop"] == 118.0                                # the short's own stop
     assert rows["out3"]["risk_pct"] == 2.0                              # not the short's 118 read as the long's (1.4%): the default
+
+
+@pytest.mark.unit
+def test_an_entry_says_how_old_the_desks_decision_was_and_its_exit_still_knows(tmp_path):
+    """ROK on 2026-11-11: opened on a decision of 2026-11-06, five days old. Nothing in the record said so."""
+    from zoneinfo import ZoneInfo
+
+    from tradingagents.web.transactions import age_text, entry_ages
+
+    et = ZoneInfo("America/New_York")
+    s = WorkerState.load(tmp_path / "state.json")
+    s.record_order("ROK", "replace", "sell", 4, "in1", datetime(2026, 11, 11, 12, 36, tzinfo=et), "replaces FDS", decided="2026-11-06")
+    s.record_order("HAS", "open", "sell", 22, "in2", datetime(2026, 11, 11, 10, 30, tzinfo=et), "the day's book", decided="2026-11-10")
+    s.record_order("OLD", "open", "buy", 5, "in3", datetime(2026, 11, 11, 10, 30, tzinfo=et), "the day's book")     # no decision kept
+    s.record_order("ROK", "exit", "buy", 4, "out1", datetime(2026, 11, 12, 11, 0, tzinfo=et), "stop", entry_price=402.31)
+
+    rows = {r["order_id"]: r for r in transactions_on(s, "2026-11-11")}
+    assert (rows["in1"]["decided"], rows["in1"]["decision_age_days"], age_text(rows["in1"])) == ("2026-11-06", 5, "5 days old")
+    assert (rows["in2"]["decision_age_days"], age_text(rows["in2"])) == (1, "1 day old")
+    assert rows["in3"]["decided"] is None and age_text(rows["in3"]) == ""
+    assert entry_ages(list(rows.values())) == {1: 1, 5: 1}
+    assert "position ROK-20261111-S, entered 2026-11-11, on the decision of 2026-11-06 (5 days old at entry)" in summarize(list(rows.values()), "2026-11-11")
+
+    (closed,) = transactions_on(s, "2026-11-12")
+    assert (closed["decided"], closed["decision_age_days"], closed["carried"]) == ("2026-11-06", 5, True)

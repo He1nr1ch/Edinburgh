@@ -103,7 +103,8 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
             held = next((h for h in context.account.holdings if h.symbol.upper() == a.symbol.upper()), None)
             context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason,
                                        entry_price=held.avg_entry_price if held and a.kind in ("exit", "trim") else None,
-                                       stop=a.stop if a.kind in ("open", "replace") else None)
+                                       stop=a.stop if a.kind in ("open", "replace") else None,
+                                       decided=a.decided if a.kind in ("open", "replace") else None)
             if a.kind == "replace":
                 context.state.book[a.symbol.upper()] = {"placed_on": context.now.strftime("%Y-%m-%d"),
                                                         "side": "long" if a.side == "buy" else "short",
@@ -363,7 +364,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 _log(config, now, f"  failed: {o['ticker']}: {exc}")
                 continue
             state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason,
-                               stop=float(o["stop"]) if o.get("stop") else None)
+                               stop=float(o["stop"]) if o.get("stop") else None, decided=o.get("decided") or None)
             state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": float(o["value"])}
             gross += float(o["value"])
             placed.append(o["ticker"])

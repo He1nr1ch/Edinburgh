@@ -103,6 +103,7 @@ class Order:
     stop_from: str = ""
     target: float | None = None
     score: float | None = None      # see ranking.py; set when the book is built
+    decided: str = ""               # the analysis date of the decision the order comes from
 
     @property
     def side(self) -> str:
@@ -264,7 +265,7 @@ def size_book(calls: list[Call], prices: dict[str, float], equity: float,
         c, price, n = by_ticker[ticker], prices[ticker], counts[ticker]
         stop, stop_from = stop_for(c, price, default_stop_pct)
         book.orders.append(Order(ticker, c.rating, c.risk_level, c.ceiling_pct, weight, price,
-                                 int(math.copysign(n, weight)), stop, stop_from, c.target))
+                                 int(math.copysign(n, weight)), stop, stop_from, c.target, decided=c.decided))
     book.orders.sort(key=lambda o: (o.shares < 0, -o.value))
     return book
 

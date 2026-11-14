@@ -99,7 +99,7 @@ def scored(call: Call, price: float, as_of: str, default_stop_pct: float, net_va
 
 
 BOOK_COLUMNS = ["ticker", "side", "rating", "risk_level", "ceiling_pct", "weight_pct", "price", "shares", "value",
-                "stop", "stop_from", "target", "score"]
+                "stop", "stop_from", "target", "score", "decided"]
 BENCH_COLUMNS = ["ticker", "side", "rating", "risk_level", "ceiling_pct", "price", "stop", "stop_from", "target",
                  "expected_move_pct", "decided", "score", "score_parts"]
 
@@ -116,7 +116,7 @@ def save_book(built: BuiltBook, config: dict, hedge_row: list | None = None) -> 
         for o in built.book.orders:
             writer.writerow([o.ticker, o.side, o.rating, o.risk_level or "", o.ceiling_pct,
                              round(o.weight_pct, 4), o.price, o.shares, round(o.value, 2),
-                             o.stop, o.stop_from, o.target or "", getattr(o, "score", "")])
+                             o.stop, o.stop_from, o.target or "", getattr(o, "score", ""), o.decided])
         if hedge_row:
             writer.writerow(list(hedge_row) + [""] * (len(BOOK_COLUMNS) - len(hedge_row)))
     built.bench_path = folder / f"{stem}_bench.csv"

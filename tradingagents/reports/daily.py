@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from tradingagents.web.transactions import position_text
+from tradingagents.web.transactions import age_text, entry_ages, position_text
 from tradingagents.agents.schemas import Envelope, envelope_lines
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.feedback.store import keep_desk_verdict
@@ -154,6 +154,7 @@ def gather(config: dict, day: str) -> dict:
         "realised": realised(txns), "unrealised": round(unrealised, 2) if positions else None,
         # The day in R: each exit's result over the risk to the stop it was opened with.
         "r": realised_r(txns),
+        "entry_ages": entry_ages(txns),
         "r_by_side": {side: s for side in ("long", "short") if (s := realised_r([t for t in txns if t["position"] == side]))},
         "decisions_r": decisions_r,
         "positions": positions, "transactions": txns,
@@ -185,6 +186,8 @@ def _facts_text(f: dict) -> str:
         lines.append(_r_line(f) + ". R is an exit's result over the risk it was opened with (entry to stop): "
                      "a stop-out is about -1R, and the mean R per exit is the desk's edge")
     lines.append(f"Entries {f['entries']}; exits by cause {f['exits_by_cause'] or 'none'}")
+    if f.get("entry_ages"):
+        lines.append(_ages_line(f) + ". A decision is dated by the close it analysed, so one day old is the freshest there can be")
     if f["book"]:
         lines.append(f"Book this morning: {len(f['book'])} orders, {f['book_held']} held at the close")
     if f["transactions"]:
@@ -234,6 +237,12 @@ def _facts_text(f: dict) -> str:
     if f.get("decisions_r"):
         lines.append("Settled decisions in R (each call trading its own stop and target over its window): " + _decisions_r_text(f["decisions_r"]))
     return "\n".join(lines)
+
+
+def _ages_line(f: dict) -> str:
+    """How old the desk's decisions were when the day's positions were opened."""
+    return "Age of the decisions behind today's entries: " + ", ".join(
+        f"{n} at {days} day{'' if days == 1 else 's'}" for days, n in f["entry_ages"].items())
 
 
 def _r_line(f: dict) -> str:
@@ -306,6 +315,8 @@ def render(facts: dict, rev: DailyReview | None) -> str:
     if f.get("r"):
         out.append("  \n**" + _r_line(f).replace("In R today:", "In R today**", 1)
                    + " · *R is an exit's result over the risk to the stop it was opened with*")
+    if f.get("entry_ages"):
+        out.append("  \n" + _ages_line(f) + " · *a decision is dated by the close it analysed: one day old is the freshest*")
     out.append("")
     if rev:
         out += ["## What happened", rev.what_happened, "", "## What worked", rev.what_worked, "",
@@ -320,10 +331,11 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out += ["## Review", "The model did not return a review in form; the facts below stand on their own.", ""]
     out.append("## Transactions")
     if f["transactions"]:
-        out += ["| Time | Action | Ticker | Side | Position | Entered | Shares | Fill | P/L | P/L % | R | Cause | Why |", "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|"]
+        out += ["| Time | Action | Ticker | Side | Position | Entered | Decided | Shares | Fill | P/L | P/L % | R | Cause | Why |", "|---|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|"]
         for t in f["transactions"]:
             out.append(f"| {t['time']} | {t['action']} | {t['ticker']} | {t['position']} | {t['position_id']} | "
-                       f"{(t['entered'] + (' (carried)' if t['carried'] else '')) if t['entered'] else '—'} | {t['qty']} | "
+                       f"{(t['entered'] + (' (carried)' if t['carried'] else '')) if t['entered'] else '—'} | "
+                       f"{f'{t['decided']} ({age_text(t)})' if t.get('decided') else '—'} | {t['qty']} | "
                        f"{t['price'] if t['price'] else '—'} | {f'{t['pnl']:+,.2f}' if t['pnl'] is not None else '—'} | "
                        f"{f'{t['pnl_pct']:+.1f}%' if t['pnl_pct'] is not None else '—'} | {f'{t['r']:+.2f}R' if t.get('r') is not None else '—'} | {t['cause']} | {t['reason'][:140].replace('|', '/')} |")
     else:

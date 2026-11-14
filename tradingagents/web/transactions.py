@@ -10,6 +10,7 @@ Alpaca where it has one.
 from __future__ import annotations
 
 import logging
+from datetime import date
 from collections.abc import Callable
 from pathlib import Path
 
@@ -93,7 +94,18 @@ def _position(state: WorkerState, order: dict, side: str, day: str) -> dict:
         else:
             found = state.position_before(order["symbol"], side, order["at"])
             pid, entered = (found["id"], found["entered"]) if found else (f"{order['symbol'].upper()}-unrecorded-{letter}", None)
-    return {"position_id": pid, "entered": entered, "carried": entered < day if entered else None}
+    # The decision the position was opened on, kept with its opening order; None for
+    # an order from before it was kept, or a position the worker did not open.
+    opening = order if order["kind"] in OPENS else next(reversed(_openings(state, order, OPENS)), None)
+    decided = (opening or {}).get("decided")
+    age = None
+    if decided and entered:
+        try:
+            age = (date.fromisoformat(entered) - date.fromisoformat(decided)).days
+        except ValueError:
+            decided = None
+    return {"position_id": pid, "entered": entered, "carried": entered < day if entered else None,
+            "decided": decided, "decision_age_days": age}
 
 
 def _openings(state: WorkerState, exit_order: dict, kinds: tuple) -> list[dict]:
@@ -179,7 +191,23 @@ def position_text(row: dict) -> str:
     """``FDX-20261113-S, entered 2026-11-13 (carried over)``: the position a row belongs to, in words."""
     if not row.get("entered"):
         return f"{row['position_id']}, no entry on the worker's record"
-    return f"{row['position_id']}, entered {row['entered']}" + (" (carried over)" if row.get("carried") else "")
+    return (f"{row['position_id']}, entered {row['entered']}" + (" (carried over)" if row.get("carried") else "")
+            + (f", on the decision of {row['decided']} ({age_text(row)} at entry)" if row.get("decided") else ""))
+
+
+def age_text(row: dict) -> str:
+    """``2 days old``: the age of the desk's decision when the position was opened; empty when it is not on record."""
+    age = row.get("decision_age_days")
+    return "" if age is None else f"{age} day{'' if age == 1 else 's'} old"
+
+
+def entry_ages(rows: list[dict]) -> dict[int, int]:
+    """How old the decisions behind the day's entries were: days old -> how many entries."""
+    ages: dict[int, int] = {}
+    for r in rows:
+        if r["flow"] == "in" and r["kind"] in OPENS and r.get("decision_age_days") is not None:
+            ages[r["decision_age_days"]] = ages.get(r["decision_age_days"], 0) + 1
+    return dict(sorted(ages.items()))
 
 
 def realised(rows: list[dict]) -> float | None:
