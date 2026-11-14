@@ -100,19 +100,27 @@ def _state(analysed=36, queued=467, in_flight=12, rounds=((12, 40.0), (12, 45.0)
 def test_the_progress_counts_the_cycle_and_estimates_its_end_from_the_recent_pace():
     from datetime import datetime
 
-    now = datetime.fromisoformat("2026-11-10T18:44:12-05:00")     # 15 min into the round
-    p = sw.progress(_state(), now)
+    now = datetime.fromisoformat("2026-11-10T18:44:12-05:00")
+    p = sw.progress(_state(), now)                                # a state file from before the pool still reads
     assert (p["analysed"], p["in_flight"], p["queued"], p["total"]) == (36, 12, 467, 515)
     assert p["minutes_per_round"] == 42.5 and p["tickers_per_round"] == 12 and p["minutes_per_ticker"] == 3.54
-    # 479 remaining × 3.54 min, less the 15 min the round has already run.
-    assert p["eta_hours"] == pytest.approx((479 * 42.5 / 12 - 15) / 60, abs=0.06)
+    # 467 queued and the 12 at work, taken as half done, × 3.54 min.
+    assert p["eta_hours"] == pytest.approx((467 + 6) * 42.5 / 12 / 60, abs=0.06)
+    # The pool: each run records its own minutes and how many processes were at work beside it.
+    pool = {**_state(in_flight=0), "runs": [{"run_id": "x_a", "tickers": ["A", "B"], "started": "2026-11-10T18:29:12-05:00"},
+                                             {"run_id": "x_b", "tickers": ["C", "D"], "started": "2026-11-10T18:31:00-05:00"}],
+            "rounds": [{"round": "c2r7", "tickers": 2, "parts": 5, "pool": True, "minutes": 20.0},
+                       {"round": "c2r8", "tickers": 2, "parts": 5, "pool": True, "minutes": 30.0}]}
+    pp = sw.progress(pool, now)
+    assert (pp["in_flight"], pp["parts"], pp["round_started"]) == (4, 2, "2026-11-10T18:29:12-05:00")
+    assert pp["minutes_per_ticker"] == 2.5                        # 50 process-minutes over 4 tickers, five at work: 2.5 min of wall clock each
     assert p["pct"] == 7.0
     text = sw.describe(p)
-    assert text.startswith("cycle 2 on 2026-11-10: 36 of 515 analysed (7%), 12 in flight, 467 queued, 42 min per round of 12, about ")
+    assert text.startswith("cycle 2 on 2026-11-10: 36 of 515 analysed (7%), 12 in flight, 467 queued, 42 min per run of 12, about ")
     assert sw.describe({}) == "no sweep yet" and sw.progress({}) == {}
     # No finished round yet: counts only, no pace or estimate.
     p0 = sw.progress(_state(analysed=0, rounds=()))
-    assert "eta_hours" not in p0 and "min per round" not in sw.describe(p0)
+    assert "eta_hours" not in p0 and "min per run" not in sw.describe(p0)
     assert sw.describe_eta({"eta_hours": 0.5}) == "30 min" and sw.describe_eta({"eta_hours": 60}) == "2.5 days"
 
 
@@ -136,13 +144,13 @@ def test_a_finished_round_is_kept_in_the_state_with_its_pace(tmp_path, monkeypat
     for proc in FakeProc.live:
         proc.finish()
     with caplog.at_level(logging.INFO):
-        s.tick("2026-11-10", False, [], {})      # finishes round 1, starts round 2
+        s.tick("2026-11-10", False, [], {})      # takes in the three runs, starts three more
     saved = json.loads((tmp_path / "sweep.json").read_text())
-    assert len(saved["rounds"]) == 1 and saved["rounds"][0]["tickers"] == 6 and saved["rounds"][0]["parts"] == 3
-    assert saved["round"]["parts"] == 3 and saved["round"]["started"]
+    assert len(saved["rounds"]) == 3 and all(r["tickers"] == 2 and r["pool"] for r in saved["rounds"])
+    assert len(saved["runs"]) == 3 and saved["runs"][0]["started"]
     p = s.progress()
     assert (p["analysed"], p["in_flight"], p["queued"], p["total"]) == (6, 6, 0, 12)
-    assert "6 of 12 analysed this cycle, 6 queued" in caplog.text    # logged before the next round starts
+    assert "6 of 12 analysed this cycle, 6 queued" in caplog.text    # logged as the last of the three came in
 
 
 # --- PAIR's record of who served what -------------------------------------------

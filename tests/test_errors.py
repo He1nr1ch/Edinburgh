@@ -179,7 +179,7 @@ def test_a_ticker_whose_run_failed_goes_back_in_the_queue_once_per_cycle(cfg):  
     assert sw.Sweep(cfg).retried == [first[0]]                                     # remembered across a restart
 
     # It comes up again later in the cycle and fails again: it waits for the next cycle, not a third try.
-    again = sw.Round(["r"], [first[0], "T99"], 0.0, 1, s.round.started_at)
+    again = sw.Run("r", [first[0], "T99"], "2026-11-09", 0.0, s.runs[0].started_at)
     with run_config(cfg):
         errors.record("run", "InferenceTimeout: again", ticker=first[0])
         errors.record("run", "VendorError: no data", ticker="T99")

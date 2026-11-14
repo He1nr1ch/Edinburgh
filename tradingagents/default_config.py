@@ -315,21 +315,22 @@ def build_default_config() -> dict:
         # for the Watcher to replace a position that sells out during the day.
         "bench_size": 10,
         # The sweep runs around the clock (see sweep.py): the held positions first,
-        # then the watchlist least recently analysed first, in rounds of
-        # sweep_round_size tickers per process, in daily_parts processes outside
-        # market hours and daily_parts_market_hours during them, so the Watcher
-        # has the other PAIR nodes to itself while the market is open. With
-        # thinking on a ticker takes about eleven minutes; the S&P 500 is under
-        # two days. The book is built at daily_book_time (ET) on a day the market
-        # opens, from every decision under decision_max_age_days old. The
-        # watchlist lives in the data folder, where the sweep can read and
-        # refresh it; a missing file is seeded from the repo's copy.
+        # then the watchlist least recently analysed first, by a pool of
+        # processes that each take sweep_round_size tickers at a time: daily_parts
+        # processes outside market hours and daily_parts_market_hours during
+        # them, when the smaller pool leaves the Watcher's calls a short queue.
+        # There are more processes than PAIR nodes (three) on purpose: with one a
+        # node the nodes stood idle 35% of the night and 66% of the session,
+        # by PAIR's own record. The book is built at daily_book_time (ET) on a
+        # day the market opens, from every decision under decision_max_age_days
+        # old. The watchlist lives in the data folder, where the sweep can read
+        # and refresh it; a missing file is seeded from the repo's copy.
         "daily_book_time": "09:00",
         "decision_max_age_days": 5,
         "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
-        "daily_parts_market_hours": 1,
-        "sweep_round_size": 4,
-        "daily_parts": 3,
+        "daily_parts_market_hours": 2,
+        "sweep_round_size": 2,
+        "daily_parts": 5,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
         # Price the SPY call hedge for a net-short book after sizing, as `size`
         # does, and write it into the book for the worker to buy at the open.

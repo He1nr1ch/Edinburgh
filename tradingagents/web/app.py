@@ -268,12 +268,11 @@ def _status_section() -> str:
     if p:
         pct = f' ({p["pct"]:.0f}%)' if "pct" in p else ""
         cards.append(('Sweep', f'{p["analysed"]} of {p["total"]}{pct}', f'cycle {p["cycle"]} on {p["date"]}'))
-        cards.append(('In flight', f'{p["in_flight"]}', f'round {p.get("round") or "-"}'
-                      + (f' on {p["parts"]} process(es)' if p.get("parts") else '')))
+        cards.append(('In flight', f'{p["in_flight"]}', (f'in {p["parts"]} process(es)' if p.get("parts") else '')))
         cards.append(('Queued', f'{p["queued"]}', ''))
         if p.get("minutes_per_round"):
-            cards.append(('Pace', f'{p["minutes_per_round"]:.0f} min / round',
-                          f'{p["tickers_per_round"]:.0f} tickers, {p["minutes_per_ticker"]:.1f} min each'))
+            cards.append(('Pace', f'{p["minutes_per_ticker"]:.1f} min / ticker',
+                          f'wall clock; a run of {p["tickers_per_round"]:.0f} takes {p["minutes_per_round"]:.0f} min'))
         if p.get("eta_hours") is not None:
             cards.append(('Cycle ends in', html.escape(sw.describe_eta(p)), 'at the recent pace'))
     else:
@@ -290,7 +289,7 @@ def _status_section() -> str:
         for k, v, sub in cards) + '</div>')
     if p and p.get("saved"):
         out.append(f'<p class="meta">Sweep state saved {html.escape(p["saved"][:16].replace("T", " "))}'
-                   + (f' · round started {html.escape(p["round_started"][11:16])}' if p.get("round_started") else '') + '</p>')
+                   + (f' · oldest run started {html.escape(p["round_started"][11:16])}' if p.get("round_started") else '') + '</p>')
     if u and u["total"]["calls"]:
         out.append('<details><summary class="meta">Model time by agent today</summary><div class="wrap"><table>'
                    '<tr><th class="l">Agent</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th><th>Minutes</th></tr>')

@@ -1,4 +1,4 @@
-"""The continuous sweep: holdings first, rounds sized for the session, the Watcher's nodes kept free."""
+"""The continuous sweep: holdings first, a pool of processes sized for the session, none waiting for another."""
 
 from __future__ import annotations
 
@@ -45,44 +45,68 @@ def cfg(tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-def test_a_cycle_starts_with_the_holdings_then_the_least_recently_analysed_in_rounds(cfg):
+def test_a_cycle_starts_with_the_holdings_then_the_least_recently_analysed(cfg):
     s = sw.Sweep(cfg)
     s.tick("2026-11-09", market_open=False, holdings=["T05", "XYZ"], last_analysed={"T00": "2026-11-08", "T01": "2026-11-01"})
 
-    assert s.cycle == 1 and s.round_no == 1 and len(FakeProc.live) == 3          # three processes outside market hours
-    first_round = [t for p in FakeProc.live for t in p.tickers()]
-    assert set(first_round) == {"T05", "XYZ", "T02", "T03", "T04", "T06"}        # holdings first, never-analysed next; T01, T00 later
-    assert FakeProc.live[0].tickers()[0] == "T05"                                 # every process starts on a holding
+    assert s.cycle == 1 and s.round_no == 3 and len(FakeProc.live) == 3          # three processes outside market hours
+    assert FakeProc.live[0].tickers() == ["T05", "XYZ"]                           # the holdings are the first run's
+    assert {t for p in FakeProc.live[1:] for t in p.tickers()} == {"T02", "T03", "T04", "T06"}   # never analysed next; T01, T00 later
     assert FakeProc.live[0].kw["preexec_fn"] is not None                         # the sweep yields the CPU to the worker
     assert FakeProc.live[0].kw["env"]["TRADINGAGENTS_RESULTS_DIR"] == cfg["results_dir"]   # the child writes where the worker reads
-    assert FakeProc.live[0].cmd[FakeProc.live[0].cmd.index("--run-id") + 1] == "sp500_20261109_c1r1_a"
+    ids = [p.cmd[p.cmd.index("--run-id") + 1] for p in FakeProc.live]
+    assert ids == ["sp500_20261109_c1r1_a", "sp500_20261109_c1r2_b", "sp500_20261109_c1r3_c"]
     assert len(s.queue) == 7 and s.queue[-2:] == ["T01", "T00"]                   # least recent first, newest last
 
-    s.tick("2026-11-09", False, ["T05", "XYZ"], {})                               # the round is still running: nothing new
-    assert s.round_no == 1 and len(FakeProc.live) == 3
+    assert not s.due(market_open=False)
+    s.tick("2026-11-09", False, ["T05", "XYZ"], {})                               # the pool is full: nothing new
+    assert s.round_no == 3 and len(FakeProc.live) == 3
 
 
 @pytest.mark.unit
-def test_during_market_hours_a_round_runs_on_one_process(cfg):
+def test_a_process_that_ends_is_replaced_at_once_and_does_not_wait_for_the_others(cfg):
+    """In rounds, a round ended when its slowest process did: each process stood idle six minutes in fifty-four."""
+    s = sw.Sweep(cfg)
+    s.tick("2026-11-09", False, [], {})
+    FakeProc.live[1].finish()                                                     # one of three is done; two still at work
+    assert s.due(market_open=False)
+    s.tick("2026-11-09", False, [], {})
+
+    assert len(FakeProc.live) == 4 and len(s.runs) == 3 and s.analysed_this_cycle == 2
+    assert FakeProc.live[3].cmd[FakeProc.live[3].cmd.index("--run-id") + 1] == "sp500_20261109_c1r4_b"   # the place it left
+    assert FakeProc.live[0].poll() is None and FakeProc.live[2].poll() is None    # the others were not touched
+    saved = json.loads(open(cfg["sweep_state_path"]).read())
+    assert [r["round"] for r in saved["rounds"]] == ["c1r2"] and saved["rounds"][0]["parts"] == 3
+
+
+@pytest.mark.unit
+def test_during_market_hours_the_pool_is_smaller(cfg):
     s = sw.Sweep(cfg)
     s.tick("2026-11-09", market_open=True, holdings=[], last_analysed={})
-    assert len(FakeProc.live) == 1 and len(FakeProc.live[0].tickers()) == 2       # one process, round_size tickers
+    assert len(FakeProc.live) == 1 and len(FakeProc.live[0].tickers()) == 2       # one process, sweep_round_size tickers
+    s.tick("2026-11-09", market_open=False, holdings=[], last_analysed={})       # the close: two more join it at once
+    assert len(s.runs) == 3 and len(FakeProc.live) == 3
     for p in FakeProc.live:
         p.finish()
-    s.tick("2026-11-09", market_open=False, holdings=[], last_analysed={})       # the close: back to three
-    assert s.round_no == 2 and len(FakeProc.live) == 4
+    s.tick("2026-11-09", market_open=True, holdings=[], last_analysed={})        # the open: back to one
+    assert len(s.runs) == 1
 
 
 @pytest.mark.unit
 def test_a_new_close_restarts_the_cycle_on_the_holdings_and_an_exhausted_list_goes_round_again(cfg):
     s = sw.Sweep(cfg)
     s.tick("2026-11-09", False, ["T07"], {})
+    FakeProc.live[0].finish()
+    s.tick("2026-11-10", False, ["T07"], {})                                     # the close moved on, two runs still on the old one
+    assert s.cycle == 2 and s.date == "2026-11-10" and s.round_no == 1
+    assert FakeProc.live[-1].tickers()[0] == "T07" and "20261110_c2r1" in FakeProc.live[-1].cmd[-1]
     for p in FakeProc.live:
         p.finish()
-    s.tick("2026-11-10", False, ["T07"], {})                                     # the close moved on
-    assert s.cycle == 2 and s.date == "2026-11-10" and s.round_no == 1
-    assert FakeProc.live[-3].tickers()[0] == "T07"
+    s.tick("2026-11-10", False, ["T07"], {})
+    assert s.analysed_this_cycle == 2                                             # the old close's runs count for no cycle
     s.queue = []                                                                  # pretend the list ran out
+    s.tick("2026-11-10", False, ["T07"], {})
+    assert s.cycle == 2                                                           # runs still at work: the cycle is not over
     for p in FakeProc.live:
         p.finish()
     s.tick("2026-11-10", False, ["T07"], {})
@@ -90,17 +114,23 @@ def test_a_new_close_restarts_the_cycle_on_the_holdings_and_an_exhausted_list_go
 
 
 @pytest.mark.unit
-def test_a_restart_requeues_the_interrupted_round(cfg):
+def test_a_restart_requeues_the_interrupted_runs(cfg):
     s = sw.Sweep(cfg)
     s.tick("2026-11-09", False, ["T05"], {})
-    in_flight = sorted(t for p in FakeProc.live for t in p.tickers())
-    saved = json.loads((cfg["sweep_state_path"] and open(cfg["sweep_state_path"])).read())
-    assert saved["round"]["run_ids"][0] == "sp500_20261109_c1r1_a"
+    in_flight = [t for p in FakeProc.live for t in p.tickers()]
+    saved = json.loads(open(cfg["sweep_state_path"]).read())
+    assert saved["runs"][0]["run_id"] == "sp500_20261109_c1r1_a"
 
-    again = sw.Sweep(cfg)                                                         # the process came back; the round's processes did not
-    assert again.round is None and again.queue[:len(in_flight)] == sorted(in_flight, key=in_flight.index) or set(again.queue[:6]) == set(in_flight)
+    again = sw.Sweep(cfg)                                                         # the worker came back; the runs' processes did not
+    assert again.runs == [] and again.queue[:6] == in_flight
     again.tick("2026-11-09", False, ["T05"], {})
-    assert again.round_no == 2 and again.cycle == 1                               # the same cycle carries on
+    assert again.round_no == 6 and again.cycle == 1                               # the same cycle carries on
+
+    # A state file from before the pool, with its one round in flight, is taken up the same way.
+    old = {**saved, "round": {"run_ids": ["x"], "tickers": ["T09", "T10"], "parts": 3, "started": "s"}, "queue": ["T11"]}
+    del old["runs"]
+    open(cfg["sweep_state_path"], "w").write(json.dumps(old))
+    assert sw.Sweep(cfg).queue == ["T09", "T10", "T11"]
 
 
 @pytest.mark.unit

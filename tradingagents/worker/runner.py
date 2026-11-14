@@ -423,10 +423,25 @@ def book_due(config: dict, now: datetime, state: WorkerState, next_open: datetim
     return local >= due_at and not status.startswith("book built")
 
 
+SWEEP_LOOK_SECONDS = 30      # how often the loop looks whether the sweep's pool has a place free
+SWEEP_FULL_TICK_SECONDS = 300  # a tick with nothing to start still runs this often, to see a new close
+
+
 def tick_sweep(sweep, config: dict, market_open: bool) -> None:
-    """Advance the continuous sweep; a failure here is logged, never the loop's."""
+    """Advance the continuous sweep; a failure here is logged, never the loop's.
+
+    Asked every half minute, so a process that ends is replaced at once (at a
+    look every five minutes each run waited two and a half on average before
+    the next began). A look that finds the pool full and no run ended costs
+    nothing: the broker and the decision files are read only when there is a
+    run to start, or five minutes have passed.
+    """
     from tradingagents.web.data import all_decisions
 
+    now_s = time.monotonic()
+    if not sweep.due(market_open) and now_s - getattr(sweep, "ticked_at", -SWEEP_FULL_TICK_SECONDS) < SWEEP_FULL_TICK_SECONDS:
+        return
+    sweep.ticked_at = now_s
     try:
         with run_config(config):
             now = datetime.now().astimezone()
@@ -466,6 +481,14 @@ def summarize_day(config: dict, day: str) -> str:
         notable = [line for line in log.read_text(encoding="utf-8").splitlines() if "[urgent]" in line or "[notable]" in line]
         lines += ["", f"{len(notable)} notable or urgent finding(s):"] + notable
     return "\n".join(lines)
+
+
+def _wait(seconds: float, sweep, config: dict, market_open: bool) -> None:
+    """Sleep ``seconds``, looking in on the sweep's pool every half minute."""
+    for _ in range(max(1, math.ceil(seconds / SWEEP_LOOK_SECONDS))):
+        time.sleep(min(SWEEP_LOOK_SECONDS, seconds))
+        if sweep is not None:
+            tick_sweep(sweep, config, market_open)
 
 
 def _sleep_until(target: datetime, now: datetime, chunk_minutes: int = 15) -> None:
@@ -514,7 +537,7 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
             clock = trading.get_clock()
         if not clock.is_open:
             break
-        time.sleep(interval_minutes * 60)
+        _wait(interval_minutes * 60, sweep, config, market_open=True)
     day = datetime.now().strftime("%Y-%m-%d")
     send_email(f"Edinburgh worker: summary for {day}", summarize_day(config, day), config)
     run_reports(config, day)
@@ -569,9 +592,9 @@ def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dr
                 logger.info("The market is open; watching until the close.")
                 run_day(config, llm, duties, interval_minutes, dry_run, sweep)
                 continue
-            # Closed: sleep a short while so the sweep's rounds keep turning and
+            # Closed: sleep a short while so the sweep's pool stays full and
             # the book is built on the minute.
-            time.sleep(min(300, max(1.0, (clock.next_open - clock.now).total_seconds())))
+            time.sleep(min(SWEEP_LOOK_SECONDS, max(1.0, (clock.next_open - clock.now).total_seconds())))
         except Exception:
             logger.exception("The worker hit an error; trying again in a minute.")
             time.sleep(60)
