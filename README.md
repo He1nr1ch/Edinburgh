@@ -203,6 +203,14 @@ one a node, PAIR's own record showed its nodes idle a third of the night. Each a
 handed its data in one message and writes its report in one model call (`analyst_briefing`,
 `agents/analysts/briefing.py`), where it used to ask for it a tool call at a time; the
 market-wide news and the macro series, the same for every ticker, are fetched once a day.
+PAIR has no setting for a node's speed and
+assigns a call as it arrives, so the fastest machine, a desktop, stood idle while the others
+queued. The direct lane (`lane.py`) sends it calls straight, but only while nobody is at it: a
+gateway on the desktop (`tradingagents lane`, `scripts/lane/edinburgh-lane.service`) passes
+calls to its own Ollama once it has seen no key or mouse for ten minutes or its screen is
+locked, and answers 503 otherwise; the worker (`TRADINGAGENTS_OLLAMA_LANE_URL`) sends a call
+down the lane when a place is free and the gateway is open, and through PAIR as ever when
+not. A call in flight when its owner returns finishes; nothing new is taken.
 When the session closes the cycle restarts on the holdings against the new
 close. At `daily_book_time` (9 AM ET) on a day the market opens it builds the book. Size the book from every decision under
 `decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together

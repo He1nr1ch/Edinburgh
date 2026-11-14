@@ -38,6 +38,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_OLLAMA_THINKING":         "ollama_thinking",
     "TRADINGAGENTS_OLLAMA_IDLE_TIMEOUT":     "ollama_idle_timeout",
     "TRADINGAGENTS_OLLAMA_CALL_TIMEOUT":     "ollama_call_timeout",
+    "TRADINGAGENTS_OLLAMA_LANE_URL":         "ollama_lane_url",
+    "TRADINGAGENTS_OLLAMA_LANE_SLOTS":       "ollama_lane_slots",
     "TRADINGAGENTS_AGENT_CALLS":             "agent_calls",
     "TRADINGAGENTS_MODEL_OUTAGE_MINUTES":    "model_outage_minutes",
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
@@ -203,6 +205,13 @@ def build_default_config() -> dict:
         # 841 s (99% under 315 s), so these cut off nothing that was healthy.
         "ollama_idle_timeout": 600.0,
         "ollama_call_timeout": 900.0,
+        # The direct lane (see lane.py): the gateway on the fastest machine, e.g.
+        # http://192.168.0.62:11436. A call goes down it when a place is free and
+        # the gateway says the machine is not in use; otherwise through PAIR as
+        # ever. None: no lane. ollama_lane_slots is how many calls it carries at
+        # once (the machine's Ollama answers one at a time unless told otherwise).
+        "ollama_lane_url": None,
+        "ollama_lane_slots": 1,
         # Per-tier and per-agent call settings on top of the above: a model, a
         # context window or a call limit of its own, by tier ("quick", "deep")
         # or by agent name as the graph names it, the agent winning. For example

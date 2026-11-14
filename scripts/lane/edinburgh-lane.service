@@ -1,0 +1,30 @@
+# The direct lane's gateway, on the fast desktop (InfinitiDev): see tradingagents/lane.py.
+#
+# A user service, because it asks the desktop session how long it has been idle:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp scripts/lane/edinburgh-lane.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now edinburgh-lane
+#   sudo ufw allow from 192.168.0.98 to any port 11436 proto tcp     # only if ufw is on
+#
+# Then, in the worker's .env on Colossus:
+#
+#   TRADINGAGENTS_OLLAMA_LANE_URL=http://192.168.0.62:11436
+#
+# Is it open?   curl -s http://127.0.0.1:11436/lane
+# Its refusals: journalctl --user -u edinburgh-lane -f
+
+[Unit]
+Description=Edinburgh direct lane: model calls for the desk while nobody is at this machine
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+WorkingDirectory=%h/PycharmProjects/Edinburgh
+ExecStart=%h/PycharmProjects/Edinburgh/.venv/bin/python -m cli.main lane --port 11436 --idle-minutes 10 --allow 192.168.0.98
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

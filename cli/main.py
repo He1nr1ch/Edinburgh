@@ -583,6 +583,31 @@ def nodes(
 
 
 @app.command()
+def lane(
+    port: int = typer.Option(11436, "--port", help="The LAN port the gateway listens on"),
+    upstream: str = typer.Option("http://127.0.0.1:11434", "--upstream", help="This machine's own Ollama"),
+    idle_minutes: float = typer.Option(10.0, "--idle-minutes", help="Minutes without a key or the mouse before the lane opens"),
+    allow: str = typer.Option("", "--allow", help="Comma-separated addresses that may send calls (the worker's machine)"),
+    host: str = typer.Option("0.0.0.0", "--host", help="The address to listen on; 127.0.0.1 to try it on this machine only"),
+):
+    """The direct lane's gateway: run it on the fast desktop; it serves model calls only while nobody is at it."""
+    import logging
+
+    from tradingagents import lane as lane_mod
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    callers = [a.strip() for a in allow.split(",") if a.strip()]
+    server = lane_mod.serve(port, upstream, idle_minutes, callers, host=host)
+    console.print(f"The lane listens on port {port} for {', '.join(callers) or 'loopback only'}; "
+                  f"it opens after {idle_minutes:g} min without a key or the mouse, or when the screen is locked.")
+    console.print(f"Now: {lane_mod.Gate(idle_minutes).state()['reason']}.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+@app.command()
 def mirror(
     dry_run: bool = typer.Option(False, "--dry-run", help="Say what would be sent; send nothing"),
     show: bool = typer.Option(False, "--show", help="Only show the mirror account against the main one"),

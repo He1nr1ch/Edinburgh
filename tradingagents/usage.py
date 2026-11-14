@@ -132,8 +132,11 @@ def usage_dir(config: dict | None = None) -> Path:
 
 
 def record_response(response, model: str, config: dict | None = None,
-                    started: float | None = None, ended: float | None = None) -> dict | None:
-    """Record one chat response (its ``usage_metadata`` and Ollama's durations); None when it carries none."""
+                    started: float | None = None, ended: float | None = None, node: str = "") -> dict | None:
+    """Record one chat response (its ``usage_metadata`` and Ollama's durations); None when it carries none.
+
+    ``node`` names the machine that served it when the caller knows (a call sent
+    down the direct lane); otherwise PAIR's history is asked later."""
     usage = getattr(response, "usage_metadata", None) or {}
     meta = getattr(response, "response_metadata", None) or {}
     if not usage and not meta.get("total_duration"):
@@ -151,6 +154,8 @@ def record_response(response, model: str, config: dict | None = None,
         rec["tokens_per_s"] = round(rec["tokens_out"] / rec["gen_seconds"], 1)
     if started and ended:        # the call's own clock times, for finding it in PAIR's history
         rec.update(id=uuid.uuid4().hex[:12], started=round(started, 3), ended=round(ended, 3))
+    if node:
+        rec["node"] = node
     record(rec)
     return rec
 
@@ -166,7 +171,7 @@ def record(rec: dict) -> None:
         path = folder / f"{rec['ts'][:10]}.jsonl"
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec) + "\n")
-        if rec.get("id"):
+        if rec.get("id") and not rec.get("node"):       # a lane call's node is known; PAIR's history has no such call
             with _pending_lock:
                 _pending.append((rec, path))
         resolve_nodes()

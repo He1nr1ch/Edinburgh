@@ -43,8 +43,9 @@ from urllib.parse import urlparse
 
 import httpx
 from langchain_ollama import ChatOllama
+from pydantic import PrivateAttr
 
-from tradingagents import errors, pair, usage
+from tradingagents import errors, lane, pair, usage
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
@@ -130,6 +131,16 @@ class NormalizedChatOllama(ChatOllama):
 
     idle_timeout: float | None = None     # seconds of silence allowed between chunks (the queue wait included)
     call_timeout: float | None = None     # seconds allowed for the whole call
+    _lane_node: str = PrivateAttr(default="")   # set on the copy that sends down the direct lane: the machine at its end
+
+    def _down_the_lane(self, url: str, node: str):
+        """A copy of this model whose calls go to the lane's gateway instead of PAIR (see ``tradingagents.lane``)."""
+        from ollama import Client
+
+        twin = self.model_copy(update={"base_url": url})
+        twin._client = Client(host=url, **{**(self.client_kwargs or {}), **(self.sync_client_kwargs or {})})
+        twin._lane_node = node
+        return twin
 
     def with_call(self, model: str | None = None, num_ctx: int | None = None, timeout: float | None = None):
         """A copy for calls with their own model, context window or total time limit, on the same connection."""
@@ -158,10 +169,32 @@ class NormalizedChatOllama(ChatOllama):
             stream.close()      # a dropped call must leave the server too, so PAIR frees the node
 
     def invoke(self, input, config=None, **kwargs):
+        if not self._lane_node:
+            from tradingagents.dataflows.config import get_config
+
+            with lane.claim(get_config()) as place:
+                if place:
+                    url, node = place
+                    try:
+                        return self._down_the_lane(url, node).invoke(input, config, **kwargs)
+                    except Exception as exc:
+                        # The lane's fault is never the call's: it goes through PAIR.
+                        # A 503 is the gateway saying its owner is back; anything
+                        # else it answers (the model is not on that machine) or
+                        # fails to answer keeps the lane out of use for longer.
+                        status = getattr(exc, "status_code", None)
+                        if status == 503:
+                            lane.shut(url, lane.SHUT_AFTER_REFUSAL)
+                        elif status is not None or isinstance(exc, InferenceUnavailable):
+                            lane.shut(url, lane.SHUT_AFTER_FAULT, f"{type(exc).__name__}: {exc}")
+                        else:
+                            raise
         started = time.time()
         try:
             response = super().invoke(input, config, **kwargs)
         except Exception as exc:
+            if self._lane_node and (getattr(exc, "status_code", None) is not None or isinstance(exc, InferenceUnavailable)):
+                raise           # the caller above sends it through PAIR; not an error of the desk's model
             agent = usage.agent_from(config)
             if _TRUNCATED in str(exc):
                 error = ContextWindowExceeded(
@@ -173,7 +206,7 @@ class NormalizedChatOllama(ChatOllama):
             if isinstance(exc, InferenceError):
                 errors.record("timeout" if isinstance(exc, InferenceTimeout) else "unavailable", exc, agent, self.model)
             raise
-        usage.record_response(response, self.model, config, started=started, ended=time.time())
+        usage.record_response(response, self.model, config, started=started, ended=time.time(), node=self._lane_node)
         used = (getattr(response, "usage_metadata", None) or {}).get("input_tokens")
         if used and self.num_ctx and used > 0.8 * self.num_ctx:
             logger.warning("Prompt used %d of the %d-token context window on %s", used, self.num_ctx, self.model)
