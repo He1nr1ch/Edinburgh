@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from tradingagents.feedback.scoring import r_multiple, r_summary, risk_fraction
-from tradingagents.worker.state import WorkerState
+from tradingagents.worker.state import OPENS, WorkerState, entry_day, held_side
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,7 @@ def transactions_on(state: WorkerState, day: str, fills: dict[str, dict] | None 
             "price": price, "value": round(price * int(o["qty"]), 2) if price else None,
             "status": fill.get("status", ""), "reason": o.get("reason", ""), "order_id": o.get("order_id", ""),
             "entry_price": None, "pnl": None, "pnl_pct": None, "stop": None, "risk_pct": None, "r": None,
+            **_position(state, o, position, day),
         }
         if flow == "out":
             entry = o.get("entry_price") or _entry_from_fills(state, o, fills, fills_for)
@@ -76,11 +77,44 @@ def transactions_on(state: WorkerState, day: str, fills: dict[str, dict] | None 
     return rows
 
 
+def _position(state: WorkerState, order: dict, side: str, day: str) -> dict:
+    """The position the order belongs to: its ID, its entry date, and whether it was carried into ``day``.
+
+    Read from the order's record; for an order from before positions were
+    tagged, from the orders before it. ``entered`` is None when the worker has
+    no opening order for the position.
+    """
+    pid, entered = order.get("position_id"), order.get("entered")
+    if not pid:
+        letter = "L" if side == "long" else "S"
+        if order["kind"] in OPENS:
+            entered = entry_day(order["at"])
+            pid = f"{order['symbol'].upper()}-{entered.replace('-', '')}-{letter}"
+        else:
+            found = state.position_before(order["symbol"], side, order["at"])
+            pid, entered = (found["id"], found["entered"]) if found else (f"{order['symbol'].upper()}-unrecorded-{letter}", None)
+    return {"position_id": pid, "entered": entered, "carried": entered < day if entered else None}
+
+
+def _openings(state: WorkerState, exit_order: dict, kinds: tuple) -> list[dict]:
+    """The orders of ``kinds`` that built the position ``exit_order`` closes, oldest first.
+
+    By position ID when the exit carries one that an opening order shares;
+    else the earlier orders in the ticker on the position's own side (a short
+    is not scored against the entry of an earlier long in the same name).
+    """
+    symbol, at = exit_order["symbol"], exit_order["at"]
+    side = held_side(exit_order["kind"], exit_order["side"])
+    before = [o for o in state.orders if o["symbol"] == symbol and o["kind"] in kinds and o["at"] < at
+              and held_side(o["kind"], o["side"]) == side]
+    pid = exit_order.get("position_id")
+    return [o for o in before if o.get("position_id") == pid] or ([] if pid and any(o.get("position_id") for o in before) else before)
+
+
 def _entry_from_fills(state: WorkerState, exit_order: dict, fills: dict | None,
                       fills_for: Callable[[str], dict] | None) -> float | None:
     """The fill price of the last order that opened or added to this position before the exit."""
-    symbol, at = exit_order["symbol"], exit_order["at"]
-    opened = [o for o in state.orders if o["symbol"] == symbol and o["kind"] in ("open", "replace", "add") and o["at"] < at]
+    opened = _openings(state, exit_order, (*OPENS, "add"))
     if not opened:
         return None
     entry = opened[-1]
@@ -100,8 +134,7 @@ def entry_stop(state: WorkerState, exit_order: dict, position: str, config: dict
     """
     lookups = lookups if lookups is not None else {}
     symbol, at = exit_order["symbol"], exit_order["at"]
-    opened = next((o for o in reversed(state.orders)
-                   if o["symbol"] == symbol and o["kind"] in ("open", "replace") and o["at"] < at), None)
+    opened = next(reversed(_openings(state, exit_order, OPENS)), None)
     if opened and opened.get("stop"):
         return float(opened["stop"])
     day = (opened or exit_order)["at"][:10]
@@ -142,6 +175,13 @@ def r_text(summary: dict | None) -> str:
     return f"{summary['total']:+.2f}R over {summary['n']} exit{'s' if summary['n'] != 1 else ''}, {summary['mean']:+.2f}R each"
 
 
+def position_text(row: dict) -> str:
+    """``FDX-20261113-S, entered 2026-11-13 (carried over)``: the position a row belongs to, in words."""
+    if not row.get("entered"):
+        return f"{row['position_id']}, no entry on the worker's record"
+    return f"{row['position_id']}, entered {row['entered']}" + (" (carried over)" if row.get("carried") else "")
+
+
 def realised(rows: list[dict]) -> float | None:
     """The day's realised result over the exits and trims whose result is known; None when none is."""
     known = [r["pnl"] for r in rows if r["flow"] == "out" and r["pnl"] is not None]
@@ -158,7 +198,8 @@ def summarize(rows: list[dict], day: str) -> str:
         in_r = f", {r['r']:+.2f}R on a {r['risk_pct']:.1f}% stop" if r.get("r") is not None else ""
         result = (f" — entered {r['entry_price']:,.2f}, P/L {r['pnl']:+,.2f} ({r['pnl_pct']:+.1f}%{in_r})"
                   if r["pnl"] is not None else "")
-        return f"- {r['time']} {r['action']} {r['position']} {r['ticker']}: {r['qty']} shares{price}{result}\n    {r['reason']}"
+        return (f"- {r['time']} {r['action']} {r['position']} {r['ticker']}: {r['qty']} shares{price}{result}\n"
+                f"    {r['reason']}\n    position {position_text(r)}")
 
     total = realised(rows)
     text = [f"Edinburgh transactions for {day}: {len(outs)} exit(s), {len(ins)} entr{'y' if len(ins) == 1 else 'ies'}"

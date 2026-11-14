@@ -178,13 +178,15 @@ def _transactions_table(rows: list[dict]) -> str:
         in_r = transactions.r_text(transactions.realised_r(rows))
         out.append(f'<p class="meta">Realised on the exits: {_pct_money(total)}'
                    + (f' · {in_r} (R is the result over the risk to the stop at entry)' if in_r else '') + '</p>')
-    out.append('<div class="wrap"><table><tr><th>Time</th><th>Action</th><th>Ticker</th><th>Side</th><th>Shares</th>'
+    out.append('<div class="wrap"><table><tr><th>Time</th><th>Action</th><th>Ticker</th><th>Side</th><th class="l">Position</th><th>Shares</th>'
                '<th>Entry</th><th>Fill</th><th>Value</th><th>P/L</th><th>P/L %</th><th>R</th><th class="l">Why</th><th>Report</th></tr>')
     for r in rows:
         cls = "neg" if r["flow"] == "out" else "pos"
         out.append(
             f'<tr><td class="l">{r["time"]}</td><td class="l {cls}">{html.escape(r["action"])}</td>'
             f'<td><b>{html.escape(r["ticker"])}</b></td><td class="{r["position"]}">{r["position"]}</td>'
+            f'<td class="l" title="{html.escape(transactions.position_text(r))}">{html.escape(r["position_id"])}'
+            f'{" · carried" if r["carried"] else ""}</td>'
             f'<td>{r["qty"]:,}</td><td>{_num(r["entry_price"])}</td><td>{_num(r["price"])}</td><td>{_num(r["value"], 0)}</td>'
             f'<td>{_pct_money(r["pnl"]) if r["pnl"] is not None else "—"}</td><td>{_pct(r["pnl_pct"])}</td>'
             f'<td>{f"{r['r']:+.2f}R" if r.get("r") is not None else "—"}</td>'

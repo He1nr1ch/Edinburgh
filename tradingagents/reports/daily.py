@@ -21,6 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from tradingagents.web.transactions import position_text
 from tradingagents.agents.schemas import Envelope, envelope_lines
 from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide
 from tradingagents.feedback.store import keep_desk_verdict
@@ -191,7 +192,8 @@ def _facts_text(f: dict) -> str:
         for t in f["transactions"]:
             in_r = f", {t['r']:+.2f}R on a {t['risk_pct']:.1f}% stop" if t.get("r") is not None else ""
             res = f", P/L {t['pnl']:+,.2f} ({t['pnl_pct']:+.1f}%{in_r})" if t["pnl"] is not None else ""
-            lines.append(f"- {t['time']} {t['action']} {t['position']} {t['ticker']} {t['qty']}{res}: {t['reason'][:220]}")
+            lines.append(f"- {t['time']} {t['action']} {t['position']} {t['ticker']} {t['qty']}{res} "
+                         f"[position {position_text(t)}]: {t['reason'][:220]}")
     if f["positions"]:
         lines.append("Open positions at the close (P/L %, distance to stop, distance to target, rating):")
         for p in sorted(f["positions"], key=lambda p: p.get("pnl_pct") or 0):
@@ -318,9 +320,10 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out += ["## Review", "The model did not return a review in form; the facts below stand on their own.", ""]
     out.append("## Transactions")
     if f["transactions"]:
-        out += ["| Time | Action | Ticker | Side | Shares | Fill | P/L | P/L % | R | Cause | Why |", "|---|---|---|---|---:|---:|---:|---:|---:|---|---|"]
+        out += ["| Time | Action | Ticker | Side | Position | Entered | Shares | Fill | P/L | P/L % | R | Cause | Why |", "|---|---|---|---|---|---|---:|---:|---:|---:|---:|---|---|"]
         for t in f["transactions"]:
-            out.append(f"| {t['time']} | {t['action']} | {t['ticker']} | {t['position']} | {t['qty']} | "
+            out.append(f"| {t['time']} | {t['action']} | {t['ticker']} | {t['position']} | {t['position_id']} | "
+                       f"{(t['entered'] + (' (carried)' if t['carried'] else '')) if t['entered'] else '—'} | {t['qty']} | "
                        f"{t['price'] if t['price'] else '—'} | {f'{t['pnl']:+,.2f}' if t['pnl'] is not None else '—'} | "
                        f"{f'{t['pnl_pct']:+.1f}%' if t['pnl_pct'] is not None else '—'} | {f'{t['r']:+.2f}R' if t.get('r') is not None else '—'} | {t['cause']} | {t['reason'][:140].replace('|', '/')} |")
     else:

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from tradingagents.web import transactions
+from tradingagents.web.transactions import summarize, transactions_on
 from tradingagents.worker.state import WorkerState
 
 
@@ -150,3 +151,59 @@ def test_an_exit_states_its_result_in_r_over_the_risk_it_was_opened_with(tmp_pat
     assert "+1.61R over 4 exits, +0.40R each." in text and "(-2.2%, -1.06R on a 2.1% stop)" in text
     without = transactions.transactions_on(s, "2026-11-09", fills)                                        # no config: no R, as before
     assert all(r["r"] is None for r in without) and transactions.realised_r(without) is None
+
+
+@pytest.mark.unit
+def test_every_position_has_an_id_and_an_entry_date_and_its_exits_carry_them(tmp_path):
+    """Q on 2026-11-13: a long closed by the review, then a short the desk never chose, closed at its target.
+    Three exits in one ticker read as one position; they were two, one of them not the worker's."""
+    from zoneinfo import ZoneInfo
+
+    et = ZoneInfo("America/New_York")
+    s = WorkerState.load(tmp_path / "state.json")
+    s.record_order("Q", "open", "buy", 18, "in1", datetime(2026, 11, 12, 10, 30, tzinfo=et), "the day's book", stop=118.0)
+    s.record_order("Q", "trim", "sell", 9, "t1", datetime(2026, 11, 12, 14, 0, tzinfo=et), "news", entry_price=124.34)
+    assert s.positions["Q"] == {"id": "Q-20261112-L", "entered": "2026-11-12", "side": "long"}
+    s.record_order("Q", "exit", "sell", 9, "out1", datetime(2026, 11, 13, 10, 30, tzinfo=et), "review", entry_price=124.34)
+    assert "Q" not in s.positions                                                   # closed: the ID is spent
+    s.record_order("Q", "exit", "buy", 18, "out2", datetime(2026, 11, 13, 10, 59, tzinfo=et), "target", entry_price=121.10)
+    s.record_order("Q", "open", "buy", 5, "in2", datetime(2026, 11, 13, 11, 0, tzinfo=et), "the day's book")
+    s.record_order("Q", "exit", "sell", 5, "out3", datetime(2026, 11, 13, 11, 30, tzinfo=et), "stop", entry_price=120.0)
+    s.record_order("Q", "replace", "buy", 5, "in3", datetime(2026, 11, 13, 12, 0, tzinfo=et), "replaces X")
+    s.save()
+
+    tagged = [(o["order_id"], o["position_id"], o["entered"]) for o in WorkerState.load(tmp_path / "state.json").orders]
+    assert tagged == [("in1", "Q-20261112-L", "2026-11-12"), ("t1", "Q-20261112-L", "2026-11-12"),
+                      ("out1", "Q-20261112-L", "2026-11-12"),
+                      ("out2", "Q-unrecorded-S", None),                              # a short the worker never opened
+                      ("in2", "Q-20261113-L", "2026-11-13"), ("out3", "Q-20261113-L", "2026-11-13"),
+                      ("in3", "Q-20261113-L-2", "2026-11-13")]                       # a second long in the name that day
+
+    rows = {r["order_id"]: r for r in transactions_on(s, "2026-11-13")}
+    assert (rows["out1"]["position_id"], rows["out1"]["carried"]) == ("Q-20261112-L", True)
+    assert (rows["out3"]["position_id"], rows["out3"]["carried"]) == ("Q-20261113-L", False)
+    assert rows["out2"]["carried"] is None
+    text = summarize(list(rows.values()), "2026-11-13")
+    assert "position Q-20261112-L, entered 2026-11-12 (carried over)" in text
+    assert "position Q-unrecorded-S, no entry on the worker's record" in text
+
+
+@pytest.mark.unit
+def test_orders_from_before_positions_were_tagged_are_read_from_the_orders_before_them(tmp_path):
+    """The record on Colossus has a week of untagged orders; an exit is still tied to its own entry, on its own side."""
+    s = WorkerState.load(tmp_path / "state.json")
+    at = lambda d, h, m: datetime(2026, 11, d, h, m, tzinfo=UTC).isoformat()
+    s.orders = [
+        {"symbol": "GLW", "kind": "open", "side": "sell", "qty": 25, "order_id": "in1", "at": at(10, 15, 30), "reason": "book", "stop": 118.0},
+        {"symbol": "GLW", "kind": "exit", "side": "buy", "qty": 25, "order_id": "out1", "at": at(11, 14, 30), "reason": "review", "entry_price": 112.38},
+        {"symbol": "GLW", "kind": "exit", "side": "buy", "qty": 25, "order_id": "out2", "at": at(11, 14, 31), "reason": "stop", "entry_price": 112.38},
+        {"symbol": "GLW", "kind": "exit", "side": "sell", "qty": 25, "order_id": "out3", "at": at(11, 15, 33), "reason": "target", "entry_price": 119.70},
+    ]
+    fills = {"out1": {"filled_avg_price": 119.63}, "out2": {"filled_avg_price": 119.70}, "out3": {"filled_avg_price": 120.47}}
+    rows = {r["order_id"]: r for r in transactions_on(s, "2026-11-11", fills, config={"default_stop_pct": 2.0})}
+
+    assert (rows["out1"]["position_id"], rows["out1"]["entered"], rows["out1"]["carried"]) == ("GLW-20261110-S", "2026-11-10", True)
+    assert rows["out2"]["position_id"] == "GLW-unrecorded-S" and rows["out2"]["entered"] is None      # the phantom: nothing left to close
+    assert rows["out3"]["position_id"] == "GLW-unrecorded-L"                                          # the long it opened
+    assert rows["out1"]["stop"] == 118.0                                # the short's own stop
+    assert rows["out3"]["risk_pct"] == 2.0                              # not the short's 118 read as the long's (1.4%): the default
