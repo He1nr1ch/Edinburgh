@@ -97,3 +97,67 @@ def test_a_briefed_analyst_writes_its_report_in_one_call_and_is_offered_no_tools
     assert report == "The report." and not result.tool_calls and len(seen) == 1
     system, asked, handed = seen[0]
     assert "none in this turn" in system.content and asked.content == "FDX" and handed.content.startswith("[get_stock_data returned]")
+
+
+def _prompt():
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+    return ChatPromptTemplate.from_messages([("system", "Tools: {tool_names}."), MessagesPlaceholder("messages")])
+
+
+@pytest.mark.unit
+def test_a_briefed_analyst_gives_its_report_and_its_verdict_in_one_call():
+    """The verdict was a call of its own after every report: three a ticker, each reading the report again."""
+    from unittest.mock import MagicMock
+
+    from tradingagents.agents.analysts.turn import report_and_verdict
+    from tradingagents.agents.schemas import AnalystReport
+
+    structured = MagicMock()
+    structured.invoke.return_value = AnalystReport(report="## FDX\nThe report.\n| a | b |", signal="Bearish",
+                                                   summary="Margins broke.", confidence=0.7, evidence=["EPS -72%"])
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+    with run_config({**DEFAULT_CONFIG, "analyst_verdicts": True, "holding_period_days": 5}):
+        result, report, update = report_and_verdict(_prompt(), llm, [HumanMessage("FDX")], "[get_cashflow returned]\n...",
+                                                    "Fundamentals Analyst", "fundamentals_analyst")
+
+    assert report == "## FDX\nThe report.\n| a | b |" and result.content == report and not result.tool_calls
+    assert structured.invoke.call_count == 1 and not llm.invoke.called and not llm.bind_tools.called
+    asked = structured.invoke.call_args.args[0]
+    assert "none in this turn" in asked[0].content and "over the next 5 trading days" in asked[-1].content
+    verdict = update["verdicts"]["fundamentals_analyst"]
+    assert (verdict["call"], verdict["confidence"], verdict["thesis"], verdict["ok"]) == ("Bearish", 0.7, "Margins broke.", True)
+    assert "report" not in verdict["fields"]                         # the report is kept once, in the run's state
+
+
+@pytest.mark.unit
+def test_an_answer_that_does_not_fit_its_form_still_leaves_a_report(monkeypatch):
+    """The report is what the other agents read: it is written in prose, and the verdict asked for after it, as before."""
+    from unittest.mock import MagicMock
+
+    from langchain_core.runnables import RunnableLambda
+
+    from tradingagents.agents import structured as st
+    from tradingagents.agents.analysts import turn
+
+    class Llm(RunnableLambda):
+        def with_structured_output(self, schema):
+            bound = MagicMock()
+            bound.invoke.side_effect = ValueError("no parsed result")
+            return bound
+
+    llm = Llm(lambda value: AIMessage("The report, in prose."))
+    monkeypatch.setattr(st.errors, "record", lambda *a, **k: None)
+    asked_after = []
+    monkeypatch.setattr(st, "analyst_verdict", lambda llm, agent, key, report, ctx="": asked_after.append(report) or {"verdicts": {key: {"call": "Neutral"}}})
+    with run_config({**DEFAULT_CONFIG, "analyst_verdicts": True}):
+        result, report, update = turn.report_and_verdict(_prompt(), llm, [HumanMessage("FDX")], "[get_news returned]\n...",
+                                                         "News Analyst", "news_analyst")
+    assert report == "The report, in prose." and asked_after == [report] and update == {"verdicts": {"news_analyst": {"call": "Neutral"}}}
+
+    # With verdicts off there is nothing to fold: the report alone, in one plain call.
+    with run_config({**DEFAULT_CONFIG, "analyst_verdicts": False}):
+        monkeypatch.setattr(st, "analyst_verdict", lambda *a, **k: {})
+        _, report, update = turn.report_and_verdict(_prompt(), llm, [HumanMessage("FDX")], "x", "News Analyst", "news_analyst")
+    assert report == "The report, in prose." and update == {}

@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts import briefing
-from tradingagents.agents.analysts.turn import take_turn
+from tradingagents.agents.analysts.turn import report_and_verdict, take_turn
 from tradingagents.agents.structured import analyst_verdict
 from tradingagents.agents.context import get_instrument_context_from_state, length_brief, report_style
 from tradingagents.agents.tools import get_indicators, get_stock_data, get_verified_market_snapshot
@@ -83,12 +83,18 @@ Before writing the final report, call get_verified_market_snapshot for this tick
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        result, report = take_turn(prompt, llm, TOOLS, state["messages"], briefing.brief(briefing.market, state))
+        handed = briefing.brief(briefing.market, state)
+        if handed:
+            result, report, verdict = report_and_verdict(prompt, llm, state["messages"], handed,
+                                                         "Market Analyst", "market_analyst", instrument_context)
+        else:
+            result, report = take_turn(prompt, llm, TOOLS, state["messages"])
+            verdict = analyst_verdict(llm, "Market Analyst", "market_analyst", report, instrument_context)
 
         return {
             "messages": [result],
             "market_report": report,
-            **analyst_verdict(llm, "Market Analyst", "market_analyst", report, instrument_context),
+            **verdict,
         }
 
     return market_analyst_node

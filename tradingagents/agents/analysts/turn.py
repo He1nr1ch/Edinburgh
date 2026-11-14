@@ -1,8 +1,11 @@
 """One turn of a tool-using analyst, and its last turn once its tool rounds are spent."""
 
 import json
+import logging
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+logger = logging.getLogger(__name__)
 
 WRAP_UP = (
     "You have used every tool round this report allows. Write your final report "
@@ -47,3 +50,40 @@ def _as_text(messages):
         else:
             written.append(message)
     return written
+
+
+VERDICT_TOO = (
+    "\n\nAnswer in the required form. `report` is the report in full. `signal` is what it implies for the "
+    "price over the next {days} trading days (Bullish, Neutral or Bearish), `summary` the reason in a "
+    "sentence or two, and `confidence` and `evidence` how sure you are and the facts in the report that "
+    "decide it. The signal follows from the report: add nothing to it that the report does not say."
+)
+
+
+def report_and_verdict(prompt, llm, messages, handed, agent_name, key, instrument_context=""):
+    """A briefed analyst's turn: its reply, its report and its verdict as a state update.
+
+    One model call gives both the report and the typed verdict, which was a
+    call of its own after every report: a short one, but with the report to
+    read again and the model's thinking to do again, three times a ticker.
+    When that one answer does not fit its form the analyst writes its report
+    in prose and the verdict is asked for separately, as before; the report
+    is what the other agents read and is never lost to a form.
+    """
+    from tradingagents.agents.schemas import AnalystReport
+    from tradingagents.agents.structured import analyst_verdict, bind_structured, decide
+    from tradingagents.dataflows.config import get_config
+
+    config = get_config()
+    if config.get("analyst_verdicts", True):
+        ask = handed + VERDICT_TOO.format(days=config.get("holding_period_days", 5))
+        asked = prompt.partial(tool_names="none in this turn; their results are in the last message").invoke(
+            {"messages": [*messages, HumanMessage(content=ask)]}).to_messages()
+        typed, verdict = decide(bind_structured(llm, AnalystReport, agent_name), asked, agent_name, catch=ValueError)
+        if typed is not None and typed.report.strip():
+            verdict.fields.pop("report", None)          # the report has its own place in the run's state
+            return AIMessage(content=typed.report), typed.report, {"verdicts": {key: verdict.model_dump(mode="json")}}
+        logger.warning("%s: its report and verdict did not come in one answer (%s); asking for them one after the other",
+                       agent_name, verdict.error or "the report was empty")
+    result, report = take_turn(prompt, llm, (), messages, handed)
+    return result, report, analyst_verdict(llm, agent_name, key, report, instrument_context)

@@ -249,6 +249,18 @@ class AnalystVerdict(Envelope):
         return self.summary
 
 
+class AnalystReport(AnalystVerdict):
+    """A briefed analyst's report and its verdict in one answer (see ``analysts/briefing.py``)."""
+
+    report: str = Field(
+        description=(
+            "Your report in full, in Markdown, exactly as the other agents will read it: "
+            "the analysis, then its closing table. Write it first; the signal and the "
+            "summary are what this report implies."
+        ),
+    )
+
+
 class DebateArgument(Envelope):
     """One turn of a debate: the argument as spoken, and how strong the speaker holds its case to be."""
 

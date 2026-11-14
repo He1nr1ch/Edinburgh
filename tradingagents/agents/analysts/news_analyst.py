@@ -1,7 +1,7 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from tradingagents.agents.analysts import briefing
-from tradingagents.agents.analysts.turn import take_turn
+from tradingagents.agents.analysts.turn import report_and_verdict, take_turn
 from tradingagents.agents.structured import analyst_verdict
 from tradingagents.agents.context import get_instrument_context_from_state, length_brief, report_style
 from tradingagents.agents.tools import (
@@ -57,12 +57,18 @@ def create_news_analyst(llm):
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        result, report = take_turn(prompt, llm, TOOLS, state["messages"], briefing.brief(briefing.news, state))
+        handed = briefing.brief(briefing.news, state)
+        if handed:
+            result, report, verdict = report_and_verdict(prompt, llm, state["messages"], handed,
+                                                         "News Analyst", "news_analyst", instrument_context)
+        else:
+            result, report = take_turn(prompt, llm, TOOLS, state["messages"])
+            verdict = analyst_verdict(llm, "News Analyst", "news_analyst", report, instrument_context)
 
         return {
             "messages": [result],
             "news_report": report,
-            **analyst_verdict(llm, "News Analyst", "news_analyst", report, instrument_context),
+            **verdict,
         }
 
     return news_analyst_node
