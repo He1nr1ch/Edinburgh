@@ -37,6 +37,7 @@ class WorkerState:
     book: dict[str, dict] = field(default_factory=dict)             # ticker -> the book position the worker opened
     days: dict[str, dict] = field(default_factory=dict)             # date -> {"analysis", "book_path", "placed", "replaced"}
     positions: dict[str, dict] = field(default_factory=dict)        # symbol -> {"id", "entered", "side"} of the open position
+    stops: dict[str, dict] = field(default_factory=dict)            # symbol -> the stop order held at Alpaca for it (protect.py)
 
     @classmethod
     def load(cls, path: str | Path) -> WorkerState:
@@ -45,12 +46,12 @@ class WorkerState:
             return cls(path)
         data = json.loads(path.read_text(encoding="utf-8"))
         return cls(path, data.get("seen", {}), data.get("last_check", {}), data.get("orders", []),
-                   data.get("book", {}), data.get("days", {}), data.get("positions", {}))
+                   data.get("book", {}), data.get("days", {}), data.get("positions", {}), data.get("stops", {}))
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"seen": self.seen, "last_check": self.last_check, "orders": self.orders,
-                "book": self.book, "days": self.days, "positions": self.positions}
+                "book": self.book, "days": self.days, "positions": self.positions, "stops": self.stops}
         self.path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
 
     def is_new(self, symbol: str, article_id: str) -> bool:

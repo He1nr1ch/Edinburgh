@@ -114,10 +114,19 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
                 live[a.symbol.upper()] = live.get(a.symbol.upper(), 0) + (a.qty if a.side == "buy" else -a.qty)
             f.outcome = f"sent, order {order_id}" + (
                 f"; cancelled {cancelled} waiting order(s) first"
-                + ("; the shares left have no bracket now" if a.kind == "trim" else "")
                 if cancelled else "")
         except Exception as exc:
             f.outcome = f"failed: {exc}"
+
+
+def _protect(context: WorkerContext, market_open: bool, dry_run: bool) -> list[Finding]:
+    """Keep the stops held at Alpaca in line with the account; a failure is a finding, never the pass's."""
+    from tradingagents.worker.protect import NAME, protect
+
+    try:
+        return protect(context, market_open, dry_run)
+    except Exception as exc:
+        return [Finding(NAME, "-", "notable", "the stops at Alpaca could not be checked", str(exc))]
 
 
 def _send(batch: list[Finding], context: WorkerContext, market_open: bool, dry_run: bool) -> None:
@@ -161,6 +170,11 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
                 found = [Finding(duty.name, "-", "notable", f"the {duty.name} duty failed", str(exc))]
             _send(found, context, market_open, dry_run)
             findings.extend(found)
+            # After every duty, not once a pass: a position opened or trimmed a
+            # moment ago should not wait out the news duty for its stop.
+            for f in _protect(context, market_open, dry_run):
+                if (f.symbol, f.headline) not in {(g.symbol, g.headline) for g in findings}:
+                    findings.append(f)
         state.save()
         follow_mirror(config, dry_run, market_open)
         # The day's record for the positions page: the last pass of the day

@@ -65,6 +65,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_WORKER_TRADING_ENABLED":  "worker_trading_enabled",
     "TRADINGAGENTS_WORKER_TRADE_FROM":       "worker_trade_from",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
+    "TRADINGAGENTS_WORKER_BROKER_STOPS":     "worker_broker_stops",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
     "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
     "TRADINGAGENTS_MIRROR_ENABLED":          "mirror_enabled",
@@ -369,6 +370,11 @@ def build_default_config() -> dict:
         # desk's first week paid 0.32% a side in the first five and 0.07% after 10:30.
         # "" trades from the open.
         "worker_trade_from": "10:30",
+        # Every watched position's stop is also left at Alpaca as a day stop order,
+        # so it acts between passes and when the worker is down (worker/protect.py).
+        # Placed from worker_trade_from on and lapsing at the close, so it never
+        # trades in the first minutes either.
+        "worker_broker_stops": True,
         "worker_trim_fraction": 0.5,        # adverse, notable, unexpected news: sell this share of the position
         "worker_add_fraction": 0.25,        # favorable, urgent, unexpected news: add this share of it
         "worker_position_cap_pct": 10.0,    # an add never takes a position past this % of equity

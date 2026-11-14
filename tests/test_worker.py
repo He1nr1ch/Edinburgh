@@ -347,7 +347,8 @@ def test_each_dutys_orders_go_out_before_the_next_duty_runs(monkeypatch, tmp_pat
             events.append("news ran")
             return [Finding("news", "JPM", "urgent", "h", "d", Action("JPM", "exit", "sell", 40, "adverse news"))]
 
-    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json"), "mirror_enabled": False}
+    cfg = {**CONFIG, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json"), "mirror_enabled": False,
+           "worker_broker_stops": False}
     findings = runner.run_pass(cfg, None, [Stops(), News()])
     assert events == ["stops ran", "order sell 40 JPM", "news ran"]
     assert findings[0].outcome.startswith("sent") and findings[1].outcome == "not sent: JPM is no longer held long"

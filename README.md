@@ -232,7 +232,14 @@ four guards on every pass. The stop guard and the target guard close a
 position through its stop (the Risk Manager's or the Trader's as the desk gave it, or the 2% default
 from entry when it gave none) or its target, no model asked; a decision that has turned to the
 other side does not speak for the position, whose default stop stands until the
-review closes it. Each guard's orders go out as soon as it has spoken, and an
+review closes it. The stop is also left at Alpaca, as a day stop order for the
+whole position (`worker_broker_stops`), so it acts between passes and while the
+worker is down: after every guard the Watcher brings those orders in line with
+the account, placing one for a new position, replacing it after a trim, an add
+or a new decision, cancelling one whose position has gone, and recording one
+Alpaca filled as the exit it was. They are placed from `worker_trade_from` on
+and lapse at the close, so they too stay out of the first minutes; the target
+stays with the Watcher alone. Each guard's orders go out as soon as it has spoken, and an
 exit or a trim never sells or covers more than the account holds at that
 moment. The news guard reads what was
 published since the last pass and has the model judge it against the desk's
