@@ -194,12 +194,16 @@ ledger, so later runs do not hedge again until they expire.
 `tradingagents worker` is the always-on desk. Its sweep runs around the clock
 (`sweep.py`): the held positions first, then the watchlist (`daily_watchlist`,
 `~/.tradingagents/watchlists/sp500.txt`, seeded from the repo's copy and refreshed from
-Wikipedia when a month old) least recently analysed first, in rounds of `sweep_round_size`
-tickers per process, `daily_parts` processes outside market hours and
-`daily_parts_market_hours` (one) during them, so the Watcher has the other PAIR nodes to
-itself while the market is open; the sweep's processes also run at a lower CPU priority
-than the worker. With qwen's thinking on a ticker takes about eleven minutes and the S&P 500
-under two days; when the session closes the cycle restarts on the holdings against the new
+Wikipedia when a month old) least recently analysed first, by a pool of processes that each
+take `sweep_round_size` tickers and, the moment they are done, the next: `daily_parts` (five)
+processes outside market hours and `daily_parts_market_hours` (two) during them, when the
+smaller pool leaves the Watcher's calls a short queue; the sweep's processes also run at a
+lower CPU priority than the worker. There are more processes than PAIR nodes on purpose: with
+one a node, PAIR's own record showed its nodes idle a third of the night. Each analyst is
+handed its data in one message and writes its report in one model call (`analyst_briefing`,
+`agents/analysts/briefing.py`), where it used to ask for it a tool call at a time; the
+market-wide news and the macro series, the same for every ticker, are fetched once a day.
+When the session closes the cycle restarts on the holdings against the new
 close. At `daily_book_time` (9 AM ET) on a day the market opens it builds the book. Size the book from every decision under
 `decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together
 (a call whose close is already through the desk's own stop is not taken: the 2% default is for a call with no stop, not one whose stop has been hit;
@@ -390,10 +394,10 @@ host and model and names the dearest tickers; a single run's `timing.json` carri
 agent; the daily report has a "Model usage" section; the positions page shows the day's calls,
 tokens and model hours.
 
-The sweep keeps its finished rounds in `sweep_state.json`, so the page's "Desk status" cards,
+The sweep keeps its finished runs in `sweep_state.json`, so the page's "Desk status" cards,
 `/health` and `/api/status` say how far the cycle has come (analysed, in flight, queued), the
-recent pace in minutes per round and per ticker, and when the cycle should end at that pace;
-the worker logs the same after every round.
+recent pace in wall-clock minutes per ticker, and when the cycle should end at that pace;
+the worker logs the same after every run.
 
 PAIR's proxy does not say which node served a call, but the router keeps that record itself:
 `workloads-history.json` in its config folder (`~/.config/Nvidia Corporation/Personal AI

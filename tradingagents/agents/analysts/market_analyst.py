@@ -1,5 +1,6 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from tradingagents.agents.analysts import briefing
 from tradingagents.agents.analysts.turn import take_turn
 from tradingagents.agents.structured import analyst_verdict
 from tradingagents.agents.context import get_instrument_context_from_state, length_brief, report_style
@@ -82,7 +83,7 @@ Before writing the final report, call get_verified_market_snapshot for this tick
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(instrument_context=instrument_context)
 
-        result, report = take_turn(prompt, llm, TOOLS, state["messages"])
+        result, report = take_turn(prompt, llm, TOOLS, state["messages"], briefing.brief(briefing.market, state))
 
         return {
             "messages": [result],

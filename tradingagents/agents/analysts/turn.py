@@ -10,8 +10,11 @@ WRAP_UP = (
 )
 
 
-def take_turn(prompt, llm, tools, messages):
+def take_turn(prompt, llm, tools, messages, briefing=None):
     """The analyst's reply and its report, which stays empty while it calls tools.
+
+    With a ``briefing`` (its data, fetched for it: see ``briefing.py``) it
+    writes the report in this one turn, without tools.
 
     Told to wrap up, it answers without tools: a model offered tools may call one
     whatever it is told. Its earlier calls and their results reach it as text,
@@ -22,6 +25,10 @@ def take_turn(prompt, llm, tools, messages):
         # call may still try, and some providers then answer with nothing.
         prompt = prompt.partial(tool_names="none; your tool rounds are spent")
         result = (prompt | llm).invoke(_as_text(messages))
+        return result, result.content
+    if briefing:
+        prompt = prompt.partial(tool_names="none in this turn; their results are in the last message")
+        result = (prompt | llm).invoke([*messages, HumanMessage(content=briefing)])
         return result, result.content
     result = (prompt | llm.bind_tools(tools)).invoke(messages)
     return result, "" if result.tool_calls else result.content

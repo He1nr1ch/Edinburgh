@@ -47,6 +47,15 @@ def _own_file_locations():
 _own_file_locations()
 
 
+def _analysts_use_their_tools():
+    """The suite's graph tests script the analysts' tool calls turn by turn, so they run with the
+    briefing off (``analyst_briefing``); the briefing's own tests turn it on."""
+    os.environ["TRADINGAGENTS_ANALYST_BRIEFING"] = "false"
+
+
+_analysts_use_their_tools()
+
+
 def pytest_configure(config):
     for marker in ("unit", "integration", "smoke"):
         config.addinivalue_line("markers", f"{marker}: {marker}-level tests")

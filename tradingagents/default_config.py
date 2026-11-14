@@ -43,6 +43,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_REPORT_STYLE":            "report_style",
     "TRADINGAGENTS_CONTRACT_FALLBACK":       "contract_fallback",
     "TRADINGAGENTS_ANALYST_VERDICTS":        "analyst_verdicts",
+    "TRADINGAGENTS_ANALYST_BRIEFING":        "analyst_briefing",
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
     "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
@@ -245,6 +246,12 @@ def build_default_config() -> dict:
         # Bearish, confidence, evidence) after its report, so its calls can be
         # scored against outcomes. One more quick-model call per analyst.
         "analyst_verdicts": True,
+        # Whether each analyst is handed its data in one message (see
+        # agents/analysts/briefing.py) and writes its report in one call, instead
+        # of asking for the data a tool call at a time: about four model calls a
+        # ticker became one for the Market Analyst, three for the others. Off,
+        # the analysts call their tools as before.
+        "analyst_briefing": True,
         # Debate and discussion settings
         "max_debate_rounds": 1,
         "max_risk_discuss_rounds": 1,
