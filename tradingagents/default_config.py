@@ -56,6 +56,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DAILY_BOOK_TIME":         "daily_book_time",
     "TRADINGAGENTS_DAILY_PARTS_MARKET_HOURS": "daily_parts_market_hours",
     "TRADINGAGENTS_SWEEP_ROUND_SIZE":        "sweep_round_size",
+    "TRADINGAGENTS_SWEEP_RUN_TIMEOUT_MINUTES": "sweep_run_timeout_minutes",
     "TRADINGAGENTS_DECISION_MAX_AGE_DAYS":   "decision_max_age_days",
     "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
     "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
@@ -347,6 +348,9 @@ def build_default_config() -> dict:
         "daily_watchlist": os.path.join(_TRADINGAGENTS_HOME, "watchlists", "sp500.txt"),
         "daily_parts_market_hours": 2,
         "sweep_round_size": 2,
+        # A run still at work after this many minutes is ended and its tickers
+        # queued once more (a run takes about half an hour; 0 never ends one).
+        "sweep_run_timeout_minutes": 120,
         "daily_parts": 5,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
         # Price the SPY call hedge for a net-short book after sizing, as `size`

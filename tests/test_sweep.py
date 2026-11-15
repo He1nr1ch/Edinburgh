@@ -80,6 +80,29 @@ def test_a_process_that_ends_is_replaced_at_once_and_does_not_wait_for_the_other
 
 
 @pytest.mark.unit
+def test_a_run_that_hangs_is_ended_and_its_undecided_tickers_are_queued_once_more(cfg, tmp_path, monkeypatch):
+    """One hung run held its place for ten hours; with the queue empty, the next cycle could not begin."""
+    monkeypatch.setattr(sw.Sweep, "_failed", lambda self, run: [])
+    s = sw.Sweep({**cfg, "sweep_run_timeout_minutes": 120})
+    s.tick("2026-11-09", False, [], {})
+    hung = s.runs[0]
+    first, second = hung.tickers
+    done = tmp_path / "backtest" / hung.run_id / first / "TradingAgentsStrategy_logs"
+    done.mkdir(parents=True)
+    (done / "full_states_log_2026-11-09.json").write_text("{}")                   # its first ticker was decided
+    hung.started -= 119 * 60
+    s.tick("2026-11-09", False, [], {})
+    assert hung.proc.poll() is None                                               # within the limit: left alone
+
+    hung.started -= 2 * 60
+    s.tick("2026-11-09", False, [], {})
+    assert hung.proc.rc == -15 and hung not in s.runs                             # ended, and its place given away
+    assert s.analysed_this_cycle == 1 and s.retried == [second]
+    assert second in s.queue + [t for r in s.runs for t in r.tickers] and first not in s.queue
+    assert all(r.proc.poll() is None for r in s.runs) and len(s.runs) == 3        # the others were not touched
+
+
+@pytest.mark.unit
 def test_during_market_hours_the_pool_is_smaller(cfg):
     s = sw.Sweep(cfg)
     s.tick("2026-11-09", market_open=True, holdings=[], last_analysed={})

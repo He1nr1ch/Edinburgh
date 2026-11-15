@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from alpaca.data.requests import OptionChainRequest, StockLatestTradeRequest
+
 from tradingagents.dataflows.vendors.alpaca import common
 
 
@@ -30,8 +32,6 @@ def latest_price(symbol: str) -> float | None:
     underlying, not a past close: on a 4% down day the close's strike is 4%
     out of the money and the call is cheap because it protects little.
     """
-    from alpaca.data.requests import StockLatestTradeRequest
-
     request = StockLatestTradeRequest(symbol_or_symbols=symbol.upper(), feed=common.data_feed())
     trades = common.call(lambda: common.stock_client().get_stock_latest_trade(request), f"latest trade for {symbol}")
     trade = (trades or {}).get(symbol.upper())
@@ -59,8 +59,6 @@ def atm_call(underlying: str, price: float, expiring_on_or_after: date,
     Quotes are the latest Alpaca has, not as of a past date.
     """
     from datetime import timedelta
-
-    from alpaca.data.requests import OptionChainRequest
 
     request = OptionChainRequest(
         underlying_symbol=underlying.upper(), type="call",

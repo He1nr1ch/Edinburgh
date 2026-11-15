@@ -10,6 +10,10 @@ from typing import TypeVar
 
 import requests
 from alpaca.common.exceptions import APIError
+from alpaca.data.enums import DataFeed
+from alpaca.data.historical import CryptoHistoricalDataClient, NewsClient, StockHistoricalDataClient
+from alpaca.data.historical.option import OptionHistoricalDataClient
+from alpaca.trading.client import TradingClient
 
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.errors import VendorNotConfiguredError, VendorUnavailableError
@@ -42,39 +46,29 @@ def paper_trading() -> bool:
 
 def data_feed():
     """The equity data feed to request (config ``alpaca_feed``: sip, iex, delayed_sip)."""
-    from alpaca.data.enums import DataFeed
-
     return DataFeed(str(get_config().get("alpaca_feed", "sip")).lower())
 
 
 @functools.lru_cache(maxsize=1)
 def stock_client():
-    from alpaca.data.historical import StockHistoricalDataClient
-
     key, secret = credentials()
     return StockHistoricalDataClient(key, secret)
 
 
 @functools.lru_cache(maxsize=1)
 def crypto_client():
-    from alpaca.data.historical import CryptoHistoricalDataClient
-
     key, secret = credentials()
     return CryptoHistoricalDataClient(key, secret)
 
 
 @functools.lru_cache(maxsize=1)
 def news_client():
-    from alpaca.data.historical import NewsClient
-
     key, secret = credentials()
     return NewsClient(key, secret)
 
 
 @functools.lru_cache(maxsize=1)
 def option_client():
-    from alpaca.data.historical.option import OptionHistoricalDataClient
-
     key, secret = credentials()
     return OptionHistoricalDataClient(key, secret)
 
@@ -82,8 +76,6 @@ def option_client():
 @functools.lru_cache(maxsize=2)
 def trading_client(paper: bool, key: str | None = None, secret: str | None = None):
     """A trading client for the configured key pair, or for the pair given (a second account)."""
-    from alpaca.trading.client import TradingClient
-
     if not (key and secret):
         key, secret = credentials()
     return TradingClient(key, secret, paper=paper)

@@ -59,6 +59,7 @@ class Run:
     started_at: str = ""                # wall clock, for the state file
     proc: object = None
     log: object = None
+    stopped: float | None = None        # when the sweep ended it for running past its limit
 
 
 class Sweep:
@@ -121,6 +122,7 @@ class Sweep:
         ``holdings`` the held symbols (first in a new cycle), ``last_analysed``
         each ticker's newest decision date (least recent first after them).
         """
+        self._stop_overdue()
         for run in [r for r in self.runs if r.proc.poll() is not None]:
             self._finish_run(run)
         # A new close starts the next cycle at once; the runs still at work on
@@ -173,6 +175,36 @@ class Sweep:
                     " (market hours: the pool is smaller, for the Watcher)" if market_open else "", len(self.queue))
         self._save()
 
+    def _stop_overdue(self) -> None:
+        """End a run that has been at work past ``sweep_run_timeout_minutes``.
+
+        A run takes about half an hour. One that hangs (a fetch that never
+        returns, a thread that never wakes) holds its place in the pool for
+        good, and once the queue is empty the cycle cannot end, so no new one
+        begins: on 2026-11-15 one such run kept three nodes idle for hours.
+        Its tickers left without a decision go back to the queue once.
+        """
+        limit = float(self.config.get("sweep_run_timeout_minutes") or 0) * 60
+        if limit <= 0:
+            return
+        now = time.monotonic()
+        for run in self.runs:
+            if run.proc.poll() is not None:
+                continue
+            if run.stopped is None and now - run.started > limit:
+                logger.warning("Sweep run %s (%s) has been at work %d min, past its %d min limit; ending it.",
+                               run.run_id, ", ".join(run.tickers), int((now - run.started) // 60), int(limit // 60))
+                run.stopped = now
+                run.proc.terminate()
+            elif run.stopped is not None and now - run.stopped > 30:
+                run.proc.kill()         # it ignored the request
+
+    def _undecided(self, run: Run) -> list[str]:
+        """The tickers of a run the sweep ended that it left without a decision."""
+        folder = Path(self.config["results_dir"]) / "backtest" / run.run_id
+        return [t for t in run.tickers
+                if not (folder / t / "TradingAgentsStrategy_logs" / f"full_states_log_{run.date}.json").is_file()]
+
     def _finish_run(self, run: Run) -> None:
         seconds = time.monotonic() - run.started
         run.log.close()
@@ -185,7 +217,10 @@ class Sweep:
             logger.info("Sweep run %s (on %s's close) done: %d tickers in %d min.", run.run_id, run.date, len(run.tickers), int(seconds // 60))
             self._save()
             return
-        again = [t for t in self._failed(run) if t not in self.queue]
+        failed = self._failed(run)
+        if run.stopped is not None:
+            failed += [t for t in self._undecided(run) if t not in failed and t not in self.retried]
+        again = [t for t in failed if t not in self.queue]
         self.queue += again
         self.retried += again
         self.analysed_this_cycle += len(run.tickers) - len(again)

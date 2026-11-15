@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 import pandas as pd
+from alpaca.data.enums import Adjustment
+from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 from tradingagents.dataflows import indicators as ind, ohlcv
 from tradingagents.dataflows.config import get_config
@@ -35,10 +38,6 @@ def _bars(canonical: str, start: datetime, end: datetime | None) -> pd.DataFrame
 
     Raises NoMarketDataError when Alpaca has no bars for the symbol.
     """
-    from alpaca.data.enums import Adjustment
-    from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame
-
     if is_crypto_symbol(canonical):
         request = CryptoBarsRequest(symbol_or_symbols=canonical, timeframe=TimeFrame.Day,
                                     start=start, end=end)
@@ -173,10 +172,6 @@ def intraday_bars(symbol: str, start: str, end: str, minutes: int = 15) -> pd.Da
     Every bar Alpaca has, extended hours included; the caller keeps the session
     it wants. Raises NoMarketDataError when there are none.
     """
-    from alpaca.data.enums import Adjustment
-    from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
-    from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-
     canonical = normalize_symbol(symbol)
     timeframe = TimeFrame(minutes, TimeFrameUnit.Minute)
     start_utc = pd.Timestamp(datetime.strptime(start, "%Y-%m-%d"), tz=MARKET_TZ).tz_convert("UTC").to_pydatetime()

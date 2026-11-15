@@ -312,3 +312,28 @@ def test_the_instrument_identity_reads_alpaca_and_fails_open(monkeypatch):
         raise VendorUnavailableError("down")
     monkeypatch.setattr(context, "get_asset_profile", down)
     assert context.resolve_instrument_identity("NVDA") == {}
+
+
+@pytest.mark.unit
+def test_alpaca_is_imported_once_before_the_analysts_threads_start():
+    """An import inside a function runs in whichever thread calls it first. The three
+    analysts fetch in parallel, and two threads importing alpaca's modules at once
+    locked each other: a news fetch failed with "deadlock detected by _ModuleLock"
+    and a sweep run hung for ten hours (2026-11-15)."""
+    import re
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "tradingagents"
+    lazy = [f"{p.relative_to(root)}:{n}" for p in root.rglob("*.py")
+            for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+            if re.match(r"\s+(from|import) alpaca\b", line)]
+    assert lazy == []
+
+    loaded = subprocess.run(
+        [sys.executable, "-c", "import sys, tradingagents.dataflows.router; "
+         "print(all(m in sys.modules for m in ('alpaca.data.enums', 'alpaca.data.requests', "
+         "'alpaca.data.historical', 'alpaca.trading.client', 'alpaca.trading.requests')))"],
+        capture_output=True, text=True, timeout=120)
+    assert loaded.stdout.strip() == "True", loaded.stderr[-500:]

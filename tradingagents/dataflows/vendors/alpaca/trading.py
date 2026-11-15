@@ -9,6 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
+from alpaca.trading.requests import (
+    GetCalendarRequest,
+    GetOrdersRequest,
+    MarketOrderRequest,
+    ReplaceOrderRequest,
+    StopOrderRequest,
+)
+
 from tradingagents.dataflows.errors import VendorUnavailableError
 from tradingagents.dataflows.vendors.alpaca import common
 
@@ -73,8 +82,6 @@ def last_trading_day(before: datetime) -> str:
     """The most recent session that closed before ``before`` (a date, YYYY-MM-DD), by Alpaca's calendar."""
     from datetime import timedelta
 
-    from alpaca.trading.requests import GetCalendarRequest
-
     request = GetCalendarRequest(start=(before - timedelta(days=10)).date(), end=before.date())
     days = common.call(lambda: _client().get_calendar(request), "the market calendar") or []
     # A session counts once its close has passed: any earlier date, or today
@@ -90,9 +97,6 @@ def last_trading_day(before: datetime) -> str:
 def fills_on(day: str) -> dict[str, dict]:
     """Alpaca's record of every order placed on ``day`` (a date), by order id: fill price, quantity, status."""
     from zoneinfo import ZoneInfo
-
-    from alpaca.trading.enums import QueryOrderStatus
-    from alpaca.trading.requests import GetOrdersRequest
 
     start = datetime.fromisoformat(day).replace(tzinfo=ZoneInfo("America/New_York"))
     request = GetOrdersRequest(status=QueryOrderStatus.ALL, after=start, until=start.replace(hour=23, minute=59),
@@ -110,9 +114,6 @@ def fills_on(day: str) -> dict[str, dict]:
 
 def open_orders(client=None) -> dict[str, str]:
     """Every order sent but not yet filled or cancelled, by order id: its symbol."""
-    from alpaca.trading.enums import QueryOrderStatus
-    from alpaca.trading.requests import GetOrdersRequest
-
     request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500, nested=True)
     orders = common.call(lambda: _client(client).get_orders(filter=request), "open orders") or []
     found = {}
@@ -176,9 +177,6 @@ def _value(x) -> str:
 
 def open_stops(client=None) -> list[StopOrder]:
     """Every plain stop order waiting at Alpaca (a bracket's legs are not among them)."""
-    from alpaca.trading.enums import QueryOrderStatus
-    from alpaca.trading.requests import GetOrdersRequest
-
     request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=500, nested=True)
     orders = common.call(lambda: _client(client).get_orders(filter=request), "open orders") or []
     return [StopOrder(str(o.id), o.symbol, _value(o.side), int(float(o.qty or 0)), float(o.stop_price))
@@ -192,9 +190,6 @@ def submit_stop_order(symbol: str, qty: int, side: str, stop_price: float, clien
     Alpaca holds it and sends a market order when the price trades through
     ``stop_price``, whether or not the worker is running. It lapses at the close.
     """
-    from alpaca.trading.enums import OrderSide, TimeInForce
-    from alpaca.trading.requests import StopOrderRequest
-
     request = StopOrderRequest(symbol=symbol, qty=qty, side=OrderSide(side), time_in_force=TimeInForce.DAY,
                                stop_price=stop_price)
     order = common.call(lambda: _client(client).submit_order(request), f"a {side} stop for {qty} {symbol}")
@@ -205,8 +200,6 @@ def submit_stop_order(symbol: str, qty: int, side: str, stop_price: float, clien
 
 def replace_stop_order(order_id: str, qty: int, stop_price: float, client=None) -> str:
     """Change a waiting stop's size and price in one request; returns the id of the order that replaces it."""
-    from alpaca.trading.requests import ReplaceOrderRequest
-
     request = ReplaceOrderRequest(qty=qty, stop_price=stop_price)
     order = common.call(lambda: _client(client).replace_order_by_id(order_id, request), f"replacing stop {order_id}")
     if order is None:
@@ -226,9 +219,6 @@ def order_result(order_id: str, client=None) -> dict:
 
 def submit_market_order(symbol: str, qty: int, side: str, client=None) -> str:
     """Send a day market order (``side`` is buy or sell); returns Alpaca's order id."""
-    from alpaca.trading.enums import OrderSide, TimeInForce
-    from alpaca.trading.requests import MarketOrderRequest
-
     request = MarketOrderRequest(symbol=symbol, qty=qty, side=OrderSide(side), time_in_force=TimeInForce.DAY)
     order = common.call(lambda: _client(client).submit_order(request), f"a {side} order for {qty} {symbol}")
     if order is None:

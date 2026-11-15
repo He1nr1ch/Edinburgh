@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
+from alpaca.common.enums import Sort
+from alpaca.data.requests import NewsRequest
+
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.symbols import is_crypto_symbol, normalize_symbol
 from tradingagents.dataflows.vendors.alpaca import common
@@ -29,9 +32,6 @@ def _window(start_date: str, end_date: str) -> tuple[datetime, datetime]:
 
 def fetch_articles(symbols: str | None, start: datetime, end: datetime, limit: int) -> list:
     """Up to ``limit`` articles in the window, newest first, across pages."""
-    from alpaca.common.enums import Sort
-    from alpaca.data.requests import NewsRequest
-
     articles: list = []
     page_token = None
     while len(articles) < limit:
