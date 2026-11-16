@@ -110,7 +110,8 @@ def test_a_stop_whose_position_has_gone_is_cancelled_but_a_strangers_is_not(desk
     """Left waiting, a sell stop with no long behind it would open a short."""
     desk.state.stops["JPM"] = {"order_id": "s1", "side": "sell", "held": "long", "qty": 40, "stop": 294.0, "entry_price": 300.0}
     broker = Broker(monkeypatch, [], stops=[StopOrder("s1", "JPM", "sell", 40, 294.0),
-                                            StopOrder("by-hand", "IBM", "sell", 5, 200.0)])
+                                            StopOrder("by-hand", "IBM", "sell", 5, 200.0)],
+                    results={"s1": {"status": "new", "filled_qty": 0.0, "filled_avg_price": None, "filled_at": None}})
     protect(desk, market_open=True)
     assert broker.cancelled == ["s1"]
 
@@ -190,3 +191,19 @@ def test_cancelling_waits_until_alpaca_has_let_the_shares_go(monkeypatch):
     client = Client()
     assert trading.cancel_orders_for("JPM", {"s1": "JPM", "x": "T"}, client) == 1
     assert client.cancelled == ["s1"] and next(statuses, "all asked") == "all asked"
+
+
+@pytest.mark.unit
+def test_a_replaced_stop_still_listed_beside_its_successor_is_left_to_alpaca(desk, monkeypatch):
+    """On the first live day TXN's stop was moved, and the next look cancelled "a stop nothing needs": the old one,
+    still listed. Listed in the other order it would have been the new one."""
+    desk.state.stops["JPM"] = {"order_id": "new", "side": "sell", "held": "long", "qty": 40, "stop": 294.0, "entry_price": 300.0}
+    broker = Broker(monkeypatch, [LONG], stops=[StopOrder("old", "JPM", "sell", 40, 290.0), StopOrder("new", "JPM", "sell", 40, 294.0)],
+                    results={"old": {"status": "pending_replace", "filled_qty": 0.0, "filled_avg_price": None, "filled_at": None}})
+    assert protect(desk, market_open=True) == []
+    assert not broker.cancelled and not broker.sent and not broker.replaced
+    assert desk.state.stops["JPM"]["order_id"] == "new"
+
+    broker.results["old"]["status"] = "new"            # a true second stop, though, is cancelled: the worker's own stands
+    protect(desk, market_open=True)
+    assert broker.cancelled == ["old"] and desk.state.stops["JPM"]["order_id"] == "new"

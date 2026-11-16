@@ -92,13 +92,19 @@ def protect(context: WorkerContext, market_open: bool, dry_run: bool = False) ->
     # The stop that stands for each position; any other for it, and any of the
     # worker's own whose position has gone, is cancelled.
     standing: dict[str, trading.StopOrder] = {}
-    for s in waiting:
+    # The worker's own stop first: of two waiting for one position, the one it
+    # last placed stands and the other goes, whichever Alpaca lists first.
+    for s in sorted(waiting, key=lambda s: s.id not in tracked):
         symbol, h = s.symbol.upper(), watched.get(s.symbol.upper())
         fits = h is not None and s.side == ("sell" if h.qty > 0 else "buy")
         if fits and symbol not in standing:
             standing[symbol] = s
         elif (fits or s.id in tracked) and not dry_run:
             try:
+                # A stop just replaced is still listed for a moment beside its
+                # successor; Alpaca is already retiring it.
+                if trading.order_result(s.id)["status"] in ("replaced", "pending_replace", "pending_cancel", "canceled"):
+                    continue
                 trading.cancel_order(s.id)
                 findings.append(Finding(NAME, symbol, "info", f"{symbol}: a stop nothing needs any more cancelled",
                                         f"{s.side} {s.qty} at {s.stop_price:,.2f}, order {s.id}"))
