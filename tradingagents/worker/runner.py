@@ -22,7 +22,7 @@ from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
 from tradingagents.worker.notify import send_email
 from tradingagents.dataflows.vendors.alpaca import latest_price
-from tradingagents.worker.policy import refusal, stale_levels, too_early
+from tradingagents.worker.policy import _number, newest_levels, refusal, stale_levels, too_early
 from tradingagents.worker.state import WorkerState
 from tradingagents.web.snapshots import write_snapshot
 
@@ -203,13 +203,6 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
     return findings
 
 
-def _number(text) -> float | None:
-    try:
-        return float(text) if text not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-
-
 def _live_price(ticker: str) -> float | None:
     """The latest price, or None when it cannot be read (the name is then not opened)."""
     try:
@@ -284,7 +277,9 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         mine = {o["order_id"] for o in state.orders}
         pending = {sym for oid, sym in open_now.items() if oid in mine}
         closed = set()
-        for h, rating, decided in review_exits(account.holdings, find_decisions(Path(config["results_dir"]))):
+        decisions = find_decisions(Path(config["results_dir"]))
+        default_stop = float(config.get("default_stop_pct") or 0)
+        for h, rating, decided in review_exits(account.holdings, decisions):
             qty, side = abs(int(h.qty)), "sell" if h.qty > 0 else "buy"
             action = Action(h.symbol, "exit", side, qty, f"review on {decided}: rated {rating}, no longer {h.side}")
             why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
@@ -352,37 +347,46 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 _log(config, now, f"  not placed: {o['ticker']}: the book is at its {config['gross_pct']:g}% gross "
                                   f"({gross:,.0f} of {gross_cap:,.0f}) with what is still held")
                 continue
-            qty = abs(int(float(o["shares"])))
-            action = Action(o["ticker"], "open", "buy" if o["side"] == "long" else "sell", qty,
+            action = Action(o["ticker"], "open", "buy" if o["side"] == "long" else "sell", abs(int(float(o["shares"]))),
                             f"the day's book ({book_path.name})")
             why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
             if why_not:
                 _log(config, now, f"  not placed: {o['ticker']}: {why_not}")
                 continue
-            # The book was sized on the last close; it opens hours later. A name
-            # now through its stop, or with too little left to its target, is
-            # not opened (the Watcher asks the same of a bench candidate).
-            stale = stale_levels(o["side"], _live_price(o["ticker"]), _number(o.get("stop")), _number(o.get("target")),
-                                 float(config.get("min_target_pct") or 0))
+            # The book was sized on the last close; it opens hours, on a Monday
+            # days, later, and the sweep has gone on deciding since. A name the
+            # desk has turned on, one now through or too near its stop, with too
+            # little left to its target, or already run its own way, is not
+            # opened (the Watcher asks the same of a bench candidate), and the
+            # shares are counted at the price they are bought at.
+            live = _live_price(o["ticker"])
+            turned, stop, target, decided = newest_levels(o, decisions, default_stop)
+            stale = turned or stale_levels(o["side"], live, stop, target, float(config.get("min_target_pct") or 0),
+                                           float(config.get("entry_min_stop_pct") or 0), _number(o.get("price")),
+                                           float(config.get("entry_max_run_pct") or 0))
             if stale:
                 _log(config, now, f"  not placed: {o['ticker']}: {stale}")
                 continue
+            qty = int(float(o["value"]) // live)
+            if qty < 1:
+                _log(config, now, f"  not placed: {o['ticker']}: {float(o['value']):,.0f} buys no whole share at {live:,.2f}")
+                continue
+            value = round(qty * live, 2)
             if dry_run:
                 _log(config, now, f"  dry run: would open {o['side']} {qty} {o['ticker']}")
                 placed.append(o["ticker"])
-                gross += float(o["value"])
+                gross += value
                 continue
             try:
                 order_id = trading.submit_market_order(o["ticker"], qty, action.side)
             except Exception as exc:
                 _log(config, now, f"  failed: {o['ticker']}: {exc}")
                 continue
-            state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason,
-                               stop=float(o["stop"]) if o.get("stop") else None, decided=o.get("decided") or None)
-            state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": float(o["value"])}
-            gross += float(o["value"])
+            state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason, stop=stop, decided=decided)
+            state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": value}
+            gross += value
             placed.append(o["ticker"])
-            _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} (order {order_id})")
+            _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} at about {live:,.2f} (order {order_id})")
         day["placed"] = placed
         if not dry_run:
             day["placed_at"] = now.isoformat()

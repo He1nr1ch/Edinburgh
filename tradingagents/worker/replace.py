@@ -25,8 +25,9 @@ from tradingagents.dataflows.vendors.alpaca import latest_price, trading
 from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import desk_lessons
 from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
+from tradingagents.web import data
 from tradingagents.worker.duty import Action, Finding, WorkerContext
-from tradingagents.worker.policy import stale_levels
+from tradingagents.worker.policy import _number, newest_levels, stale_levels
 
 logger = logging.getLogger(__name__)
 
@@ -43,26 +44,27 @@ class ReplacementChoice(Envelope):
 
 
 def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct: float,
-               net_value: float = 0.0, today: str | None = None, default_stop_pct: float = 2.0) -> list[dict]:
+               net_value: float = 0.0, today: str | None = None, default_stop_pct: float = 2.0,
+               min_stop_pct: float = 0.0, max_run_pct: float = 0.0, decisions: dict | None = None) -> list[dict]:
     """Bench rows still worth opening now, best first.
 
-    Not held, not used, the target still over the floor from the live price and
-    the stop not yet reached; then ranked by the score at live prices (see
-    ranking.py), with the balance bonus against the book's current net.
+    Not held, not used, still backed by the ticker's newest decision, and
+    clear of the entry rules at the live price (see ``stale_levels``); then
+    ranked by the score at live prices (see ranking.py), with the balance
+    bonus against the book's current net.
     """
     out = []
     for row in bench:
         t = row["ticker"].upper()
         if t in held or t in used:
             continue
-        try:
-            target = float(row["target"])
-            stop = float(row["stop"]) if row.get("stop") else None
-        except (TypeError, ValueError):
+        turned, stop, target, decided = newest_levels(row, decisions or {}, default_stop_pct)
+        if turned or target is None:
             continue
         price = latest_price(t)
-        if stale_levels(row["side"], price, stop, target, min_target_pct):
+        if stale_levels(row["side"], price, stop, target, min_target_pct, min_stop_pct, _number(row.get("price")), max_run_pct):
             continue
+        row = {**row, "stop": stop if stop is not None else "", "target": target, "decided": decided or ""}
         side = 1 if row["side"] == "long" else -1
         move = side * (target / price - 1) * 100
         reward, risk = levels_pct(side, price, target, stop, default_stop_pct)
@@ -126,7 +128,10 @@ class ReplacementDuty:
             departed = {**departed, "ticker": ticker, "why": (closed_by or {}).get("reason", "it is no longer held")}
             net = sum(h.market_value for h in account.holdings if h.asset_class == "us_equity")
             options = candidates(bench, held | pending | set(state.book), used, float(context.config["min_target_pct"]),
-                                 net, today, float(context.config.get("default_stop_pct") or 2.0))
+                                 net, today, float(context.config.get("default_stop_pct") or 2.0),
+                                 float(context.config.get("entry_min_stop_pct") or 0),
+                                 float(context.config.get("entry_max_run_pct") or 0),
+                                 data.find_decisions(Path(context.config["results_dir"])))
             if not options:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; no replacement on the bench",
                                         f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"))

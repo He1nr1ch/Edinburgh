@@ -67,6 +67,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_WORKER_TRADE_FROM":       "worker_trade_from",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_BROKER_STOPS":     "worker_broker_stops",
+    "TRADINGAGENTS_ENTRY_MIN_STOP_PCT":      "entry_min_stop_pct",
+    "TRADINGAGENTS_ENTRY_MAX_RUN_PCT":       "entry_max_run_pct",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
     "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
     "TRADINGAGENTS_MIRROR_ENABLED":          "mirror_enabled",
@@ -379,6 +381,14 @@ def build_default_config() -> dict:
         # Placed from worker_trade_from on and lapsing at the close, so it never
         # trades in the first minutes either.
         "worker_broker_stops": True,
+        # What a call must still clear at the live price when it is opened, from the
+        # book or the bench, besides not being through its stop and having more
+        # than min_target_pct left: its stop at least this far away (nearer, and
+        # ordinary noise takes the position out), and the price not already run
+        # more than this its own way from the close the call was sized on. 0 turns
+        # a check off.
+        "entry_min_stop_pct": 2.0,
+        "entry_max_run_pct": 5.0,
         "worker_trim_fraction": 0.5,        # adverse, notable, unexpected news: sell this share of the position
         "worker_add_fraction": 0.25,        # favorable, urgent, unexpected news: add this share of it
         "worker_position_cap_pct": 10.0,    # an add never takes a position past this % of equity

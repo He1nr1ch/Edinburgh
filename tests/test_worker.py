@@ -419,6 +419,13 @@ def test_a_call_sized_on_the_close_is_judged_again_at_the_live_price():
     assert stale_levels("long", 269.0, 247.5, 296.56, 5) is None and stale_levels("short", 303.0, 318.0, 270.0, 5) is None
     assert stale_levels("long", None, 95.0, 120.0, 5) == "no live price"
     assert stale_levels("long", 100.0, None, 120.0, 5) is None                         # no stop given: the default applies
+    # A stop within reach of ordinary noise, and a move that has largely happened already.
+    assert "only 0.9% from the price 95.37" in stale_levels("long", 95.37, 94.5, 125.0, 5, min_stop_pct=2)
+    assert "only 1.6% from the price 374.62" not in (stale_levels("short", 374.62, 383.0, 320.0, 5, min_stop_pct=2) or "")
+    assert stale_levels("short", 374.62, 383.0, 320.0, 5, min_stop_pct=2) is None      # 2.2% away
+    assert "already run +6.0% its way" in stale_levels("long", 106.0, 95.0, 130.0, 5, close=100.0, max_run_pct=5)
+    assert stale_levels("short", 94.0, 107.0, 70.0, 5, close=100.0, max_run_pct=5) is not None   # a short that has dropped 6%
+    assert stale_levels("long", 97.0, 90.0, 130.0, 5, close=100.0, max_run_pct=5) is None        # against it: the stop's business
 
 
 @pytest.mark.unit

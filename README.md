@@ -226,7 +226,9 @@ beside the book and the morning email. No order goes out before `worker_trade_fr
 spreads have narrowed; empty trades from the open), for the desk and the mirror account alike, and the Watcher's
 passes start then too. At that time it first closes any holding whose newest decision no longer backs its side, then
 places the book's orders within the gross target, counting what is still held (`worker_place_book`),
-leaving out a name whose live price is by then through its stop or within the minimum move of its target,
+leaving out a name the desk's newest decision no longer backs, or whose live price is by then through its stop,
+nearer to it than `entry_min_stop_pct` (2%), within the minimum move of its target, or already run more than
+`entry_max_run_pct` (5%) its own way from the close it was sized on, and counting its shares at the live price,
 buys the hedge's calls unless the ledger shows calls still held, and records the
 ones it buys in the ledger; the Watcher's guards look at equities only. Then
 the Watcher runs over the account's equity positions until the close, with

@@ -111,9 +111,9 @@ def test_placing_the_book_at_the_open_once_and_only_what_is_not_held(tmp_path, m
     cfg = _cfg(tmp_path)
 
     assert runner.place_book(cfg) == ["FIS", "SPY261204C00740000"]      # GD is held already; the hedge's calls are bought
-    assert sent == [("FIS", 156, "sell"), ("SPY261204C00740000", 1, "buy")]
+    assert sent == [("FIS", 155, "sell"), ("SPY261204C00740000", 1, "buy")]      # 4,643 at the live 29.80, not the close
     state = WorkerState.load(cfg["worker_state_path"])
-    assert state.book["FIS"] == {"placed_on": datetime.now().strftime("%Y-%m-%d"), "side": "short", "value": 4643.0}
+    assert state.book["FIS"] == {"placed_on": datetime.now().strftime("%Y-%m-%d"), "side": "short", "value": 4619.0}
     assert "SPY261204C00740000" not in state.book                       # the Watcher never replaces the hedge
     ledger = json.loads(Path(cfg["hedge_ledger_path"]).read_text())
     assert ledger == [{"symbol": "SPY261204C00740000", "contracts": 1, "expiry": "2026-12-04",
@@ -143,7 +143,7 @@ def test_the_hedge_is_not_bought_again_while_the_calls_held_have_not_expired(tmp
     monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
 
     assert runner.place_book(cfg) == ["FIS"]
-    assert sent == [("FIS", 156, "sell")]
+    assert sent == [("FIS", 155, "sell")]
     log = (tmp_path / "worker" / f"{datetime.now():%Y-%m-%d}.log").read_text()
     assert "hedge not bought: still hedged with 1 SPY261127C00730000" in log
 
@@ -392,10 +392,47 @@ def test_the_book_does_not_open_a_name_that_is_through_its_stop_by_the_time_it_i
     monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
     cfg = _cfg(tmp_path)
 
-    assert runner.place_book(cfg) == ["EXPE"] and sent == [("EXPE", 8, "buy")]
+    assert runner.place_book(cfg) == ["EXPE"] and sent == [("EXPE", 7, "buy")]      # 2,000 buys 7 at 251.40
     assert set(WorkerState.load(cfg["worker_state_path"]).book) == {"EXPE"}
     (opened,) = WorkerState.load(cfg["worker_state_path"]).orders
     assert opened["decided"] == "2026-11-10" and opened["position_id"].startswith("EXPE-")
     log = next((tmp_path / "worker").glob("*.log")).read_text()
     assert "not placed: COHR: the price 237.14 is already through its stop 247.50" in log
     assert "not placed: KIM: only +1.7% is left to its target" in log and "not placed: DARK: no live price" in log
+
+
+@pytest.mark.unit
+def test_a_call_is_opened_only_at_a_price_the_desk_would_still_take(tmp_path, monkeypatch):
+    """2026-11-16, a Monday, on Friday's analysis: KKR was bought 0.9% above its stop, and USB went long while the
+    desk's newest decision said short."""
+    from tradingagents.worker import runner
+
+    sizing = tmp_path / "backtest" / "sizing"
+    sizing.mkdir(parents=True)
+    (sizing / "run_a_2026-11-13.csv").write_text(
+        "ticker,side,rating,risk_level,ceiling_pct,weight_pct,price,shares,value,stop,stop_from,target,score,decided\n"
+        "KKR,long,Overweight,Neutral,5,4,98.05,40,3922,94.5,Risk Manager,125,,2026-11-13\n"       # 0.9% above its stop
+        "USB,long,Overweight,Neutral,5,3,60.5,54,3267,58.3,Risk Manager,74,,2026-11-13\n"         # the desk has turned on it
+        "RAN,long,Overweight,Neutral,5,2,100.0,20,2000,95.0,Risk Manager,130,,2026-11-13\n"       # 6% up since the close
+        "NOW,short,Underweight,Neutral,5,2,102.25,-19,1943,107.13,Risk Manager,73.92,,2026-11-13\n"
+        "APH,long,Overweight,Neutral,5,2,78.23,25,1956,73.5,Risk Manager,102,,2026-11-13\n")
+    _decision(tmp_path, "run_b", "USB", "2026-11-13", "Underweight", 62.9, 59.3)
+    _decision(tmp_path, "run_b", "APH", "2026-11-13", "Overweight", 73.0, 104)                     # still backed, at new levels
+    live = {"KKR": 95.37, "USB": 60.84, "RAN": 106.0, "NOW": 99.53, "APH": 75.59}
+    sent = []
+    monkeypatch.setattr(runner, "latest_price", lambda t: live.get(t))
+    monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 100_000, True, ()))
+    monkeypatch.setattr(runner.trading, "get_clock", lambda: MagicMock(is_open=True))
+    monkeypatch.setattr(runner.trading, "open_orders", lambda: {})
+    monkeypatch.setattr(runner.trading, "submit_market_order", lambda s, q, side: sent.append((s, q, side)) or f"ord-{s}")
+    monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
+    cfg = {**_cfg(tmp_path), "entry_min_stop_pct": 2.0, "entry_max_run_pct": 5.0}
+
+    assert runner.place_book(cfg) == ["NOW", "APH"]
+    assert sent == [("NOW", 19, "sell"), ("APH", 25, "buy")]                  # 1,943 at 99.53; 1,956 at 75.59
+    log = next((tmp_path / "worker").glob("*.log")).read_text()
+    assert "not placed: KKR: its stop 94.50 is only 0.9% from the price 95.37; a new position needs 2%" in log
+    assert "not placed: USB: its newest decision (2026-11-13, rated Underweight) no longer backs a long" in log
+    assert "not placed: RAN: the price 106.00 has already run +6.0% its way from the 100.00 close" in log
+    aph = WorkerState.load(cfg["worker_state_path"]).orders[-1]
+    assert aph["stop"] == 73.0                                               # the newest decision's stop, the one the Watcher holds it to

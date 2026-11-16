@@ -46,12 +46,18 @@ def action_for(holding: Holding, materiality: str, direction: str, surprise: boo
 
 
 def stale_levels(side: str, price: float | None, stop: float | None, target: float | None,
-                 min_target_pct: float) -> str | None:
+                 min_target_pct: float, min_stop_pct: float = 0.0, close: float | None = None,
+                 max_run_pct: float = 0.0) -> str | None:
     """Why a call sized at an earlier price is not opened at ``price`` now, or None when it still stands.
 
-    The book and the bench are built on the last close and opened hours
-    later. By then the price may be through the call's stop, or so near its
-    target that less than the desk's minimum move is left.
+    The book and the bench are built on the last close and opened hours, and
+    on a Monday days, later, while the stop and the target stay where the
+    analysis put them. By then the price may be through the call's stop; so
+    near it that ordinary noise takes the position out (the desk's own stop,
+    now also an order at the broker, would fill within minutes); so near its
+    target that less than the desk's minimum move is left; or so far its own
+    way from the ``close`` it was sized on that the move the desk called has
+    largely happened without it.
     """
     from tradingagents.sizing import through_stop
 
@@ -60,11 +66,50 @@ def stale_levels(side: str, price: float | None, stop: float | None, target: flo
     d = 1 if side == "long" else -1
     if through_stop(d, price, stop):
         return f"the price {price:,.2f} is already through its stop {stop:,.2f}"
+    if stop and min_stop_pct > 0:
+        room = d * (price / stop - 1) * 100
+        if room < min_stop_pct:
+            return (f"its stop {stop:,.2f} is only {room:.1f}% from the price {price:,.2f}; "
+                    f"a new position needs {min_stop_pct:g}%")
     if target and min_target_pct > 0:
         move = d * (target / price - 1) * 100
         if move <= min_target_pct:
             return f"only {move:+.1f}% is left to its target {target:,.2f} from {price:,.2f}"
+    if close and max_run_pct > 0:
+        run = d * (price / close - 1) * 100
+        if run > max_run_pct:
+            return (f"the price {price:,.2f} has already run {run:+.1f}% its way from the {close:,.2f} "
+                    f"close it was sized on; the limit is {max_run_pct:g}%")
     return None
+
+
+def _number(text) -> float | None:
+    try:
+        return float(text) if text not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def newest_levels(row: dict, decisions: dict, default_stop_pct: float) -> tuple[str | None, float | None, float | None, str | None]:
+    """A book or bench row read against the ticker's newest decision: why it is not opened, its stop, target and date.
+
+    The book is built once, before the open; the sweep goes on analysing. A
+    name the desk has since turned on (a long now rated Hold or lower, a short
+    now Hold or higher) is not opened: the next morning's review would only
+    close it. One it still backs is judged, and opened, on the newest
+    decision's stop and target, which are the ones the Watcher will hold it to.
+    """
+    from tradingagents.web import data
+
+    stop, target, decided = _number(row.get("stop")), _number(row.get("target")), row.get("decided") or None
+    ref = decisions.get(row["ticker"].upper())
+    if ref is None:
+        return None, stop, target, decided
+    summary = data.decision_summary(data.load_decision(ref), None, default_stop_pct)
+    if summary["side"] != row["side"]:
+        return (f"its newest decision ({ref.date}, rated {summary['rating'] or 'nothing'}) no longer backs a {row['side']}",
+                stop, target, decided)
+    return None, summary["stop"] or stop, summary["target"] or target, ref.date
 
 
 ET = ZoneInfo("America/New_York")
