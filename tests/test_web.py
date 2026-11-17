@@ -156,3 +156,32 @@ def test_the_calendar_and_a_past_day_page(client, tmp_path):
     assert "The book sized for 2026-11-06" in page and ">yes<" in page
     assert client.get("/day/2026-01-01").status_code == 404
     assert 'href="/days"' in client.get("/").text
+
+
+def test_trmnl_payload_is_short_rows_and_an_unchanged_screen_is_sent_once(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from tradingagents.web import snapshots
+    from tradingagents.worker import trmnl
+
+    account = Account(100_000, 60_000, True, tuple(
+        Holding(f"T{i:03d}", -22 if i % 2 else 10, -3_200.0 if i % 2 else 3_500.0, 151.50, "us_equity") for i in range(22)))
+    path = snapshots.write_snapshot(tmp_path, account, 2.0, datetime(2026, 11, 6, 15, 39))
+    record = json.loads(path.read_text())
+    body = trmnl.payload(record)["merge_variables"]
+    assert body["as_of"] == "15:39" and body["equity"] == "100,000" and body["account"] == "Paper"
+    assert body["rows"][0][:2] == ["T000", "L"] and body["rows"][1][:2] == ["T001", "S"]
+    assert len(json.dumps(trmnl.payload(record), separators=(",", ":"))) < trmnl.MAX_BYTES
+
+    posts = []
+
+    class Ok:
+        def raise_for_status(self): pass
+
+    monkeypatch.setattr(trmnl, "_last_sent", None)
+    monkeypatch.setattr(trmnl.requests, "post", lambda url, **kw: posts.append((url, kw["data"])) or Ok())
+    assert trmnl.push(record) is False and not posts          # no webhook set: nothing is sent
+    monkeypatch.setenv("TRMNL_WEBHOOK_URL", "https://example.test/hook")
+    assert trmnl.push(record) is True
+    assert trmnl.push({**record, "as_of": "2026-11-06T15:44:00"}) is False   # only the time changed
+    assert len(posts) == 1 and posts[0][0] == "https://example.test/hook"

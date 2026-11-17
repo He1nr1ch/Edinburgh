@@ -1,0 +1,30 @@
+{% assign half = rows.size | plus: 1 | divided_by: 2 %}
+<div class="layout layout--col">
+  <div class="columns">
+    <div class="column">
+      <table class="table table--small">
+        <thead><tr><th><span class="title title--small">Ticker</span></th><th><span class="title title--small">Side</span></th><th><span class="title title--small">P&amp;L %</span></th><th><span class="title title--small">To stop</span></th><th><span class="title title--small">To target</span></th></tr></thead>
+        <tbody>
+          {% for r in rows limit: half %}
+          <tr><td><span class="title">{{ r[0] }}</span></td><td><span class="label">{{ r[1] }}</span></td><td><span class="label">{{ r[2] }}</span></td><td><span class="label">{{ r[3] }}</span></td><td><span class="label">{{ r[4] }}</span></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="column">
+      <table class="table table--small">
+        <thead><tr><th><span class="title title--small">Ticker</span></th><th><span class="title title--small">Side</span></th><th><span class="title title--small">P&amp;L %</span></th><th><span class="title title--small">To stop</span></th><th><span class="title title--small">To target</span></th></tr></thead>
+        <tbody>
+          {% for r in rows offset: half %}
+          <tr><td><span class="title">{{ r[0] }}</span></td><td><span class="label">{{ r[1] }}</span></td><td><span class="label">{{ r[2] }}</span></td><td><span class="label">{{ r[3] }}</span></td><td><span class="label">{{ r[4] }}</span></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="title_bar">
+  <span class="title">Edinburgh · {{ rows.size }} positions</span>
+  <span class="instance">{{ account }} · equity {{ equity }} · cash {{ cash }} · {{ date }} {{ as_of }}</span>
+</div>

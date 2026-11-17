@@ -8,6 +8,7 @@ as the container's process.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import time
@@ -20,6 +21,7 @@ from tradingagents import build
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
+from tradingagents.worker import trmnl
 from tradingagents.worker.notify import send_email
 from tradingagents.dataflows.vendors.alpaca import latest_price
 from tradingagents.worker.policy import _number, newest_levels, refusal, stale_levels, too_early
@@ -180,9 +182,16 @@ def run_pass(config: dict, llm, duties: list[Duty], dry_run: bool = False) -> li
         # The day's record for the positions page: the last pass of the day
         # leaves the close-of-day picture.
         try:
-            write_snapshot(Path(config["results_dir"]), trading.get_account(), config.get("default_stop_pct") or 0, now)
+            snapshot = write_snapshot(Path(config["results_dir"]), trading.get_account(), config.get("default_stop_pct") or 0, now)
         except Exception as exc:
+            snapshot = None
             logger.warning("The positions snapshot could not be written: %s", exc)
+        # The same picture on the TRMNL display, when one is set up.
+        if snapshot and not dry_run:
+            try:
+                trmnl.push(json.loads(Path(snapshot).read_text(encoding="utf-8")))
+            except Exception as exc:
+                logger.warning("The TRMNL screen could not be sent: %s", exc)
 
     mode = "paper" if account.paper else "LIVE"
     _log(config, now, f"pass ({mode}, {len(context.watched())} positions watched): {len(findings)} finding(s)")
