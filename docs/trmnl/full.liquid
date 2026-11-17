@@ -1,0 +1,57 @@
+<div class="layout layout--col gap--large">
+
+  <div class="columns">
+    {% for a in accounts %}
+    {% if a.name == "Heinrich" or a.name == "Valya" %}
+    <div class="column">
+      <span class="title">{{ a.name }}</span>
+      {% if a.error %}
+        <span class="label">{{ a.error }}</span>
+      {% else %}
+      <div class="item">
+        <div class="content">
+          <span class="value value--xlarge value--tnums">${{ a.account_value | round | number_with_delimiter }}</span>
+          <span class="label">Account value</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="content">
+          <span class="value value--medium value--tnums">{% if a.daily_pnl >= 0 %}+{% endif %}{{ a.daily_pnl | round }} ({% if a.daily_pnl_pct >= 0 %}+{% endif %}{{ a.daily_pnl_pct | round: 2 }}%)</span>
+          <span class="label">Today</span>
+        </div>
+      </div>
+      <div class="item">
+        <div class="content">
+          <span class="value value--small value--tnums">{{ a.positions_total }} open · {{ a.positions_long }} long / {{ a.positions_short }} short</span>
+          <span class="label">{{ a.positions_profit }} in profit, {{ a.positions_loss }} at a loss</span>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+
+  <div class="columns">
+    <div class="column">
+      <div class="item">
+        <div class="content">
+          <span class="value value--small value--tnums">SPY {{ spy.price }} ({% if spy.change_pct >= 0 %}+{% endif %}{{ spy.change_pct | round: 2 }}%)</span>
+        </div>
+      </div>
+    </div>
+    <div class="column">
+      <div class="item">
+        <div class="content">
+          <span class="value value--small value--tnums">IWM {{ iwm.price }} ({% if iwm.change_pct >= 0 %}+{% endif %}{{ iwm.change_pct | round: 2 }}%)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="title_bar">
+  <span class="title">Edinburgh</span>
+  <span class="instance">as of {{ last_updated }}</span>
+</div>
