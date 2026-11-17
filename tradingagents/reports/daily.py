@@ -138,6 +138,19 @@ def gather(config: dict, day: str) -> dict:
     # read as a sweep that decides nothing.
     decided_on = sweep.get("date") or day
     decided_today = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{decided_on}.json")))
+    # The report is written minutes after the close, which is when the sweep
+    # begins its next cycle: the cycle on record is then newborn, with nothing
+    # analysed and nothing dated to its close. The work the day's book and
+    # tomorrow's rest on is the cycle that just ended, so that is reported too.
+    last = dict(sweep.get("last_cycle") or {})
+    if not last:
+        dates = sorted({p.name[len("full_states_log_"):-len(".json")]
+                        for p in results.glob("backtest/*/*/TradingAgentsStrategy_logs/full_states_log_*.json")})
+        earlier = [d for d in dates if d < decided_on]
+        if earlier:
+            last = {"date": earlier[-1]}
+    if last.get("date"):
+        last["decisions"] = len(list(results.glob(f"backtest/*/*/TradingAgentsStrategy_logs/full_states_log_{last['date']}.json")))
 
     try:
         store = FeedbackStore(config)
@@ -164,7 +177,7 @@ def gather(config: dict, day: str) -> dict:
         "book": book_rows, "book_held": sum(1 for r in book_rows if r["ticker"] in held),
         "sweep": {"cycle": sweep.get("cycle"), "date": sweep.get("date"), "queued": len(sweep.get("queue", [])),
                   "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today, "decided_on": decided_on,
-                  "progress": sweep_progress(sweep)},
+                  "last_cycle": last, "progress": sweep_progress(sweep)},
         "usage": {"total": spend.get("total", {}), "by_agent": spend.get("by_agent", {}), "by_host": spend.get("by_host", {})},
         "errors": model_errors,
         "scorecard": card,
@@ -172,6 +185,24 @@ def gather(config: dict, day: str) -> dict:
 
 
 # --- the review --------------------------------------------------------------
+
+def _sweep_lines(s: dict) -> list[str]:
+    """The sweep, said so that a cycle minutes old is not read as one that produced nothing."""
+    lines = []
+    last = s.get("last_cycle") or {}
+    if last.get("date"):
+        did = (f"cycle {last['cycle']} on {last['date']}'s close ended with {last['analysed']} analysed and {last['queued']} left in its queue; "
+               if last.get("cycle") else f"the cycle before, on {last['date']}'s close: ")
+        lines.append(f"Sweep, the cycle that ended: {did}{last.get('decisions', 0)} decisions are on record for that close "
+                     "(these are what the book is built from).")
+    young = not s.get("analysed_this_cycle")
+    lines.append(f"Sweep, the cycle now running: cycle {s['cycle']} on {s['date']}'s close, {s['analysed_this_cycle']} analysed so far, "
+                 f"{s['queued']} queued, {s['decided_today']} decisions on record for {s.get('decided_on') or s['date']}'s close"
+                 + ("; it began at the close, minutes before this report, so nought here is expected and is not a fault" if young else "")
+                 + (f"; pace {s['progress']['minutes_per_ticker']:.1f} min per ticker" if (s.get('progress') or {}).get('minutes_per_ticker') else "")
+                 + ".")
+    return lines
+
 
 def _facts_text(f: dict) -> str:
     lines = [f"Day: {f['day']}" + (f"; build {f['build']}" if f["build"] else "")]
@@ -210,10 +241,7 @@ def _facts_text(f: dict) -> str:
         lines += [f"- {x[:220]}" for x in f["findings"][:25]]
     s = f["sweep"]
     if s.get("cycle"):
-        lines.append(f"Sweep: cycle {s['cycle']} on {s['date']}'s close, {s['analysed_this_cycle']} analysed this cycle, "
-                     f"{s['queued']} queued; {s['decided_today']} decisions on record for {s.get('decided_on') or s['date']}'s close "
-                     "(the sweep dates a decision by the close it analyses, so none is dated today until tonight)"
-                     + (f"; pace {s['progress']['minutes_per_ticker']:.1f} min per ticker" if (s.get('progress') or {}).get('minutes_per_ticker') else ""))
+        lines += _sweep_lines(s)
     u = f.get("usage") or {}
     if (u.get("total") or {}).get("calls"):
         from tradingagents.usage import describe as describe_usage
@@ -270,7 +298,10 @@ def _prompt(facts: dict, prior_lessons: str) -> str:
         "the top ten each side by expected move, but after that the most attractive call wins regardless of "
         "side (the desk is here to make money, not to stay balanced; an uneven book is not a fault); a missing "
         "stop defaults to 2%; the sweep analyses the index around the clock and the book is rebuilt each "
-        "morning from decisions under five days old.\n\n"
+        "morning from decisions under five days old. Every position's stop is also left at the broker as a stop "
+        "order, on purpose: an exit recorded as filled or closed by Alpaca is the stop working as designed, at "
+        "the broker's speed, and is not a Watcher that failed to act. A sweep cycle restarts at each close, so "
+        "its counters are at nought when this review is written; judge the sweep by the cycle that ended.\n\n"
         f"Today's record:\n{_facts_text(facts)}\n\n"
         + (f"Lessons already on record (do not repeat them; refine or contradict them if today's evidence warrants):\n{prior_lessons}\n\n" if prior_lessons else "")
         + "Review the day as the desk's own reflections do: specific, terse, every figure cited, no praise and no "
@@ -356,9 +387,7 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out += ["## Watcher findings"] + [f"- {x}" for x in f["findings"]] + [""]
     s = f["sweep"]
     if s.get("cycle"):
-        out += ["## Sweep", f"Cycle {s['cycle']} on {s['date']}'s close: {s['analysed_this_cycle']} analysed this cycle, "
-                f"{s['queued']} queued, {s['decided_today']} decisions on record for {s.get('decided_on') or s['date']}'s close."
-                + (f" Pace {s['progress']['minutes_per_ticker']:.1f} min per ticker." if (s.get('progress') or {}).get('minutes_per_ticker') else ""), ""]
+        out += ["## Sweep"] + _sweep_lines(s) + [""]
     u = f.get("usage") or {}
     if (u.get("total") or {}).get("calls"):
         from tradingagents.usage import describe as describe_usage

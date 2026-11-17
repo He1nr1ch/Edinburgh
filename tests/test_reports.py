@@ -309,3 +309,20 @@ def test_each_risk_analyst_reads_its_own_lessons_and_the_reviewers_can_address_t
     for module in (daily, weekly):
         source = inspect.getsource(module._prompt)
         assert "Risk Analysts" in source and "give up its" in source, module.__name__
+
+
+@pytest.mark.unit
+def test_a_cycle_minutes_old_is_not_reported_as_a_sweep_that_produced_nothing():
+    from tradingagents.reports import daily
+
+    lines = daily._sweep_lines({"cycle": 8, "date": "2026-11-17", "queued": 497, "analysed_this_cycle": 0, "decided_today": 0,
+                                "decided_on": "2026-11-17", "progress": {},
+                                "last_cycle": {"cycle": 7, "date": "2026-11-16", "analysed": 408, "queued": 91, "decisions": 414}})
+    assert "cycle 7 on 2026-11-16's close ended with 408 analysed" in lines[0] and "414 decisions are on record" in lines[0]
+    assert "cycle 8 on 2026-11-17's close, 0 analysed so far" in lines[1] and "is not a fault" in lines[1]
+    # Mid-cycle there is nothing to explain away; and a state from before the last cycle was kept still names the close.
+    running = daily._sweep_lines({"cycle": 8, "date": "2026-11-17", "queued": 300, "analysed_this_cycle": 200, "decided_today": 205,
+                                  "decided_on": "2026-11-17", "progress": {"minutes_per_ticker": 3.0},
+                                  "last_cycle": {"date": "2026-11-16", "decisions": 414}})
+    assert "not a fault" not in running[1] and "pace 3.0 min per ticker" in running[1]
+    assert "the cycle before, on 2026-11-16's close: 414 decisions" in running[0]

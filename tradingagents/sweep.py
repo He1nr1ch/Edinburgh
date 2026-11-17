@@ -71,6 +71,7 @@ class Sweep:
         self.cycle = 0
         self.queue: list[str] = []
         self.round_no = 0           # runs started this cycle
+        self.last_cycle: dict = {}  # what the cycle before this one did (see _start_cycle)
         self.runs: list[Run] = []   # the pool: the processes at work now
         self.analysed_this_cycle = 0
         self.rounds: list[dict] = []     # finished runs this cycle: round, tickers, parts, minutes, finished
@@ -91,6 +92,7 @@ class Sweep:
         self.analysed_this_cycle = int(data.get("analysed_this_cycle", 0))
         self.rounds = list(data.get("rounds", []))
         self.retried = list(data.get("retried", []))
+        self.last_cycle = data.get("last_cycle") or {}
         # Runs a restart interrupted: their processes are gone. Their tickers go
         # back to the front of the queue; the cells they finished are skipped
         # by the resumed analysis. ("round" is the state of before the pool.)
@@ -105,7 +107,7 @@ class Sweep:
         runs = [{"run_id": r.run_id, "tickers": r.tickers, "started": r.started_at} for r in self.runs]
         data = {"date": self.date, "cycle": self.cycle, "queue": self.queue, "round_no": self.round_no,
                 "analysed_this_cycle": self.analysed_this_cycle, "rounds": self.rounds[-50:], "retried": self.retried,
-                "runs": runs,
+                "runs": runs, "last_cycle": getattr(self, "last_cycle", {}),
                 "saved": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -140,6 +142,14 @@ class Sweep:
 
     def _start_cycle(self, date: str, holdings: list[str], last_analysed: dict[str, str]) -> None:
         watchlist = watchlist_tickers(ensure_watchlist(self.config))
+        # What the cycle now ending did, kept beside the new one's counters:
+        # those start at nought, and the daily report, written minutes after
+        # the close begins a cycle, read "0 analysed" as a sweep that had
+        # produced nothing (2026-11-16 and 11-17) when it had analysed 408.
+        if self.cycle:
+            self.last_cycle = {"cycle": self.cycle, "date": self.date, "analysed": self.analysed_this_cycle,
+                               "queued": len(self.queue),
+                               "ended": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
         self.rounds, self.retried = [], []
         self.queue = order_tickers(watchlist, holdings, last_analysed, date)

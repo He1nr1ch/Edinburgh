@@ -229,3 +229,20 @@ def test_the_watchlist_default_exists_and_the_sweep_seeds_the_file_when_missing(
     assert (tmp_path / "data" / "sp500.txt").read_text() == "AAA,BBB\n"
     assert FakeProc.live[0].tickers() == ["AAA", "BBB"]
     assert daily.ensure_watchlist(cfg, refresh=False) == tmp_path / "data" / "sp500.txt"
+
+
+@pytest.mark.unit
+def test_a_new_cycle_keeps_what_the_one_before_it_did(cfg):
+    """The daily report is written minutes after the close begins a cycle; its counters at nought were read as a sweep
+    that had produced nothing, twice, while the cycle that had just ended had analysed four hundred."""
+    s = sw.Sweep(cfg)
+    s.tick("2026-11-16", False, [], {})
+    for p in list(FakeProc.live):
+        p.finish()
+    s.tick("2026-11-16", False, [], {})                  # six analysed, three more runs at work
+    assert s.last_cycle == {}
+    s.tick("2026-11-17", False, [], {})                  # the close: the next cycle begins
+    assert s.cycle == 2 and s.analysed_this_cycle == 0
+    assert {k: s.last_cycle[k] for k in ("cycle", "date", "analysed")} == {"cycle": 1, "date": "2026-11-16", "analysed": 6}
+    assert json.loads(open(cfg["sweep_state_path"]).read())["last_cycle"]["analysed"] == 6
+    assert sw.Sweep(cfg).last_cycle["date"] == "2026-11-16"           # and it survives a restart
