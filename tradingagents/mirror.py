@@ -15,7 +15,7 @@ the book is placed at the open, :func:`follow` reads both accounts and sends
 the market orders that make Valya's equity positions the negation of
 Heinrich's: a name the desk opened is opened the other way, a name it closed
 is closed, a trim is trimmed. A name whose desk order has not filled yet
-waits for the next pass, as does one with a mirror order still open, and a
+(the stop the desk keeps at Alpaca is not such an order) waits for the next pass, as does one with a mirror order still open, and a
 name that must change side is first flattened and opened the other way on
 the pass after, since one order may not cross zero. Options (the SPY hedge)
 and crypto are not mirrored. A name Alpaca will not let her short is noted
@@ -170,7 +170,11 @@ def follow(config: dict, dry_run: bool = False, main: Account | None = None, mar
         market_open = trading.get_clock().is_open
     mirror = get_account(cl)
     wanted, have = target_positions(main), current_positions(mirror)
-    main_pending = set(trading.open_orders().values())
+    # A stop the desk keeps waiting at Alpaca is not an order still to fill: it
+    # stands for as long as the position does, and a name held back by it was
+    # never followed at all. Only the desk's other open orders hold a name.
+    resting = {s.id for s in trading.open_stops()}
+    main_pending = {symbol for order_id, symbol in trading.open_orders().items() if order_id not in resting}
     mirror_pending = set(trading.open_orders(cl).values())
     plan = orders_to_send(wanted, have, main_pending, mirror_pending)
     todo = [o for o in plan if o["side"]]

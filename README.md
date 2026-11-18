@@ -393,7 +393,8 @@ is long. Her stop is the desk's target and her target the desk's stop, which the
 for free, and she leaves a name the moment the desk does, for whatever reason it did. Nothing
 is decided for her: after every Watcher pass, and after the book is placed, the
 worker reads both accounts and sends the market orders that make her equity positions the
-negation of the desk's. A name whose desk order has not filled waits for the next pass; a name
+negation of the desk's. A name whose desk order has not filled waits for the next pass (the stop the desk keeps
+waiting at Alpaca is not such an order, and holds nothing back); a name
 that must change side is flattened first and opened the other way on the pass after; a name
 Alpaca will not lend is noted and shown on her page as unmirrored. The SPY call hedge and
 crypto are not mirrored.

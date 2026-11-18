@@ -55,12 +55,13 @@ def test_the_orders_take_her_book_to_the_opposite_one_name_at_a_time():
 class FakeBroker:
     """Both accounts' orders, told apart by the client object."""
 
-    def __init__(self, monkeypatch, main: Account, hers: Account, refuse=()):
+    def __init__(self, monkeypatch, main: Account, hers: Account, refuse=(), orders=None, stops=()):
         self.sent: list[tuple] = []
         self.her_client = object()
         monkeypatch.setattr(mirror, "client", lambda: self.her_client)
         monkeypatch.setattr(mirror.trading, "get_account", lambda client=None, paper=None: hers if client is self.her_client else main)
-        monkeypatch.setattr(mirror.trading, "open_orders", lambda client=None: {})
+        monkeypatch.setattr(mirror.trading, "open_orders", lambda client=None: {} if client is self.her_client else dict(orders or {}))
+        monkeypatch.setattr(mirror.trading, "open_stops", lambda client=None: list(stops))
         monkeypatch.setattr(mirror.trading, "get_clock", lambda: type("C", (), {"is_open": True})())
 
         def submit(symbol, qty, side, client=None):
@@ -89,6 +90,18 @@ def test_follow_sends_her_the_opposite_orders_and_notes_what_alpaca_refused(cfg,
     hers2 = _acct(_h("WM", -20), _h("NKE", 259))
     broker2 = FakeBroker(monkeypatch, _acct(_h("WM", 20), _h("NKE", -259)), hers2)
     assert mirror.follow(cfg) == [] and broker2.sent == []
+
+
+@pytest.mark.unit
+def test_the_desks_waiting_stop_does_not_hold_her_back_but_its_unfilled_order_does(cfg, monkeypatch):
+    from tradingagents.dataflows.vendors.alpaca.trading import StopOrder
+
+    main, hers = _acct(_h("VRT", 13), _h("COIN", -16), _h("ADI", 5)), _acct()
+    stops = [StopOrder("stop-1", "VRT", "sell", 13, 182.0), StopOrder("stop-2", "COIN", "buy", 16, 135.0)]
+    broker = FakeBroker(monkeypatch, main, hers, stops=stops,
+                        orders={"stop-1": "VRT", "stop-2": "COIN", "ord-9": "ADI"})
+    mirror.follow(cfg)
+    assert sorted(broker.sent) == [("COIN", 16, "buy", True), ("VRT", 13, "sell", True)]
 
 
 @pytest.mark.unit
