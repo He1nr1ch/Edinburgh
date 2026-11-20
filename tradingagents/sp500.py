@@ -119,17 +119,5 @@ def refresh_if_stale(max_age_days: int = MAX_AGE_DAYS, path: Path = WATCHLIST) -
             raise
 
 
-def get_sp500_symbols(path: Path = WATCHLIST) -> list[str]:
-    """
-    Return the universe, sorted. If there is no file yet (first run),
-    populate it first.
-    """
-    count, _ = _file_status(path)
-    if not count:
-        print(f"[sp500] {path.name} is missing — fetching constituents …")
-        refresh_sp500_watchlist(path)
-    return sorted(s.strip() for s in path.read_text(encoding="utf-8").replace("\n", "").split(",") if s.strip())
-
-
 if __name__ == "__main__":
     refresh_sp500_watchlist()

@@ -192,6 +192,3 @@ class WatcherDuty:
                                     + (" (accounted for)" if assessment.accounted_for else ", not accounted for"),
                                     detail, action))
         return findings
-
-
-NewsDuty = WatcherDuty    # the duty's earlier name

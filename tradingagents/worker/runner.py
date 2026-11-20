@@ -13,7 +13,7 @@ import logging
 import math
 import time
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -516,11 +516,6 @@ def _wait(seconds: float, sweep, config: dict, market_open: bool) -> None:
         time.sleep(min(SWEEP_LOOK_SECONDS, seconds))
         if sweep is not None:
             tick_sweep(sweep, config, market_open)
-
-
-def _sleep_until(target: datetime, now: datetime, chunk_minutes: int = 15) -> None:
-    """Sleep toward ``target`` at most ``chunk_minutes`` at a time, so the clock is asked again."""
-    time.sleep(max(1.0, min((target - now).total_seconds(), chunk_minutes * 60)))
 
 
 def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_run: bool = False, sweep=None) -> None:

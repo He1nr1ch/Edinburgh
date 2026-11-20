@@ -265,16 +265,6 @@ class FeedbackStore:
                 out[name] = summary
         return out
 
-    def attach_reflection(self, ticker: str, trade_date: str, reflection: str) -> None:
-        """Keep the memory log's lesson with the outcome once it exists."""
-        if not self.enabled:
-            return
-        with self.engine.begin() as conn:
-            decision_id = conn.execute(select(decisions.c.id).where(
-                decisions.c.ticker == ticker, decisions.c.trade_date == trade_date)).scalar()
-            if decision_id is not None:
-                conn.execute(outcomes.update().where(outcomes.c.decision_id == decision_id).values(reflection=reflection))
-
     # --- read back ----------------------------------------------------------------
 
     def _settled(self, conn, as_of: str | None):

@@ -69,10 +69,6 @@ class Trade:
     def r_multiple(self) -> float:
         return self.pnl / self.initial_risk if self.initial_risk > 0 else 0.0
 
-    @property
-    def exit_at(self) -> pd.Timestamp | None:
-        return self.fills[-1].at if self.fills else None
-
     def _partial_units(self) -> list[int]:
         n = len(self.setup.targets)
         if n == 1 or self.units % n:

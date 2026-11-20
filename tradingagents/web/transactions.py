@@ -145,7 +145,7 @@ def entry_stop(state: WorkerState, exit_order: dict, position: str, config: dict
     taken at entry. Never raises: a stop that cannot be read is no stop.
     """
     lookups = lookups if lookups is not None else {}
-    symbol, at = exit_order["symbol"], exit_order["at"]
+    symbol = exit_order["symbol"]
     opened = next(reversed(_openings(state, exit_order, OPENS)), None)
     if opened and opened.get("stop"):
         return float(opened["stop"])

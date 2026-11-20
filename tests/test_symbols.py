@@ -2,7 +2,7 @@
 
 import pytest
 
-from tradingagents.dataflows.symbols import crypto_base, is_crypto_symbol, normalize_symbol
+from tradingagents.dataflows.symbols import is_crypto_symbol, normalize_symbol
 
 
 @pytest.mark.unit
@@ -44,5 +44,3 @@ def test_empty_input_is_returned_empty():
 @pytest.mark.unit
 def test_crypto_predicates():
     assert is_crypto_symbol("BTC/USD") and not is_crypto_symbol("AAPL")
-    assert crypto_base("btcusd") == "BTC"
-    assert crypto_base("AAPL") is None

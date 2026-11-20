@@ -34,7 +34,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from tradingagents.dataflows.vendors.alpaca import common, trading
-from tradingagents.dataflows.vendors.alpaca.trading import Account, Holding
+from tradingagents.dataflows.vendors.alpaca.trading import Account
 
 logger = logging.getLogger(__name__)
 

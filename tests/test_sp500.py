@@ -82,4 +82,4 @@ def test_a_failed_refresh_of_a_stale_file_warns_but_keeps_it(tmp_path, monkeypat
     monkeypatch.setattr(sp500, "refresh_sp500_watchlist", boom)
     sp500.refresh_if_stale(path=path)
     assert "keeping existing 1 symbols" in capsys.readouterr().out
-    assert sp500.get_sp500_symbols(path) == ["AAPL"]
+    assert path.read_text() == "AAPL\n"

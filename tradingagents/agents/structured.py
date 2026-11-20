@@ -134,11 +134,6 @@ def decide(structured_llm: Any | None, prompt: Any, agent_name: str, call: str |
     return result, verdict
 
 
-def invoke_structured(structured_llm: Any | None, prompt: Any, agent_name: str) -> T | None:
-    """The typed answer alone, or ``None`` when the contract was not met."""
-    return decide(structured_llm, prompt, agent_name)[0]
-
-
 @dataclass
 class Outcome(Generic[T]):
     """What asking an agent gave: its typed answer, or prose under the free-text opt-out, or neither."""

@@ -25,15 +25,11 @@ class ModelCapabilities:
     """What an OpenAI-compatible model accepts at the API level."""
 
     supports_tool_choice: bool
-    supports_json_mode: bool
-    supports_json_schema: bool
     preferred_structured_method: StructuredMethod
 
 
 _DEFAULT = ModelCapabilities(
     supports_tool_choice=True,
-    supports_json_mode=True,
-    supports_json_schema=True,
     preferred_structured_method="function_calling",
 )
 

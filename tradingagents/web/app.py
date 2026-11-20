@@ -260,7 +260,6 @@ def _nodes(hours: float = 24) -> dict:
 def _status_section() -> str:
     """The desk's running state: the sweep's progress, the day's model spend, the PAIR nodes' shares."""
     from tradingagents import sweep as sw
-    from tradingagents import usage
 
     out = ['<h2>Desk status</h2>']
     p = _sweep_progress()

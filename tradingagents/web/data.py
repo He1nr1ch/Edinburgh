@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -164,10 +164,6 @@ def positions_view(holdings, decisions: dict[str, DecisionRef], default_stop_pct
                 row["to_target_pct"] = (summary["target"] / price - 1) * 100 * d
         rows.append(row)
     return rows
-
-
-def as_json(ref: DecisionRef) -> dict:
-    return {**asdict(ref), "path": str(ref.path)}
 
 
 def now_text() -> str:

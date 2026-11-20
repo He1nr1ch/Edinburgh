@@ -135,10 +135,6 @@ class Zone:
         return self.high - self.low
 
     @property
-    def mid(self) -> float:
-        return (self.high + self.low) / 2
-
-    @property
     def valid(self) -> bool:
         return self.validated is not None
 

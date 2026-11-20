@@ -250,14 +250,6 @@ def test_the_track_record_is_point_in_time(store):
     assert "Buy 1/1" in store.render_context("NVDA", as_of="2026-01-13")
 
 
-@pytest.mark.unit
-def test_a_lesson_settled_later_is_attached_to_the_outcome(store):
-    store.record("NVDA", "2026-01-05", _state())
-    store.settle_due(lambda *a: _window([100, 102, 104, 106, 108, 110]))
-    store.attach_reflection("NVDA", "2026-01-05", "Trend-following paid.")
-    assert store.ticker_history("NVDA")[0]["reflection"] == "Trend-following paid."
-
-
 # --- the graph records and scores -----------------------------------------------------
 
 @pytest.mark.unit

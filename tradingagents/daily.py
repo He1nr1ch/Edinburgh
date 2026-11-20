@@ -144,7 +144,6 @@ def ensure_watchlist(config: dict, refresh: bool = True) -> Path:
 def run_daily(config: dict, equity: float, date: str | None = None, parts: int | None = None,
               refresh_watchlist: bool = True, holdings: list[str] | None = None) -> BuiltBook:
     """The whole job: holdings and watchlist, sweep to the deadline, book, bench. Returns the saved book."""
-    from tradingagents import sp500
     from tradingagents.dataflows.vendors.alpaca import trading
 
     date = date or trading.last_trading_day(datetime.now().astimezone())

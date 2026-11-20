@@ -26,12 +26,6 @@ def is_crypto_symbol(symbol: str) -> bool:
     return "/" in symbol
 
 
-def crypto_base(symbol: str) -> str | None:
-    """The base coin of a crypto pair (``BTC`` for ``BTC/USD``), or None for a stock."""
-    canonical = normalize_symbol(symbol)
-    return canonical.split("/", 1)[0] if is_crypto_symbol(canonical) else None
-
-
 def normalize_symbol(raw: str) -> str:
     """Canonical Alpaca symbol for what the user typed.
 
