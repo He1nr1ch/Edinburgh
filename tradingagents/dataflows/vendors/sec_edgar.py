@@ -35,10 +35,25 @@ logger = logging.getLogger(__name__)
 
 _TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 _FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 
-# A filing history only changes when something new is filed, so one fetch per
-# company per day serves every date a run asks about.
+# The ticker table is fetched once a day.
 _CACHE_TTL_SECONDS = 24 * 60 * 60
+
+# A company's facts change only when it files, a dozen or so times a year, and
+# SEC answers no "changed since?" request (no Last-Modified, no ETag). So the
+# kept facts are served until the company's filing index, a tenth the size,
+# shows a newer filing with financial data than the one they were fetched at.
+# The index is asked at most this often per company: a run asks for six
+# statements at once, and they share one look.
+_CHECK_TTL_SECONDS = 15 * 60
+# SEC adds a filing to the facts shortly after the index shows it. Facts
+# fetched in between do not hold it yet, so they are fetched again on a later
+# look until they do, or until the filing is this old: one that is not in the
+# facts by then (an 8-K's cover page) never will be.
+_FACTS_LAG_SECONDS = 60 * 60
+# Prospectus supplements and free-writing prospectuses: offerings off a shelf.
+_SHELF_FORMS = ("424", "FWP")
 
 # Line items, each with the tags filers use for it, best first. First match wins
 # and values are never summed across tags: a company reporting revenue under two
@@ -126,10 +141,101 @@ def _cached_json(url: str, name: str) -> dict:
             return json.loads(path.read_text(encoding="utf-8"))
         except ValueError:
             pass  # a truncated file is a miss, not a failure
-    data = _fetch_json(url)
+    try:
+        data = _fetch_json(url)
+    except VendorUnavailableError as exc:
+        kept = _read_json(path)
+        if kept is None:
+            raise
+        logger.warning("%s; using the copy of %s kept on %s", exc, name, date.fromtimestamp(path.stat().st_mtime))
+        return kept
+    _keep_json(path, data)
+    return data
+
+
+def _read_json(path: Path) -> dict | None:
+    """The kept file, or None when there is none or it cannot be read."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _keep_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     replace_file(path, lambda temp: Path(temp).write_text(json.dumps(data), encoding="utf-8"))
-    return data
+
+
+def _newest_filing(cik: str) -> tuple[str, str]:
+    """(accession number, time accepted) of the filer's newest filing with XBRL data; empty when it has none.
+
+    Prospectus supplements are passed over while the filer has anything else:
+    a bank files dozens a day (JPMorgan, 10,653 in a year), each with a fee
+    table in XBRL and no statement line, and counting them would have its facts
+    fetched every day for nothing.
+    """
+    recent = (_fetch_json(_SUBMISSIONS_URL.format(cik=cik)).get("filings") or {}).get("recent") or {}
+    accessions = recent.get("accessionNumber") or []
+    forms = recent.get("form") or [""] * len(accessions)
+    filings = [(accepted or "", accession, form or "")
+               for accession, accepted, xbrl, form in zip(accessions, recent.get("acceptanceDateTime") or [],
+                                                          recent.get("isXBRL") or [], forms, strict=False)
+               if xbrl]
+    reports = [f for f in filings if not f[2].startswith(_SHELF_FORMS)]
+    accepted, accession, _ = max(reports or filings, default=("", "", ""))
+    return accession, accepted
+
+
+def _holds_filing(facts: dict, accession: str) -> bool:
+    return any(fact.get("accn") == accession
+               for taxonomy in (facts.get("facts") or {}).values() for tag in taxonomy.values()
+               for values in (tag.get("units") or {}).values() for fact in values)
+
+
+def _settled(accepted: str) -> bool:
+    """Whether a filing accepted then has had time to reach the facts."""
+    try:
+        age = datetime.now().astimezone() - datetime.fromisoformat(accepted)
+    except (TypeError, ValueError):
+        return True
+    return age.total_seconds() > _FACTS_LAG_SECONDS
+
+
+def _company_facts(cik: str) -> dict:
+    """The filer's facts: the kept copy while it is current, fetched anew once the filer has filed since.
+
+    Beside the facts is a note of the filing they were fetched at. Within
+    ``_CHECK_TTL_SECONDS`` of the last look the copy is served unasked;
+    after it the filing index is read, and the facts are fetched only when it
+    shows a newer filing (or the last fetch came before SEC had added the
+    filing to them). When SEC cannot be reached, a kept copy is served rather
+    than no fundamentals at all.
+    """
+    folder = Path(get_config()["data_cache_dir"]) / "sec_edgar"
+    path, note_path = folder / f"CIK{cik}.json", folder / f"CIK{cik}.filing.json"
+    note = _read_json(note_path) if path.exists() else None
+    if note is not None and time.time() - note_path.stat().st_mtime < _CHECK_TTL_SECONDS:
+        kept = _read_json(path)
+        if kept is not None:
+            return kept
+    try:
+        newest, accepted = _newest_filing(cik)
+        if note is not None and note.get("complete") and note.get("filing") == newest:
+            kept = _read_json(path)
+            if kept is not None:
+                os.utime(note_path)        # looked just now
+                return kept
+        facts = _fetch_json(_FACTS_URL.format(cik=cik))
+    except VendorUnavailableError as exc:
+        kept = _read_json(path)
+        if kept is None:
+            raise
+        logger.warning("%s; using the facts for CIK %s kept on %s", exc, cik, date.fromtimestamp(path.stat().st_mtime))
+        return kept
+    _keep_json(path, facts)
+    complete = not newest or _holds_filing(facts, newest) or _settled(accepted)
+    _keep_json(note_path, {"filing": newest, "accepted": accepted, "complete": complete})
+    return facts
 
 
 # Filers SEC's ticker file leaves out, by the exchange ticker Alpaca uses.
@@ -205,7 +311,7 @@ def _statement(kind: str, ticker: str, freq: str, as_of_date: str, title: str) -
     if cik is None:
         raise NoMarketDataError(ticker, ticker, "not a US SEC filer")
 
-    facts = _cached_json(_FACTS_URL.format(cik=cik), f"CIK{cik}.json")
+    facts = _company_facts(cik)
     us_gaap = (facts.get("facts") or {}).get("us-gaap")
     if not us_gaap:
         raise NoMarketDataError(ticker, ticker, "US filer with no us-gaap facts")

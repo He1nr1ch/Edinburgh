@@ -338,3 +338,122 @@ def test_a_filer_missing_from_secs_ticker_file_is_known_by_override(monkeypatch)
     monkeypatch.setitem(sec_edgar._CIK_OVERRIDES, "ZZZ", "0000000001")
     assert sec_edgar.cik_for("zzz") == "0000000001"
     assert sec_edgar.cik_for("ZZZZ") is None
+
+
+# --- the kept facts, and when they are fetched again ---------------------------
+
+def _index(*filings):
+    """SEC's filing index: (accession, accepted[, form]) of each filing with XBRL data, in any order."""
+    return {"filings": {"recent": {"accessionNumber": [f[0] for f in filings],
+                                   "acceptanceDateTime": [f[1] for f in filings],
+                                   "form": [f[2] if len(f) > 2 else "10-Q" for f in filings],
+                                   "isXBRL": [1] * len(filings)}}}
+
+
+class _Sec:
+    """SEC as the vendor sees it: the ticker table, a filing index and the facts, counting what is asked."""
+
+    def __init__(self, index, facts=FACTS):
+        self.index, self.facts, self.asked, self.down = index, facts, [], False
+
+    def __call__(self, url):
+        if self.down:
+            raise sec_edgar.VendorUnavailableError("SEC EDGAR request failed (503)")
+        kind = "tickers" if "company_tickers" in url else "index" if "submissions" in url else "facts"
+        self.asked.append(kind)
+        return {"tickers": TICKER_MAP, "index": self.index, "facts": self.facts}[kind]
+
+
+def _a_look_later(tmp_path):
+    """Age the note of the last look past the time a look is good for."""
+    import os
+    import time
+
+    note = tmp_path / "sec_edgar" / "CIK0000320193.filing.json"
+    old = time.time() - sec_edgar._CHECK_TTL_SECONDS - 1
+    os.utime(note, (old, old))
+
+
+@pytest.mark.unit
+def test_the_kept_facts_are_served_while_the_filer_has_filed_nothing_new(tmp_path, monkeypatch):
+    sec = _Sec(_index(("0000320193-24-000123", "2024-11-01T20:00:00.000Z")))
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15")
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15")      # the same look serves it
+    assert sec.asked.count("index") == 1 and sec.asked.count("facts") == 1
+
+    _a_look_later(tmp_path)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15")
+    assert sec.asked.count("index") == 2 and sec.asked.count("facts") == 1    # asked, and nothing new
+
+
+@pytest.mark.unit
+def test_a_new_filing_has_the_facts_fetched_again(tmp_path, monkeypatch):
+    sec = _Sec(_index(("0000320193-24-000123", "2024-11-01T20:00:00.000Z")))
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-03-01")
+
+    sec.index = _index(("0000320193-24-000123", "2024-11-01T20:00:00.000Z"),
+                       ("0000320193-25-000008", "2025-01-31T21:00:00.000Z"))
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-03-01")      # within the look: not asked yet
+    assert sec.asked.count("facts") == 1
+    _a_look_later(tmp_path)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2025-03-01")
+    assert sec.asked.count("facts") == 2
+
+
+@pytest.mark.unit
+def test_a_prospectus_supplement_is_not_a_reason_to_fetch_the_facts_again(tmp_path, monkeypatch):
+    report = ("0000019617-26-000300", "2026-11-02T21:00:00.000Z", "10-Q")
+    sec = _Sec(_index(report))
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2026-11-19")
+
+    sec.index = _index(report, ("0001213900-26-122293", "2026-11-19T22:09:03.000Z", "424B2"))
+    _a_look_later(tmp_path)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2026-11-19")
+    assert sec.asked.count("index") == 2 and sec.asked.count("facts") == 1
+
+
+@pytest.mark.unit
+def test_facts_fetched_before_sec_added_the_filing_are_fetched_again(tmp_path, monkeypatch):
+    """The index shows a filing a little before the facts hold it."""
+    from datetime import UTC, datetime
+
+    just_now = datetime.now(UTC).isoformat()
+    sec = _Sec(_index(("0000320193-26-000026", just_now)))
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2026-11-04")
+    _a_look_later(tmp_path)
+
+    with_it = {**FACTS, "facts": {**FACTS["facts"], "dei": {"EntityPublicFloat": {"units": {"USD": [
+        {"end": "2026-03-27", "val": 1, "filed": "2026-11-03", "accn": "0000320193-26-000026"}]}}}}}
+    sec.facts = with_it
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2026-11-04")
+    assert sec.asked.count("facts") == 2                               # the first copy lacked the filing
+
+    _a_look_later(tmp_path)
+    sec_edgar.get_balance_sheet("AAPL", "annual", "2026-11-04")
+    assert sec.asked.count("facts") == 2                               # this one holds it: current
+
+
+@pytest.mark.unit
+def test_with_sec_out_of_reach_the_kept_facts_are_served(tmp_path, monkeypatch):
+    sec = _Sec(_index(("0000320193-24-000123", "2024-11-01T20:00:00.000Z")))
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+    before = sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15")
+    _a_look_later(tmp_path)
+    monkeypatch.setattr(sec_edgar, "_CACHE_TTL_SECONDS", 0)            # the ticker table is due too
+
+    sec.down = True
+    assert sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15") == before
+
+
+@pytest.mark.unit
+def test_with_sec_out_of_reach_and_nothing_kept_the_next_vendor_tries(monkeypatch):
+    sec = _Sec(_index())
+    sec.down = True
+    monkeypatch.setattr(sec_edgar, "_fetch_json", sec)
+    with pytest.raises(sec_edgar.VendorUnavailableError):
+        sec_edgar.get_balance_sheet("AAPL", "annual", "2025-01-15")
