@@ -294,13 +294,8 @@ def load_calls(run_dir: Path, trade_date: str) -> list[Call]:
 
 def last_closes(tickers: list[str], trade_date: str) -> dict[str, float]:
     """Each ticker's close on ``trade_date``, or the last one before it."""
-    from tradingagents.dataflows.vendors.alpaca import get_closes
+    from tradingagents.dataflows.vendors.alpaca import latest_closes
 
     end = (datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
-    prices = {}
-    for ticker in tickers:
-        closes = get_closes(ticker, start, end)
-        if not closes.empty:
-            prices[ticker] = float(closes.iloc[-1])
-    return prices
+    return latest_closes(tickers, start, end)

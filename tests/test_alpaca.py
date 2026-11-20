@@ -212,6 +212,38 @@ def test_get_closes_for_an_unknown_symbol_is_empty(monkeypatch):
     assert market.get_closes("ZZZZ", "2026-01-05", "2026-01-12").empty
 
 
+@pytest.mark.unit
+def test_latest_closes_asks_for_many_symbols_in_one_request(monkeypatch):
+    both = pd.concat([_bars_df("NVDA", end="2026-01-16").df, _bars_df("AAPL", end="2026-01-16").df * 2])
+    stock = _Stock(SimpleNamespace(df=both))
+    monkeypatch.setattr(common, "stock_client", lambda: stock)
+
+    closes = market.latest_closes(["nvda", "AAPL", "ZZZZ"], "2026-01-05", "2026-01-12")
+
+    assert len(stock.requests) == 1 and stock.requests[0].symbol_or_symbols == ["NVDA", "AAPL", "ZZZZ"]
+    one = float(market.get_closes("NVDA", "2026-01-05", "2026-01-12").iloc[-1])      # Friday the 9th's close
+    assert closes == {"nvda": one, "AAPL": one * 2}       # by the spelling asked for; no bar, no price
+
+
+@pytest.mark.unit
+def test_latest_closes_asks_one_at_a_time_when_the_batch_is_refused(monkeypatch):
+    class Refusing(_Stock):
+        def get_stock_bars(self, request):
+            self.requests.append(request)
+            if isinstance(request.symbol_or_symbols, list):
+                raise APIError('{"message": "invalid symbol: B@D"}', SimpleNamespace(status_code=422))
+            if request.symbol_or_symbols == "NVDA":
+                return _bars_df("NVDA", end="2026-01-16")
+            return SimpleNamespace(df=pd.DataFrame())
+
+    stock = Refusing(None)
+    monkeypatch.setattr(common, "stock_client", lambda: stock)
+
+    closes = market.latest_closes(["NVDA", "B@D"], "2026-01-05", "2026-01-12")
+
+    assert list(closes) == ["NVDA"] and len(stock.requests) == 3
+
+
 # --- news ---------------------------------------------------------------------
 
 def _article(headline, day, symbols=("NVDA",)):

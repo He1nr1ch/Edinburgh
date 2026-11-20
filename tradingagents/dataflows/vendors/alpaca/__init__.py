@@ -11,6 +11,7 @@ from tradingagents.dataflows.vendors.alpaca.market import (
     get_market_snapshot,
     get_stock_data,
     intraday_bars,
+    latest_closes,
     load_ohlcv,
 )
 from tradingagents.dataflows.vendors.alpaca.news import articles_since, get_global_news, get_news
@@ -29,5 +30,6 @@ __all__ = [
     "get_stock_data",
     "latest_price",
     "intraday_bars",
+    "latest_closes",
     "load_ohlcv",
 ]

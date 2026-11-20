@@ -166,6 +166,60 @@ def get_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
     return pd.Series(frame["Close"].to_numpy(dtype=float), index=pd.DatetimeIndex(frame["Date"]), name="Close")
 
 
+# Symbols asked for in one bars request: a ten-day window of daily bars for
+# this many is under a thousand rows, one page of Alpaca's answer.
+CLOSES_BATCH = 100
+
+
+def latest_closes(symbols: list[str], start_date: str, end_date: str) -> dict[str, float]:
+    """Each symbol's last daily close from ``start_date`` up to, not including, ``end_date``.
+
+    What :func:`get_closes` gives one symbol at a time, asked of Alpaca for
+    ``CLOSES_BATCH`` stocks a request: sizing a book of five hundred calls is
+    five requests, not five hundred. A symbol with no bar in the window is left
+    out. Coins, and a batch Alpaca refuses whole because of one symbol in it,
+    are asked for one at a time.
+    """
+    def one(symbol: str) -> float | None:
+        closes = get_closes(symbol, start_date, end_date)
+        return None if closes.empty else float(closes.iloc[-1])
+
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=UTC)
+    if end <= start:
+        return {}
+    asked: dict[str, list[str]] = {}       # canonical symbol -> the spellings that asked for it
+    for symbol in symbols:
+        asked.setdefault(normalize_symbol(symbol), []).append(symbol)
+    stocks = [c for c in asked if not is_crypto_symbol(c)]
+    singly = [c for c in asked if is_crypto_symbol(c)]
+    found: dict[str, float] = {}
+    for i in range(0, len(stocks), CLOSES_BATCH):
+        batch = stocks[i:i + CLOSES_BATCH]
+        request = StockBarsRequest(symbol_or_symbols=batch, timeframe=TimeFrame.Day, start=start, end=end,
+                                   adjustment=Adjustment.ALL, feed=common.data_feed())
+        bars = common.call(lambda request=request: common.stock_client().get_stock_bars(request),
+                           f"bars for {len(batch)} symbols")
+        if bars is None:
+            singly += batch
+            continue
+        frame = bars.df
+        if frame is None or frame.empty:
+            continue
+        frame = frame.reset_index()
+        days = pd.to_datetime(frame["timestamp"], utc=True).dt.tz_convert(MARKET_TZ).dt.tz_localize(None).dt.normalize()
+        frame = frame.assign(day=days)
+        frame = frame[(frame["day"] >= pd.to_datetime(start_date)) & (frame["day"] < pd.to_datetime(end_date))]
+        frame = frame.dropna(subset=["close"]).sort_values("day")
+        found.update({symbol: float(close) for symbol, close in frame.groupby("symbol")["close"].last().items()})
+    for canonical in singly:
+        close = one(canonical)
+        if close is not None:
+            found[canonical] = close
+    return {symbol: found[canonical] for canonical, spellings in asked.items() if canonical in found
+            for symbol in spellings}
+
+
 def intraday_bars(symbol: str, start: str, end: str, minutes: int = 15) -> pd.DataFrame:
     """``minutes``-minute bars from ``start`` through ``end`` (dates, inclusive), stamped in New York time.
 
