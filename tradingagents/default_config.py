@@ -57,6 +57,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_DAILY_PARTS_MARKET_HOURS": "daily_parts_market_hours",
     "TRADINGAGENTS_SWEEP_ROUND_SIZE":        "sweep_round_size",
     "TRADINGAGENTS_SWEEP_RUN_TIMEOUT_MINUTES": "sweep_run_timeout_minutes",
+    "TRADINGAGENTS_SWEEP_FAILURE_PAUSE_MINUTES": "sweep_failure_pause_minutes",
     "TRADINGAGENTS_DECISION_MAX_AGE_DAYS":   "decision_max_age_days",
     "TRADINGAGENTS_DAILY_WATCHLIST":         "daily_watchlist",
     "TRADINGAGENTS_DAILY_PARTS":             "daily_parts",
@@ -353,6 +354,11 @@ def build_default_config() -> dict:
         # A run still at work after this many minutes is ended and its tickers
         # queued once more (a run takes about half an hour; 0 never ends one).
         "sweep_run_timeout_minutes": 120,
+        # A run that exits with an error before deciding anything (the
+        # feedback database out of reach) puts its tickers back and holds the
+        # sweep this long, doubling up to half an hour while runs keep failing
+        # (0 never holds it).
+        "sweep_failure_pause_minutes": 5,
         "daily_parts": 5,
         "daily_analysts": "",               # "" runs every analyst; e.g. "market,news" for a faster sweep
         # Price the SPY call hedge for a net-short book after sizing, as `size`

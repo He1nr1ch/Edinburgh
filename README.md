@@ -201,7 +201,10 @@ smaller pool leaves the Watcher's calls a short queue; the sweep's processes als
 lower CPU priority than the worker. There are more processes than PAIR nodes on purpose: with
 one a node, PAIR's own record showed its nodes idle a third of the night. A run still at work
 after `sweep_run_timeout_minutes` (two hours; a run takes about half of one) is ended and its
-undecided tickers queued once more, so a hung process cannot hold up the cycle. Each analyst is
+undecided tickers queued once more, so a hung process cannot hold up the cycle. A run that exits
+with an error before deciding anything (the feedback database out of reach) is not counted as
+analysed: its tickers return to the front of the queue and the sweep starts no run for
+`sweep_failure_pause_minutes` (five, doubling up to thirty while runs keep failing). Each analyst is
 handed its data in one message and writes its report in one model call (`analyst_briefing`,
 `agents/analysts/briefing.py`), where it used to ask for it a tool call at a time; the
 market-wide news and the macro series, the same for every ticker, are fetched once a day.

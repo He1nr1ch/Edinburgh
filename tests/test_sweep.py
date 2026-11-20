@@ -246,3 +246,58 @@ def test_a_new_cycle_keeps_what_the_one_before_it_did(cfg):
     assert {k: s.last_cycle[k] for k in ("cycle", "date", "analysed")} == {"cycle": 1, "date": "2026-11-16", "analysed": 6}
     assert json.loads(open(cfg["sweep_state_path"]).read())["last_cycle"]["analysed"] == 6
     assert sw.Sweep(cfg).last_cycle["date"] == "2026-11-16"           # and it survives a restart
+
+
+@pytest.mark.unit
+def test_a_run_that_fails_before_deciding_anything_is_not_counted_and_holds_the_sweep(cfg, monkeypatch):
+    """On 2026-11-18 the database was out of reach all day: 11,009 runs failed in seconds, each counted as analysed."""
+    monkeypatch.setattr(sw.Sweep, "_failed", lambda self, run: [])
+    clock = [1000.0]
+    monkeypatch.setattr(sw.time, "monotonic", lambda: clock[0])
+    s = sw.Sweep({**cfg, "sweep_failure_pause_minutes": 5})
+    s.tick("2026-11-09", False, [], {})
+    broken = s.runs[0]
+    (s.log_dir / f"{broken.run_id}.log").write_text(
+        '(psycopg.OperationalError) connection failed: connection to server at\n"192.168.0.98", port 5432 failed\n')
+    broken.proc.finish(1)
+    s.tick("2026-11-09", False, [], {})
+
+    assert s.analysed_this_cycle == 0 and s.rounds == [] and s.retried == []     # not analysed, not in the pace, no retry used
+    assert s.queue[:2] == broken.tickers                                          # back at the front
+    assert len(s.runs) == 2 and len(FakeProc.live) == 3                           # held: its place is not refilled
+    assert not s.due(market_open=False) and "held 5 min" in s.status()
+
+    second = s.runs[0]
+    second.proc.finish(1)                                                         # fails while the sweep waits: no longer wait
+    s.tick("2026-11-09", False, [], {})
+    assert s.broken_runs == 1 and len(FakeProc.live) == 3 and s.queue[:2] == second.tickers
+
+    clock[0] += 5 * 60                                                            # the wait is over: the pool fills again
+    s.tick("2026-11-09", False, [], {})
+    assert len(s.runs) == 3 and FakeProc.live[3].tickers() == second.tickers
+    FakeProc.live[3].finish(1)                                                    # fails again: twice as long
+    s.tick("2026-11-09", False, [], {})
+    assert s.broken_runs == 2 and s.hold_until == clock[0] + 10 * 60
+
+    clock[0] += 10 * 60
+    s.tick("2026-11-09", False, [], {})
+    s.runs[0].proc.finish(0)                                                      # a run that works ends the waiting
+    s.tick("2026-11-09", False, [], {})
+    assert s.broken_runs == 0 and s.analysed_this_cycle == 2 and len(s.runs) == 3
+
+
+@pytest.mark.unit
+def test_a_run_that_exits_with_an_error_part_way_queues_its_undecided_tickers_once(cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(sw.Sweep, "_failed", lambda self, run: [])
+    s = sw.Sweep(cfg)
+    s.tick("2026-11-09", False, [], {})
+    run = s.runs[0]
+    first, second = run.tickers
+    done = tmp_path / "backtest" / run.run_id / first / "TradingAgentsStrategy_logs"
+    done.mkdir(parents=True)
+    (done / "full_states_log_2026-11-09.json").write_text("{}")
+    run.proc.finish(1)
+    s.tick("2026-11-09", False, [], {})
+
+    assert s.analysed_this_cycle == 1 and s.retried == [second] and not s.held()
+    assert second in s.queue + [t for r in s.runs for t in r.tickers]

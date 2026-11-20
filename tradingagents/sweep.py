@@ -76,6 +76,8 @@ class Sweep:
         self.analysed_this_cycle = 0
         self.rounds: list[dict] = []     # finished runs this cycle: round, tickers, parts, minutes, finished
         self.retried: list[str] = []     # tickers whose failed run was queued again this cycle (once each)
+        self.hold_until = 0.0            # time.monotonic() before which no run starts (see _hold)
+        self.broken_runs = 0             # runs in a row that could not begin their work
         self._load()
 
     # --- state -----------------------------------------------------------
@@ -114,8 +116,12 @@ class Sweep:
     # --- the loop's hook -------------------------------------------------
 
     def due(self, market_open: bool) -> bool:
-        """Whether a tick has work to do now: a run has ended, or the pool has a place free."""
-        return any(r.proc.poll() is not None for r in self.runs) or len(self.runs) < self.parts_now(market_open)
+        """Whether a tick has work to do now: a run has ended, or the pool has a place free and the sweep is not held."""
+        return any(r.proc.poll() is not None for r in self.runs) or (
+            not self.held() and len(self.runs) < self.parts_now(market_open))
+
+    def held(self) -> bool:
+        return time.monotonic() < self.hold_until
 
     def tick(self, date: str, market_open: bool, holdings: list[str], last_analysed: dict[str, str]) -> None:
         """Advance the sweep: take in the runs that have ended, start a cycle if one is due, fill the pool.
@@ -132,6 +138,8 @@ class Sweep:
         # list again once the last run is in (a failure may yet queue a ticker).
         if date != self.date or (not self.queue and not self.runs):
             self._start_cycle(date, holdings, last_analysed)
+        if self.held():
+            return
         while self.queue and len(self.runs) < self.parts_now(market_open):
             self._start_run(market_open)
 
@@ -227,9 +235,14 @@ class Sweep:
             logger.info("Sweep run %s (on %s's close) done: %d tickers in %d min.", run.run_id, run.date, len(run.tickers), int(seconds // 60))
             self._save()
             return
+        undecided = self._undecided(run)
+        if run.stopped is None and run.proc.returncode and len(undecided) == len(run.tickers):
+            self._hold(run, seconds)
+            return
+        self.broken_runs = 0
         failed = self._failed(run)
-        if run.stopped is not None:
-            failed += [t for t in self._undecided(run) if t not in failed and t not in self.retried]
+        if run.stopped is not None or run.proc.returncode:
+            failed += [t for t in undecided if t not in failed and t not in self.retried]
         again = [t for t in failed if t not in self.queue]
         self.queue += again
         self.retried += again
@@ -243,6 +256,33 @@ class Sweep:
                     len(run.tickers), int(seconds // 60), f"; exited {run.proc.returncode}" if run.proc.returncode else "",
                     f"; failed and queued again: {', '.join(again)}" if again else "",
                     p["analysed"], p["total"], p["queued"], f", about {describe_eta(p)} to go" if p.get("eta_hours") else "")
+
+    def _hold(self, run: Run, seconds: float) -> None:
+        """A run that exited with an error before deciding anything: its tickers go back, and the sweep waits.
+
+        Such a run could not begin its work: the feedback database out of
+        reach, a setup error. Nothing about its tickers is known, so they
+        return to the front of the queue without using their one retry, are
+        not counted as analysed, and the run is left out of the pace. Starting
+        the next run at once would only fail the same way: on 2026-11-18,
+        with the database unreachable all day, 11,009 runs failed in seconds
+        each, every ticker was counted as analysed, and the sweep went through
+        some fifty empty cycles. The sweep waits ``sweep_failure_pause_minutes``
+        before starting another run, twice as long after each run that fails
+        while it is not waiting, up to half an hour; a run that decides
+        something ends the waiting.
+        """
+        self.queue = [t for t in run.tickers if t not in self.queue] + self.queue
+        base = float(self.config.get("sweep_failure_pause_minutes") or 0) * 60
+        now = time.monotonic()
+        if base > 0 and now >= self.hold_until:
+            self.broken_runs += 1
+            self.hold_until = now + min(base * 2 ** (self.broken_runs - 1), 30 * 60)
+        self._save()
+        logger.warning("Sweep run %s (%s) exited %s after %d s without deciding anything: %s. Its tickers are queued "
+                       "again at the front%s.", run.run_id, ", ".join(run.tickers), run.proc.returncode, int(seconds),
+                       _last_line(self.log_dir / f"{run.run_id}.log") or "no output",
+                       f"; no run starts for {int((self.hold_until - now) // 60)} min" if self.held() else "")
 
     def _failed(self, r: Run) -> list[str]:
         """The run's tickers whose analysis failed (see ``tradingagents.errors``) and may be tried once more this cycle.
@@ -273,8 +313,21 @@ class Sweep:
 
     def status(self) -> str:
         in_flight = f", {len(self.runs)} run(s) at work ({sum(len(r.tickers) for r in self.runs)} tickers)" if self.runs else ""
+        held = (f"; held {-int(-(self.hold_until - time.monotonic()) // 60)} min after {self.broken_runs} failed start(s)"
+                if self.held() else "")
         return (f"cycle {self.cycle} on {self.date or '-'}: {self.analysed_this_cycle} analysed, "
-                f"{len(self.queue)} queued{in_flight}")
+                f"{len(self.queue)} queued{in_flight}{held}")
+
+
+def _last_line(path: Path) -> str:
+    """The last line of a run's log that says something, for the warning; '' when there is none."""
+    try:
+        lines = [ln.strip() for ln in path.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+    except OSError:
+        return ""
+    # The database's error spans several lines; its first says what failed.
+    first = next((ln for ln in lines if "Error" in ln or "error" in ln), "")
+    return (first or (lines[-1] if lines else ""))[:300]
 
 
 def progress(state: dict, now: datetime | None = None) -> dict:
