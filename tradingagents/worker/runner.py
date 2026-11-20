@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 from tradingagents import build
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
+from tradingagents.market_guard import read_tape
 from tradingagents.worker.duty import Action, Duty, Finding, WorkerContext
 from tradingagents.worker import trmnl
 from tradingagents.worker.notify import send_email
@@ -253,7 +254,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
     ``gross_pct`` of equity.
     """
     from tradingagents.book import load_rows
-    from tradingagents.hedge import held_from_row, is_hedge_row, open_hedges, record_held
+    from tradingagents.hedge import held_from_row, is_hedge_row, kind_of, open_hedges, record_held
     from tradingagents.web.data import latest_book
 
     with run_config(config):
@@ -319,19 +320,25 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         # Best first: when the gross target leaves room for only some of the
         # book, the highest-scored calls take it (see ranking.py).
         rows.sort(key=lambda o: -float(o["score"]) if o.get("score") not in (None, "") else 0.0)
+        tape = read_tape(config, now)
+        if tape:
+            _log(config, now, f"  market: {tape.describe()}")
         for o in rows:
             if o["ticker"].upper() in held | waiting:
                 continue
             if is_hedge_row(o):
-                # The SPY calls the job priced for a net-short book. They are the
-                # hedge ledger's business, not the Watcher's: it never adds them
-                # to its book, and its guards look at equities only.
+                # The SPY calls the job priced for a net-short book, or the puts
+                # for a net-long one in a falling market. They are the hedge
+                # ledger's business, not the Watcher's: it never adds them to
+                # its book, and its guards look at equities only.
                 contracts = abs(int(float(o["shares"])))
-                if hedged:
+                kind = kind_of(o["ticker"])
+                same = [h for h in hedged if kind_of(h.symbol) == kind]
+                if same:
                     _log(config, now, "  hedge not bought: still hedged with "
-                         + ", ".join(f"{h.contracts} {h.symbol} until {h.expiry}" for h in hedged))
+                         + ", ".join(f"{h.contracts} {h.symbol} until {h.expiry}" for h in same))
                     continue
-                action = Action(o["ticker"], "open", "buy", contracts, f"the day's book ({book_path.name}): its SPY call hedge")
+                action = Action(o["ticker"], "open", "buy", contracts, f"the day's book ({book_path.name}): its SPY {kind} hedge")
                 why_not = refusal(action, market_open=market_open, paper=account.paper, pending=pending, config=config)
                 if why_not:
                     _log(config, now, f"  hedge not bought: {why_not}")
@@ -351,6 +358,10 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 _log(config, now, f"  bought {contracts} {o['ticker']} (hedge, order {order_id}); recorded in {ledger.name}")
                 continue
             if o["side"] not in ("long", "short"):
+                continue
+            against = tape.why_not(o["side"]) if tape else None
+            if against:
+                _log(config, now, f"  not placed: {o['ticker']}: {against}")
                 continue
             if gross + float(o["value"]) > gross_cap:
                 _log(config, now, f"  not placed: {o['ticker']}: the book is at its {config['gross_pct']:g}% gross "
@@ -422,11 +433,14 @@ def build_book_job(config: dict) -> None:
         try:
             equity = trading.get_account().equity
             built = build_morning_book(config, equity)
+            tape = read_tape(config)
             day.update(analysis=f"book built {datetime.now(ET).strftime('%H:%M')}", book_path=str(built.book_path))
             send_email(f"Edinburgh: the book for {today}",
                        f"{len(built.book.orders)} orders and a bench of {len(built.bench)} on {built.date}'s close.\n"
                        f"Hedge: {describe_hedge(built.hedge)}\n"
-                       f"{describe_timing(built.timing or {})}\n"
+                       + (f"Market: {tape.describe()}"
+                          + (f"; no new {tape.barred}s are opened while it runs" if tape.barred else "") + "\n" if tape else "")
+                       + f"{describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)
         except Exception as exc:

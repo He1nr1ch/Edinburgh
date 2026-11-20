@@ -302,8 +302,13 @@ def size(
         from tradingagents.hedge import record_hedge as record
 
         ledger = Path(DEFAULT_CONFIG["hedge_ledger_path"])
+        from tradingagents.market_guard import read_tape
+
+        tape = read_tape(DEFAULT_CONFIG)
+        if tape:
+            console.print(f"\n[bold]Market[/bold] · {tape.describe()}")
         plan = hedge_book(book, date, monthly_ratio=DEFAULT_CONFIG["hedge_monthly_ratio"],
-                          held=open_hedges(ledger, date))
+                          held=open_hedges(ledger, date), falling=bool(tape and tape.falling))
         console.print(f"\n[bold]Hedge[/bold] · beta-weighted exposure {plan.exposure:+,.0f} · SPY {plan.spy_price:,.2f}")
         for label, q in (("weekly", plan.weekly), ("monthly", plan.monthly)):
             if q:
@@ -322,10 +327,10 @@ def size(
             else:
                 console.print("  Once bought, run again with --record-hedge so later runs do not buy more.")
         else:
-            console.print(f"  No new calls: {plan.reason}"
+            console.print(f"  No new {plan.kind}s: {plan.reason}"
                           + (f"; they cover {plan.coverage:.0%} of the exposure" if plan.held else "") + ".")
             if plan.held and plan.coverage < 1:
-                console.print("  [yellow]The calls held cover less than the exposure now; "
+                console.print(f"  [yellow]The {plan.kind}s held cover less than the exposure now; "
                               "none are added while they are open.[/yellow]")
 
     save_book(built, DEFAULT_CONFIG, hedge_row(plan) if plan else None)

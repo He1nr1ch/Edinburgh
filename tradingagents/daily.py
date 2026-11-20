@@ -242,11 +242,15 @@ def last_analysed_on(results_dir: Path, ticker: str, date: str) -> bool:
 
 
 def price_hedge(built: BuiltBook, date: str, config: dict):
-    """The SPY call hedge for the sized book, net of the calls the ledger says are still held."""
+    """The SPY hedge for the sized book, net of what the ledger says is still held:
+    calls for a net-short book, puts for a net-long one while the market is falling."""
     from tradingagents.hedge import hedge_book, open_hedges
+    from tradingagents.market_guard import read_tape
 
+    tape = read_tape(config)
     return hedge_book(built.book, date, monthly_ratio=float(config["hedge_monthly_ratio"]),
-                      held=open_hedges(Path(config["hedge_ledger_path"]), date))
+                      held=open_hedges(Path(config["hedge_ledger_path"]), date),
+                      falling=bool(tape and tape.falling))
 
 
 def describe_timing(timing: dict) -> str:

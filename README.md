@@ -256,7 +256,17 @@ halves (medium) the position; favorable, material, unaccounted-for news adds a
 quarter, up to `worker_position_cap_pct`. The replacement guard sees a book
 position that has closed (by the broker's own account read at that moment, not the pass's earlier picture of it) and asks the model to pick its replacement from the
 bench, among the candidates that still clear the rules at live prices, and
-opens it with the freed capital. A close or trim first cancels the symbol's
+opens it with the freed capital. Over all of this stands the market guard
+(`market_guard`), which is arithmetic on SPY and asks no model: with SPY
+`market_guard_day_pct` (1.5%) from its last close, or `market_guard_period_pct`
+(3%) from its close `market_guard_days` (5) sessions back, the market is
+running, and nothing new is opened against it, from the book or the bench: no
+long while it falls, no short while it rises. A position held keeps its own
+stop, and a slot the bench cannot fill from the other side stays empty until
+the next book. A falling market is also when a net-long book is hedged, with
+SPY puts priced into the book as the calls of a net-short one are. A day past
+its limit against a week past its own (a bounce in a sell-off) holds nothing
+back, and neither does a SPY that cannot be read. A close or trim first cancels the symbol's
 waiting orders. It trades a paper account only,
 unless `worker_allow_live` is on; `--dry-run` sends nothing, `--once` makes one
 pass. Alerts go by email when `TRADINGAGENTS_SMTP_USER` and

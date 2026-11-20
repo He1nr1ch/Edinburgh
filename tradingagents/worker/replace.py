@@ -23,6 +23,7 @@ from tradingagents.book import latest_bench
 from tradingagents.dataflows.vendors.alpaca import latest_price, trading
 from tradingagents.feedback.store import keep_desk_verdict
 from tradingagents.lessons import desk_lessons
+from tradingagents.market_guard import read_tape
 from tradingagents.ranking import age_days, balances_book, levels_pct, score_call
 from tradingagents.web import data
 from tradingagents.worker.duty import Action, Finding, WorkerContext
@@ -44,18 +45,20 @@ class ReplacementChoice(Envelope):
 
 def candidates(bench: list[dict], held: set[str], used: set[str], min_target_pct: float,
                net_value: float = 0.0, today: str | None = None, default_stop_pct: float = 2.0,
-               min_stop_pct: float = 0.0, max_run_pct: float = 0.0, decisions: dict | None = None) -> list[dict]:
+               min_stop_pct: float = 0.0, max_run_pct: float = 0.0, decisions: dict | None = None,
+               barred: str | None = None) -> list[dict]:
     """Bench rows still worth opening now, best first.
 
-    Not held, not used, still backed by the ticker's newest decision, and
-    clear of the entry rules at the live price (see ``stale_levels``); then
+    Not held, not used, not on the ``barred`` side (the one the market is
+    running against, see market_guard.py), still backed by the ticker's
+    newest decision, and clear of the entry rules at the live price (see ``stale_levels``); then
     ranked by the score at live prices (see ranking.py), with the balance
     bonus against the book's current net.
     """
     out = []
     for row in bench:
         t = row["ticker"].upper()
-        if t in held or t in used:
+        if t in held or t in used or row["side"] == barred:
             continue
         turned, stop, target, decided = newest_levels(row, decisions or {}, default_stop_pct)
         if turned or target is None:
@@ -119,6 +122,7 @@ class ReplacementDuty:
         day = state.day(today)
         bench_path, bench = latest_bench(Path(context.config["results_dir"]))
         used = {r.upper() for r in day["replaced"].values()} | set(state.book)
+        tape = read_tape(context.config, context.now)
         findings = []
         for ticker in gone:
             entry = state.book.pop(ticker)
@@ -130,10 +134,12 @@ class ReplacementDuty:
                                  net, today, float(context.config.get("default_stop_pct") or 2.0),
                                  float(context.config.get("entry_min_stop_pct") or 0),
                                  float(context.config.get("entry_max_run_pct") or 0),
-                                 data.find_decisions(Path(context.config["results_dir"])))
+                                 data.find_decisions(Path(context.config["results_dir"])),
+                                 barred=tape.barred if tape else None)
             if not options:
                 findings.append(Finding(self.name, ticker, "notable", f"{ticker} left the book; no replacement on the bench",
-                                        f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"))
+                                        f"bench {bench_path.name if bench_path else 'missing'}; none still clears the rules"
+                                        + (f"; {tape.why_not(tape.barred)}" if tape and tape.barred else "")))
                 continue
             try:
                 choice, verdict = decide(bind_structured(context.llm, ReplacementChoice, "Watcher"), _prompt(departed, options),

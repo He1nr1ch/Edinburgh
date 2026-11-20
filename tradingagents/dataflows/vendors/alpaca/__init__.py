@@ -15,12 +15,13 @@ from tradingagents.dataflows.vendors.alpaca.market import (
     load_ohlcv,
 )
 from tradingagents.dataflows.vendors.alpaca.news import articles_since, get_global_news, get_news
-from tradingagents.dataflows.vendors.alpaca.options import OptionQuote, atm_call, latest_price
+from tradingagents.dataflows.vendors.alpaca.options import OptionQuote, atm_call, atm_put, latest_price
 
 __all__ = [
     "OptionQuote",
     "articles_since",
     "atm_call",
+    "atm_put",
     "get_asset_profile",
     "get_closes",
     "get_global_news",

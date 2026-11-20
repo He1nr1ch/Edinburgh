@@ -56,6 +56,15 @@ def _analysts_use_their_tools():
 _analysts_use_their_tools()
 
 
+def _no_market_guard():
+    """The suite's desks trade without the market guard, which would ask Alpaca
+    for SPY on every placement and replacement; its own tests turn it on."""
+    os.environ["TRADINGAGENTS_MARKET_GUARD"] = "false"
+
+
+_no_market_guard()
+
+
 def pytest_configure(config):
     for marker in ("unit", "integration", "smoke"):
         config.addinivalue_line("markers", f"{marker}: {marker}-level tests")

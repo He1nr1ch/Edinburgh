@@ -1,4 +1,4 @@
-"""Option quotes from Alpaca: the at-the-money call for an expiry, for hedging a book."""
+"""Option quotes from Alpaca: the at-the-money call or put for an expiry, for hedging a book."""
 
 from __future__ import annotations
 
@@ -53,21 +53,33 @@ def expiry_of(symbol: str) -> date:
 
 def atm_call(underlying: str, price: float, expiring_on_or_after: date,
              search_days: int = 14, strike_band: float = 0.02) -> OptionQuote | None:
-    """The call nearest ``price`` on the first expiry on or after ``expiring_on_or_after``.
+    """The call nearest ``price`` on the first expiry on or after ``expiring_on_or_after``."""
+    return atm_option(underlying, price, expiring_on_or_after, "call", search_days, strike_band)
 
-    Only quotes with a live ask count; None when Alpaca lists no such call.
+
+def atm_put(underlying: str, price: float, expiring_on_or_after: date,
+            search_days: int = 14, strike_band: float = 0.02) -> OptionQuote | None:
+    """The put nearest ``price`` on the first expiry on or after ``expiring_on_or_after``."""
+    return atm_option(underlying, price, expiring_on_or_after, "put", search_days, strike_band)
+
+
+def atm_option(underlying: str, price: float, expiring_on_or_after: date, kind: str,
+               search_days: int = 14, strike_band: float = 0.02) -> OptionQuote | None:
+    """The ``kind`` (call or put) nearest ``price`` on the first expiry on or after ``expiring_on_or_after``.
+
+    Only quotes with a live ask count; None when Alpaca lists no such option.
     Quotes are the latest Alpaca has, not as of a past date.
     """
     from datetime import timedelta
 
     request = OptionChainRequest(
-        underlying_symbol=underlying.upper(), type="call",
+        underlying_symbol=underlying.upper(), type=kind,
         expiration_date_gte=expiring_on_or_after,
         expiration_date_lte=expiring_on_or_after + timedelta(days=search_days),
         strike_price_gte=price * (1 - strike_band), strike_price_lte=price * (1 + strike_band),
     )
     chain = common.call(lambda: common.option_client().get_option_chain(request),
-                        f"{underlying} calls from {expiring_on_or_after}") or {}
+                        f"{underlying} {kind}s from {expiring_on_or_after}") or {}
     quoted = [(sym, snap.latest_quote) for sym, snap in chain.items()
               if snap.latest_quote is not None and (snap.latest_quote.ask_price or 0) > 0]
     if not quoted:

@@ -68,6 +68,10 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_WORKER_TRADE_FROM":       "worker_trade_from",
     "TRADINGAGENTS_WORKER_ALLOW_LIVE":       "worker_allow_live",
     "TRADINGAGENTS_WORKER_BROKER_STOPS":     "worker_broker_stops",
+    "TRADINGAGENTS_MARKET_GUARD":            "market_guard",
+    "TRADINGAGENTS_MARKET_GUARD_DAY_PCT":    "market_guard_day_pct",
+    "TRADINGAGENTS_MARKET_GUARD_DAYS":       "market_guard_days",
+    "TRADINGAGENTS_MARKET_GUARD_PERIOD_PCT": "market_guard_period_pct",
     "TRADINGAGENTS_ENTRY_MIN_STOP_PCT":      "entry_min_stop_pct",
     "TRADINGAGENTS_ENTRY_MAX_RUN_PCT":       "entry_max_run_pct",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -378,6 +382,15 @@ def build_default_config() -> dict:
         # Placed from worker_trade_from on and lapsing at the close, so it never
         # trades in the first minutes either.
         "worker_broker_stops": True,
+        # The market guard (market_guard.py): SPY this far from its last close, or
+        # this far from its close market_guard_days sessions back, is a market that
+        # is running, and nothing new is opened against it: no long from the book
+        # or the bench while it falls, no short while it rises. A falling market
+        # is also when a net-long book is hedged with SPY puts. 0 turns a reading off.
+        "market_guard": True,
+        "market_guard_day_pct": 1.5,
+        "market_guard_days": 5,
+        "market_guard_period_pct": 3.0,
         # What a call must still clear at the live price when it is opened, from the
         # book or the bench, besides not being through its stop and having more
         # than min_target_pct left: its stop at least this far away (nearer, and
