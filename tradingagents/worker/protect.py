@@ -14,8 +14,9 @@ decided again) is replaced; a stop whose position has gone is cancelled, since
 it would open the position the other way round. A stop that Alpaca filled is
 recorded as the exit it was.
 
-The orders are day orders, placed from ``worker_trade_from`` on: nothing of
-the desk's trades in the first minutes after the open, its stops included.
+The orders are day orders, placed on the first pass after the open, not from
+``worker_trade_from``: the window holds the orders the desk chooses to make,
+and a stop is not one of them.
 """
 
 from __future__ import annotations
@@ -75,7 +76,7 @@ def protect(context: WorkerContext, market_open: bool, dry_run: bool = False) ->
     if not config.get("worker_broker_stops", True):
         return []
     account = trading.get_account()
-    if refusal(Action("", NAME, "", 0, ""), market_open=market_open, paper=account.paper, pending=set(), config=config):
+    if refusal(Action("", NAME, "", 0, "", at_stop=True), market_open=market_open, paper=account.paper, pending=set(), config=config):
         return []
     state = context.state
     open_now = trading.open_orders()

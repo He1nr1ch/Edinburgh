@@ -117,11 +117,19 @@ def test_a_stop_whose_position_has_gone_is_cancelled_but_a_strangers_is_not(desk
 
 
 @pytest.mark.unit
-def test_nothing_is_left_at_alpaca_before_the_trading_window_or_when_switched_off(desk, monkeypatch):
+def test_the_stops_are_left_at_alpaca_from_the_open_not_from_the_trading_window(desk, monkeypatch):
+    """A stop is not held for the clock: 2026-11-20, three positions through their stops at the open
+    waited for 10:30 and went out 1.2% to 1.4% below them."""
     broker = Broker(monkeypatch, [LONG])
-    monkeypatch.setattr("tradingagents.worker.policy._now", lambda: datetime(2026, 11, 16, 15, 0, tzinfo=UTC))   # 10:00 ET
-    assert protect(desk, market_open=True) == [] and not broker.sent
-    monkeypatch.setattr("tradingagents.worker.policy._now", lambda: NOW)
+    monkeypatch.setattr("tradingagents.worker.policy._now", lambda: datetime(2026, 11, 16, 14, 31, tzinfo=UTC))   # 09:31 ET
+    assert desk.config["worker_trade_from"] == "10:30"
+    (placed,) = protect(desk, market_open=True)
+    assert placed.symbol == "JPM" and len(broker.sent) == 1
+
+
+@pytest.mark.unit
+def test_nothing_is_left_at_alpaca_while_the_market_is_closed_or_when_switched_off(desk, monkeypatch):
+    broker = Broker(monkeypatch, [LONG])
     assert protect(desk, market_open=False) == [] and not broker.sent
     desk.config["worker_broker_stops"] = False
     assert protect(desk, market_open=True) == [] and not broker.sent

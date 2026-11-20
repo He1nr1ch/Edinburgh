@@ -189,6 +189,9 @@ def test_the_stop_guard_closes_a_position_through_its_stop_and_leaves_the_rest(t
         ("JPM", "exit", "sell", 10), ("T", "exit", "buy", 100), ("ZZZ", "exit", "sell", 50)]
     assert all(f.severity == "urgent" for f in findings)
     assert "through the stop 341.64 (Risk Manager)" in findings[0].detail
+    assert all(f.action.at_stop for f in findings) and StopDuty.from_the_open      # not held for the trading window
+    from tradingagents.worker.stops import TargetDuty
+    assert not getattr(TargetDuty, "from_the_open", False)                          # a target is the desk's choice: it waits
 
 
 @pytest.mark.unit
@@ -356,7 +359,7 @@ def test_each_dutys_orders_go_out_before_the_next_duty_runs(monkeypatch, tmp_pat
 
 
 @pytest.mark.unit
-def test_no_order_goes_out_before_the_trading_window_opens(monkeypatch, tmp_path):
+def test_no_order_of_the_desks_choosing_goes_out_before_the_trading_window_but_its_stops_do(monkeypatch, tmp_path):
     from zoneinfo import ZoneInfo
 
     from tradingagents.worker import runner
@@ -365,30 +368,41 @@ def test_no_order_goes_out_before_the_trading_window_opens(monkeypatch, tmp_path
     et = ZoneInfo("America/New_York")
     cfg = {**CONFIG, "worker_trade_from": "10:30"}
     at = lambda h, m: datetime(2026, 11, 16, h, m, tzinfo=et)       # noqa: E731
-    exit_ = Action("JPM", "exit", "sell", 40, "stop")
+    exit_ = Action("JPM", "exit", "sell", 40, "review: no longer long")
+    stop = Action("JPM", "exit", "sell", 40, "price 293.00 is through the stop 294.00", at_stop=True)
     ok = dict(market_open=True, paper=True, pending=set())
 
     assert too_early(cfg, at(9, 30)) == "no trades before 10:30 ET (worker_trade_from)"
     assert too_early(cfg, at(10, 29)) and too_early(cfg, at(10, 30)) is None and too_early(cfg, at(15, 59)) is None
     assert too_early(cfg, datetime(2026, 11, 16, 15, 0, tzinfo=UTC)) is not None          # 10:00 ET, whatever the clock's zone
     assert too_early({**cfg, "worker_trade_from": ""}, at(9, 30)) is None
-    assert "no trades before 10:30" in refusal(exit_, **ok, config=cfg, now=at(9, 45))    # a stop waits as well
+    assert "no trades before 10:30" in refusal(exit_, **ok, config=cfg, now=at(9, 45))
     assert refusal(exit_, **ok, config=cfg, now=at(10, 30)) is None
+    # A stop is not held for the clock; every other guardrail still stands for it.
+    assert refusal(stop, **ok, config=cfg, now=at(9, 31)) is None
+    assert refusal(stop, market_open=False, paper=True, pending=set(), config=cfg, now=at(9, 31)) == "the market is closed"
+    assert "has not filled yet" in refusal(stop, market_open=True, paper=True, pending={"JPM"}, config=cfg, now=at(9, 31))
     assert DEFAULT_CONFIG["worker_trade_from"] == "10:30"
 
-    # The day's loop neither places the book nor runs a pass until the window opens, then does both, the book once.
+    # Until the window opens the day's loop runs the stop guard alone and places no book; then the book, once, and every duty.
+    from tradingagents.worker.stops import StopDuty
+
+    class Chooses:
+        name = "chooses"
+
+    duties = [StopDuty(), Chooses()]
     calls, clock = [], iter([True, True, False])
     early = iter(["no trades before 10:30 ET", None, None])
     monkeypatch.setattr(runner, "too_early", lambda config, now=None: next(early))
     monkeypatch.setattr(runner, "place_book", lambda config, dry_run=False: calls.append("book") or [])
-    monkeypatch.setattr(runner, "run_pass", lambda *a, **k: calls.append("pass") or [])
+    monkeypatch.setattr(runner, "run_pass", lambda config, llm, duties, dry_run=False: calls.append([d.name for d in duties]) or [])
     monkeypatch.setattr(runner.trading, "get_clock", lambda: type("C", (), {"is_open": next(clock)})())
     monkeypatch.setattr(runner.time, "sleep", lambda s: None)
     monkeypatch.setattr(runner, "send_email", lambda *a, **k: True)
     monkeypatch.setattr(runner, "summarize_day", lambda *a, **k: "")
     monkeypatch.setattr(runner, "run_reports", lambda *a, **k: None)
-    runner.run_day({**cfg, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json")}, None, [], 5)
-    assert calls == ["book", "pass", "pass"]
+    runner.run_day({**cfg, "results_dir": str(tmp_path), "worker_state_path": str(tmp_path / "s.json")}, None, duties, 5)
+    assert calls == [["stops"], "book", ["stops", "chooses"], ["stops", "chooses"]]
 
 
 @pytest.mark.unit

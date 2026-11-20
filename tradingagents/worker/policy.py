@@ -120,7 +120,10 @@ def _now() -> datetime:
 
 
 def too_early(config: dict, now: datetime | None = None) -> str | None:
-    """Why no order may go out yet today, or None once ``worker_trade_from`` (ET) has come."""
+    """Why no order the desk chooses to make may go out yet today, or None once ``worker_trade_from`` (ET) has come.
+
+    A stop is not such an order (see ``refusal``): it acts from the open.
+    """
     start = str(config.get("worker_trade_from") or "").strip()
     if not start:
         return None
@@ -146,7 +149,13 @@ def refusal(action: Action, *, market_open: bool, paper: bool, pending: set[str]
         return "the account is live and worker_allow_live is off"
     if not market_open:
         return "the market is closed"
-    early = too_early(config, now)
+    # The window keeps the desk out of the dear first minutes when it chooses
+    # to trade: the book, a review exit, a target, a replacement. A stop is not
+    # a choice. A position that opens through its stop has already lost what
+    # the stop allowed, and each minute it is held for the clock can add to
+    # that: on 2026-11-20 APH, GEV and KKR waited the hour and went out 1.2% to
+    # 1.4% below their stops, against the 0.3% a side the first minutes cost.
+    early = None if action.at_stop else too_early(config, now)
     if early:
         return early
     if action.symbol in pending:

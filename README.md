@@ -225,9 +225,10 @@ recomputed at live prices wherever a waiting call is chosen: the bench, the open
 when the gross target has room for only some, and the Watcher's replacement), and price the SPY call hedge for a net-short book into the same
 CSV (`daily_hedge`; a hedge that cannot be priced leaves the book unhedged, and
 the email says so); the job times itself, each part and the whole, into a timing file
-beside the book and the morning email. No order goes out before `worker_trade_from` (10:30 ET, when the opening
+beside the book and the morning email. No order the desk chooses to make goes out before `worker_trade_from` (10:30 ET, when the opening
 spreads have narrowed; empty trades from the open), for the desk and the mirror account alike, and the Watcher's
-passes start then too. At that time it first closes any holding whose newest decision no longer backs its side, then
+full passes start then too. Its stops do not wait: from the open the stop guard runs every pass and the stops are
+left at Alpaca, and the mirror follows a position they close. At that time it first closes any holding whose newest decision no longer backs its side, then
 places the book's orders within the gross target, counting what is still held (`worker_place_book`),
 leaving out a name the desk's newest decision no longer backs, or whose live price is by then through its stop,
 nearer to it than `entry_min_stop_pct` (2%), within the minimum move of its target, or already run more than
@@ -244,8 +245,8 @@ whole position (`worker_broker_stops`), so it acts between passes and while the
 worker is down: after every guard the Watcher brings those orders in line with
 the account, placing one for a new position, replacing it after a trim, an add
 or a new decision, cancelling one whose position has gone, and recording one
-Alpaca filled as the exit it was. They are placed from `worker_trade_from` on
-and lapse at the close, so they too stay out of the first minutes; the target
+Alpaca filled as the exit it was. They are placed on the first pass after the open
+and lapse at the close; the target
 stays with the Watcher alone. Each guard's orders go out as soon as it has spoken, and an
 exit or a trim never sells or covers more than the account holds at that
 moment. The news guard reads what was

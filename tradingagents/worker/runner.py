@@ -553,16 +553,19 @@ def run_day(config: dict, llm, duties: list[Duty], interval_minutes: int, dry_ru
     state.save()
     waiting = placed = False
     while True:
-        # Before ``worker_trade_from`` nothing trades, so nothing is looked at
-        # either: a stop found then could only be reported, pass after pass, and
-        # a replacement chosen then would spend its bench candidate on an order
-        # that is refused. The sweep keeps turning; the first pass after the
-        # window opens reads the news back to the previous close.
+        # Before ``worker_trade_from`` the desk makes no order of its choosing,
+        # so the duties that would only choose are not run: a replacement chosen
+        # then would spend its bench candidate on an order that is refused. The
+        # stops are run, and left at Alpaca, from the first minute: a stop is not
+        # held for the clock. The sweep keeps turning; the first full pass after
+        # the window opens reads the news back to the previous close.
         early = too_early(config)
         if early and not waiting:
-            _log(config, datetime.now(UTC).astimezone(), f"the market is open; {early}")
+            _log(config, datetime.now(UTC).astimezone(), f"the market is open; {early}; the stops act from now")
             waiting = True
-        if not early:
+        if early:
+            run_pass(config, llm, [d for d in duties if getattr(d, "from_the_open", False)], dry_run)
+        else:
             if not placed:
                 place_book(config, dry_run)
                 placed = True

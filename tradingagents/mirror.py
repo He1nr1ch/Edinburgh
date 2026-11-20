@@ -126,9 +126,11 @@ def orders_to_send(wanted: dict[str, int], have: dict[str, int], main_pending: s
         if symbol in mirror_pending:
             out.append({"symbol": symbol, "side": None, "qty": 0, "why": "an earlier mirror order has not filled yet"})
             continue
+        closing = True
         if has and want and (has > 0) != (want > 0):
             delta, why = -has, f"flatten {'long' if has > 0 else 'short'} {abs(has)} before going the other way"
         else:
+            closing = abs(want) < abs(has)
             delta = want - has
             if want == 0:
                 why = f"the desk closed {'its short' if has > 0 else 'its long'}: close {'long' if has > 0 else 'short'} {abs(has)}"
@@ -138,7 +140,7 @@ def orders_to_send(wanted: dict[str, int], have: dict[str, int], main_pending: s
                 why = f"the desk added {abs(want) - abs(has)}: add to the {'short' if want < 0 else 'long'}"
             else:
                 why = f"the desk trimmed {abs(has) - abs(want)}: trim the {'short' if want < 0 else 'long'}"
-        out.append({"symbol": symbol, "side": "buy" if delta > 0 else "sell", "qty": abs(delta), "why": why})
+        out.append({"symbol": symbol, "side": "buy" if delta > 0 else "sell", "qty": abs(delta), "why": why, "closing": closing})
     return out
 
 
@@ -190,10 +192,15 @@ def follow(config: dict, dry_run: bool = False, main: Account | None = None, mar
         return []
     from tradingagents.worker.policy import too_early
 
+    # Before the trading window she follows the desk out of what its stops
+    # closed, and nothing else: the window holds what is opened or added.
     early = too_early(config)
-    if early:
-        _log(config, now, f"{len(todo)} order(s) wanted for {name}; {early}")
-        return []
+    held_back = [o for o in todo if early and not o["closing"]]
+    if held_back:
+        _log(config, now, f"{len(held_back)} order(s) wanted for {name}; {early}")
+        todo = [o for o in todo if o["closing"]]
+        if not todo:
+            return []
     sent = []
     for o in todo:
         label = f"{o['side']} {o['qty']} {o['symbol']} ({o['why']})"

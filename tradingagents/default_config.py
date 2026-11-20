@@ -371,16 +371,17 @@ def build_default_config() -> dict:
         "worker_trading_enabled": True,
         "worker_allow_live": False,
         "worker_interval_minutes": 5,
-        # No order of any kind goes out before this time of day (ET, "HH:MM"): not the
-        # book, not a review exit, not a stop, and not the mirror account's either. The
-        # first minutes after the open are the dearest of the day to trade in: the
-        # desk's first week paid 0.32% a side in the first five and 0.07% after 10:30.
-        # "" trades from the open.
+        # No order the desk chooses to make goes out before this time of day (ET,
+        # "HH:MM"): not the book, not a review exit, not a target, not a replacement,
+        # and not what the mirror account opens. The first minutes after the open
+        # are the dearest of the day to trade in: the desk's first week paid 0.32% a
+        # side in the first five and 0.07% after 10:30. A stop is not held for it: a
+        # position through its stop is closed from the first minute, and the mirror
+        # follows that close. "" trades everything from the open.
         "worker_trade_from": "10:30",
         # Every watched position's stop is also left at Alpaca as a day stop order,
         # so it acts between passes and when the worker is down (worker/protect.py).
-        # Placed from worker_trade_from on and lapsing at the close, so it never
-        # trades in the first minutes either.
+        # Placed on the first pass after the open and lapsing at the close.
         "worker_broker_stops": True,
         # The market guard (market_guard.py): SPY this far from its last close, or
         # this far from its close market_guard_days sessions back, is a market that

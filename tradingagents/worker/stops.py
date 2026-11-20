@@ -5,7 +5,9 @@ would act on them by itself. Each pass checks every watched position's price
 against the stop that stands for it: the Risk Manager's or the Trader's from
 its decision, as the desk gave it; the 2% default, measured from the entry
 price, only when the desk gave none. No model is asked: a breach is
-arithmetic, and the exit goes out on the same pass.
+arithmetic, and the exit goes out on the same pass, from the open on: the
+trading window (``worker_trade_from``) holds the orders the desk chooses to
+make, not its stops.
 """
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ class TargetDuty:
 
 class StopDuty:
     name = "stops"
+    from_the_open = True        # runs before ``worker_trade_from`` too; see runner.run_day
 
     def run(self, context: WorkerContext) -> list[Finding]:
         decisions = data.find_decisions(Path(context.config["results_dir"]))
@@ -108,6 +111,6 @@ class StopDuty:
                 self.name, h.symbol, "urgent",
                 f"{h.side} {h.symbol}: stop hit at {stop:,.2f} ({source})",
                 reason,
-                Action(h.symbol, "exit", "sell" if h.qty > 0 else "buy", abs(int(h.qty)), reason),
+                Action(h.symbol, "exit", "sell" if h.qty > 0 else "buy", abs(int(h.qty)), reason, at_stop=True),
             ))
         return findings

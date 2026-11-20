@@ -47,9 +47,30 @@ def test_the_orders_take_her_book_to_the_opposite_one_name_at_a_time():
     assert plan["OKTA"]["side"] is None and "mirror order" in plan["OKTA"]["why"]
     # A name that must change side is flattened first; the other way comes on the next pass.
     flip = mirror.orders_to_send({"GD": 11}, {"GD": -11}, set(), set())
-    assert flip == [{"symbol": "GD", "side": "buy", "qty": 11, "why": "flatten short 11 before going the other way"}]
-    assert mirror.orders_to_send({"GD": 11}, {}, set(), set())[0] == {"symbol": "GD", "side": "buy", "qty": 11,
+    assert flip == [{"symbol": "GD", "side": "buy", "qty": 11, "why": "flatten short 11 before going the other way", "closing": True}]
+    assert mirror.orders_to_send({"GD": 11}, {}, set(), set())[0] == {"symbol": "GD", "side": "buy", "qty": 11, "closing": False,
                                                                          "why": "the desk opened a short of 11: open long 11"}
+    # What only closes is told apart from what opens or adds: before the trading window she follows the first alone.
+    assert {s: o["closing"] for s, o in plan.items() if o["side"]} == {"CRL": False, "LEN": True, "TROW": True}
+
+
+@pytest.mark.unit
+def test_before_the_trading_window_she_follows_the_desk_out_of_a_stop_and_opens_nothing(cfg, monkeypatch):
+    """The desk's stops act from the open; its book waits for ``worker_trade_from``, and so does hers."""
+    from datetime import UTC, datetime
+
+    main = _acct(_h("WM", 20))                                          # the desk's KKR long was stopped out at the open
+    hers = _acct(_h("KKR", -34))                                        # she still holds its opposite, and has no WM yet
+    broker = FakeBroker(monkeypatch, main, hers)
+    monkeypatch.setattr("tradingagents.worker.policy._now", lambda: datetime(2026, 11, 20, 14, 35, tzinfo=UTC))   # 09:35 ET
+    sent = mirror.follow({**cfg, "worker_trade_from": "10:30"})
+    assert [(o["symbol"], o["side"], o["qty"]) for o in sent] == [("KKR", "buy", 34)]
+    assert broker.sent == [("KKR", 34, "buy", True)]
+
+    broker.sent.clear()
+    monkeypatch.setattr("tradingagents.worker.policy._now", lambda: datetime(2026, 11, 20, 15, 30, tzinfo=UTC))   # 10:30 ET
+    mirror.follow({**cfg, "worker_trade_from": "10:30"})
+    assert ("WM", 20, "sell", True) in broker.sent                      # the window is open: the rest follows
 
 
 class FakeBroker:
