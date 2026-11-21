@@ -326,3 +326,12 @@ def test_a_cycle_minutes_old_is_not_reported_as_a_sweep_that_produced_nothing():
                                   "last_cycle": {"date": "2026-11-16", "decisions": 414}})
     assert "not a fault" not in running[1] and "pace 3.0 min per ticker" in running[1]
     assert "the cycle before, on 2026-11-16's close: 414 decisions" in running[0]
+
+
+@pytest.mark.unit
+def test_a_sweep_waiting_out_the_weekend_is_reported_as_idle_by_design():
+    from tradingagents.reports import daily
+
+    lines = daily._sweep_lines({"cycle": 55, "date": "2026-11-20", "queued": 0, "analysed_this_cycle": 503, "decided_today": 503,
+                                "decided_on": "2026-11-20", "progress": {"minutes_per_ticker": 4.2, "waiting": True}})
+    assert "idle by design" in lines[-1] and "not a fault" in lines[-1]

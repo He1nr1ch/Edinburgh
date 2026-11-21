@@ -5,6 +5,7 @@ cycle analyses the held positions first, then the watchlist least recently
 analysed first; when a cycle ends the next begins, and when the session's
 close arrives (the last trading day changes) the cycle restarts on the
 holdings against the new close, which is when a fresh review matters most.
+Over a weekend a cycle that ends is not begun again: see :func:`weekend`.
 
 The work is done by a pool of processes, each taking a few tickers from the
 front of the queue (``sweep_round_size``) and, the moment it is done, the
@@ -38,8 +39,9 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date as Date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from tradingagents.daily import ensure_watchlist, order_tickers, watchlist_tickers
 
@@ -47,6 +49,25 @@ logger = logging.getLogger(__name__)
 
 NICE = 10       # the sweep's processes yield the CPU to the worker
 PACE_ROUNDS = 10  # how many finished runs the pace (and the finish estimate) is taken from
+ET = ZoneInfo("America/New_York")
+
+
+def weekend(close: str, today: str, market_open: bool) -> bool:
+    """Whether the market is shut for more than a night: a Saturday, or two days and more since ``close``.
+
+    A cycle that ends then has analysed every name on the last close, and
+    nothing it reads will change before the next one: the bars end at that
+    close and the news at its evening. Going round again would ask the model
+    the same questions and trade on whichever answer came last (on the weekend
+    of 2026-11-21 the list was due to finish at 1 AM on Sunday and be most of
+    the way through a second time when Monday's book was built). So the sweep
+    waits for the next close. On a weeknight it goes round again as before.
+    Monday before the open is still the weekend, and so is a holiday.
+    """
+    if market_open or not close:
+        return False
+    day = Date.fromisoformat(today)
+    return day.weekday() == 5 or (day - Date.fromisoformat(close)).days >= 2
 
 
 @dataclass
@@ -78,6 +99,7 @@ class Sweep:
         self.retried: list[str] = []     # tickers whose failed run was queued again this cycle (once each)
         self.hold_until = 0.0            # time.monotonic() before which no run starts (see _hold)
         self.broken_runs = 0             # runs in a row that could not begin their work
+        self.waiting = False             # the cycle is complete and the weekend is not over (see weekend)
         self._load()
 
     # --- state -----------------------------------------------------------
@@ -95,6 +117,7 @@ class Sweep:
         self.rounds = list(data.get("rounds", []))
         self.retried = list(data.get("retried", []))
         self.last_cycle = data.get("last_cycle") or {}
+        self.waiting = bool(data.get("waiting"))
         # Runs a restart interrupted: their processes are gone. Their tickers go
         # back to the front of the queue; the cells they finished are skipped
         # by the resumed analysis. ("round" is the state of before the pool.)
@@ -109,35 +132,51 @@ class Sweep:
         runs = [{"run_id": r.run_id, "tickers": r.tickers, "started": r.started_at} for r in self.runs]
         data = {"date": self.date, "cycle": self.cycle, "queue": self.queue, "round_no": self.round_no,
                 "analysed_this_cycle": self.analysed_this_cycle, "rounds": self.rounds[-50:], "retried": self.retried,
-                "runs": runs, "last_cycle": getattr(self, "last_cycle", {}),
+                "runs": runs, "last_cycle": getattr(self, "last_cycle", {}), "waiting": self.waiting,
                 "saved": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     # --- the loop's hook -------------------------------------------------
 
     def due(self, market_open: bool) -> bool:
-        """Whether a tick has work to do now: a run has ended, or the pool has a place free and the sweep is not held."""
+        """Whether a tick has work to do now: a run has ended, or the pool has a place free and the sweep is not held.
+
+        A sweep waiting out the weekend has none: the look every five minutes
+        (``runner.tick_sweep``) is enough to see the next close arrive.
+        """
         return any(r.proc.poll() is not None for r in self.runs) or (
-            not self.held() and len(self.runs) < self.parts_now(market_open))
+            not self.held() and not self.waiting and len(self.runs) < self.parts_now(market_open))
 
     def held(self) -> bool:
         return time.monotonic() < self.hold_until
 
-    def tick(self, date: str, market_open: bool, holdings: list[str], last_analysed: dict[str, str]) -> None:
+    def tick(self, date: str, market_open: bool, holdings: list[str], last_analysed: dict[str, str],
+             today: str | None = None) -> None:
         """Advance the sweep: take in the runs that have ended, start a cycle if one is due, fill the pool.
 
         ``date`` is the last close (the cycle restarts when it changes),
         ``holdings`` the held symbols (first in a new cycle), ``last_analysed``
-        each ticker's newest decision date (least recent first after them).
+        each ticker's newest decision date (least recent first after them),
+        ``today`` the calendar date in New York (now, when not given).
         """
         self._stop_overdue()
         for run in [r for r in self.runs if r.proc.poll() is not None]:
             self._finish_run(run)
         # A new close starts the next cycle at once; the runs still at work on
         # the old one finish on their own. A queue that has run out starts the
-        # list again once the last run is in (a failure may yet queue a ticker).
-        if date != self.date or (not self.queue and not self.runs):
+        # list again once the last run is in (a failure may yet queue a ticker),
+        # except over a weekend, when it waits for the next close.
+        if date != self.date:
             self._start_cycle(date, holdings, last_analysed)
+        elif not self.queue and not self.runs:
+            if not weekend(date, today or datetime.now(ET).strftime("%Y-%m-%d"), market_open):
+                self._start_cycle(date, holdings, last_analysed)
+            elif not self.waiting:
+                self.waiting = True
+                logger.info("Sweep cycle %d on %s's close is complete: %d analysed. It is the weekend, and nothing the "
+                            "desk reads changes before the next close, so the sweep waits for it.",
+                            self.cycle, self.date, self.analysed_this_cycle)
+                self._save()
         if self.held():
             return
         while self.queue and len(self.runs) < self.parts_now(market_open):
@@ -159,7 +198,7 @@ class Sweep:
                                "queued": len(self.queue),
                                "ended": datetime.now().astimezone().isoformat(timespec="seconds")}
         self.date, self.cycle, self.round_no, self.analysed_this_cycle = date, self.cycle + 1, 0, 0
-        self.rounds, self.retried = [], []
+        self.rounds, self.retried, self.waiting = [], [], False
         self.queue = order_tickers(watchlist, holdings, last_analysed, date)
         logger.info("Sweep cycle %d on %s's close: %d held positions first, then %d of the watchlist.",
                     self.cycle, date, len(holdings), len(self.queue) - len(holdings))
@@ -315,8 +354,9 @@ class Sweep:
         in_flight = f", {len(self.runs)} run(s) at work ({sum(len(r.tickers) for r in self.runs)} tickers)" if self.runs else ""
         held = (f"; held {-int(-(self.hold_until - time.monotonic()) // 60)} min after {self.broken_runs} failed start(s)"
                 if self.held() else "")
+        waiting = "; complete, waiting for the next close" if self.waiting else ""
         return (f"cycle {self.cycle} on {self.date or '-'}: {self.analysed_this_cycle} analysed, "
-                f"{len(self.queue)} queued{in_flight}{held}")
+                f"{len(self.queue)} queued{in_flight}{held}{waiting}")
 
 
 def _last_line(path: Path) -> str:
@@ -354,7 +394,8 @@ def progress(state: dict, now: datetime | None = None) -> dict:
     out = {"cycle": state.get("cycle"), "date": state.get("date"), "analysed": analysed, "in_flight": in_flight,
            "queued": queued, "total": analysed + in_flight + queued, "round": state.get("round_no"),
            "round_started": started, "parts": pool or None,
-           "rounds_done": len(state.get("rounds", [])), "saved": state.get("saved")}
+           "rounds_done": len(state.get("rounds", [])), "saved": state.get("saved"),
+           "waiting": bool(state.get("waiting"))}
     if recent:
         # A pool's run took its minutes beside ``parts`` - 1 others; a round of
         # before the pool recorded the whole round's minutes already.
@@ -385,6 +426,8 @@ def describe(p: dict) -> str:
     """One line: 'cycle 2 on 2026-11-10: 36 of 515 analysed (7%), 12 in flight, 467 queued, 43 min per run of 4, about 29 h to go'."""
     if not p:
         return "no sweep yet"
+    if p.get("waiting"):
+        return f"cycle {p['cycle']} on {p['date']}: all {p['analysed']} analysed; waiting for the next close"
     text = f"cycle {p['cycle']} on {p['date']}: {p['analysed']} of {p['total']} analysed"
     if "pct" in p:
         text += f" ({p['pct']:.0f}%)"

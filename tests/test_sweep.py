@@ -132,8 +132,41 @@ def test_a_new_close_restarts_the_cycle_on_the_holdings_and_an_exhausted_list_go
     assert s.cycle == 2                                                           # runs still at work: the cycle is not over
     for p in FakeProc.live:
         p.finish()
-    s.tick("2026-11-10", False, ["T07"], {})
+    s.tick("2026-11-10", False, ["T07"], {}, today="2026-11-11")                  # a weeknight
     assert s.cycle == 3                                                           # round again, same close
+
+
+@pytest.mark.unit
+def test_a_cycle_that_ends_on_the_weekend_waits_for_the_next_close(cfg):
+    s = sw.Sweep(cfg)
+    s.tick("2026-11-20", False, ["T07"], {}, today="2026-11-21")                  # Friday's close, on the Saturday
+    while s.queue or s.runs:
+        for p in FakeProc.live:
+            p.finish()
+        s.tick("2026-11-20", False, ["T07"], {}, today="2026-11-21")
+    s.tick("2026-11-20", False, ["T07"], {}, today="2026-11-21")
+    started = len(FakeProc.live)
+    assert s.cycle == 1 and s.waiting and s.analysed_this_cycle == 12
+    assert not s.due(False)                                                       # nothing to do until the look every five minutes
+    assert "waiting for the next close" in sw.describe(s.progress())
+    for today in ("2026-11-21", "2026-11-22", "2026-11-23"):                      # Saturday, Sunday, Monday before the open
+        s.tick("2026-11-20", False, ["T07"], {}, today=today)
+        assert s.cycle == 1 and len(FakeProc.live) == started
+    assert sw.Sweep(cfg).waiting                                                  # and it survives a restart
+    s.tick("2026-11-23", False, ["T07"], {}, today="2026-11-23")                  # Monday's close
+    assert s.cycle == 2 and not s.waiting and s.last_cycle["analysed"] == 12
+    assert FakeProc.live[started].tickers()[0] == "T07"                           # the holdings first, as at any close
+
+
+@pytest.mark.unit
+def test_what_counts_as_the_weekend():
+    assert sw.weekend("2026-11-20", "2026-11-21", False)          # Saturday
+    assert sw.weekend("2026-11-20", "2026-11-22", False)          # Sunday
+    assert sw.weekend("2026-11-20", "2026-11-23", False)          # Monday before the open
+    assert not sw.weekend("2026-11-20", "2026-11-23", True)       # Monday's session
+    assert not sw.weekend("2026-11-20", "2026-11-20", False)      # Friday evening
+    assert not sw.weekend("2026-11-17", "2026-11-18", False)      # a weeknight: before Wednesday's open
+    assert sw.weekend("2026-11-25", "2026-11-27", False)          # the morning after Thanksgiving
 
 
 @pytest.mark.unit
