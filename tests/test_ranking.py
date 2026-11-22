@@ -59,13 +59,13 @@ def test_the_bench_is_best_score_first_and_the_book_rows_carry_a_score(tmp_path,
     decision("r", "TIGHT", "2026-11-09", "Overweight", 99.5, 110)     # +10% / 1% floor: r:r 10 ... but the floor caps it
     decision("r", "SHORT", "2026-11-09", "Sell", 104, 90, "Aggressive")   # -10% / 4%: 2.5 ×1.25 ×1.1 ×1.15 balance
     from tradingagents.default_config import DEFAULT_CONFIG
-    cfg = {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "names_per_side": 1, "bench_size": 10}
+    cfg = {**DEFAULT_CONFIG, "results_dir": str(tmp_path), "max_positions": 2, "bench_size": 10}
     monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {t: 100.0 for t in tickers})
 
     built = bk.build_book(["r"], "2026-11-09", cfg, 100_000)
-    assert sorted(o.ticker for o in built.book.orders) == ["SHORT", "TOP"]       # the top long and the only short
+    assert sorted(o.ticker for o in built.book.orders) == ["TOP", "WIDE"]        # the two largest moves, both long
     assert all(o.score for o in built.book.orders)
-    assert [b["ticker"] for b in built.bench] == ["TIGHT", "WIDE"]                # 10 over the 2% floor (5) still beats 16 over 8 (2)
+    assert [b["ticker"] for b in built.bench] == ["TIGHT", "SHORT"]               # 10 over the 2% floor (5) beats the short's 3.95
     assert built.bench[0]["score"] == 5.0 and "over 2.0% to stop" in built.bench[0]["score_parts"]
 
 

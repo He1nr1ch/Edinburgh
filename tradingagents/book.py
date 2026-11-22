@@ -1,7 +1,7 @@
 """Build the day's book from a list run's calls, with its bench, and save both.
 
 The `size` command and the 4 AM job share this: the sizing rules make the
-book (the top names each side), the bench is the next-best calls after it,
+book (the best names, long or short, up to ``max_positions``), the bench is the next-best calls after it,
 long or short together, and both go to the sizing folder as CSVs the page
 and the Watcher read back.
 """
@@ -53,7 +53,7 @@ def recent_calls(results_dir: Path, as_of: str, max_age_days: int) -> list[Call]
 
 def build_book(run_ids: list[str], date: str, config: dict, equity: float,
                gross_pct: float | None = None, cap_pct: float | None = None,
-               min_target_pct: float | None = None, names_per_side: int | None = None,
+               min_target_pct: float | None = None, max_positions: int | None = None,
                calls: list[Call] | None = None) -> BuiltBook:
     """Size the calls of ``run_ids`` on ``date`` (or the ``calls`` given) into a book and a bench."""
     root = Path(config["results_dir"]) / "backtest"
@@ -62,10 +62,10 @@ def build_book(run_ids: list[str], date: str, config: dict, equity: float,
     if not calls:
         raise ValueError(f"no calls for {date} under {', '.join(run_ids)} in {root}")
     floor = config["min_target_pct"] if min_target_pct is None else min_target_pct
-    per_side = config["names_per_side"] if names_per_side is None else names_per_side
+    most = config["max_positions"] if max_positions is None else max_positions
     prices = last_closes([c.ticker for c in calls], date)
     book = size_book(calls, prices, equity, config["gross_pct"] if gross_pct is None else gross_pct,
-                     config["position_cap_pct"] if cap_pct is None else cap_pct, floor, per_side,
+                     config["position_cap_pct"] if cap_pct is None else cap_pct, floor, most,
                      config["default_stop_pct"])
     chosen = {o.ticker for o in book.orders}
     by_ticker = {c.ticker: c for c in calls}

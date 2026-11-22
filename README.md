@@ -266,7 +266,10 @@ opens it with the freed capital. Over all of this stands the market guard
 (3%) from its close `market_guard_days` (5) sessions back, the market is
 running, and nothing new is opened against it, from the book or the bench: no
 long while it falls, no short while it rises. A position held keeps its own
-stop, and a slot the bench cannot fill from the other side stays empty until
+stop until the market swings: with SPY `market_swing_day_pct` (2%) from its
+last close, or `market_swing_period_pct` (4%) from its close five sessions
+back, the Watcher closes every position held against it, the shorts in a
+swing up and the longs in a swing down, at a profit or a loss, and a slot the bench cannot fill from the other side stays empty until
 the next book. A falling market is also when a net-long book is hedged, with
 SPY puts priced into the book as the calls of a net-short one are. A day past
 its limit against a week past its own (a bounce in a sell-off) holds nothing

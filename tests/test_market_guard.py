@@ -275,3 +275,81 @@ def test_the_puts_of_the_book_are_bought_though_calls_are_still_held(tmp_path, m
 
     assert runner.place_book(cfg) == ["SPY261127P00710000"] and sent == [("SPY261127P00710000", 1, "buy")]
     assert [e["symbol"] for e in json.loads(Path(cfg["hedge_ledger_path"]).read_text())] == ["SPY261231C00730000", "SPY261127P00710000"]
+
+
+@pytest.mark.unit
+def test_a_market_past_the_larger_limits_has_swung_and_only_the_way_it_runs():
+    running = judge(739.95, CLOSES[:4], 1.5, 5, 3.0, 2.0, 4.0)      # -1.9% on the day: running, not a swing
+    assert running.falling and running.swing == 0 and running.closes is None
+
+    down = judge(735.0, CLOSES[:4], 1.5, 5, 3.0, 2.0, 4.0)          # -2.6% on the day
+    assert down.swing == -1 and down.closes == "long" and down.describe().endswith("falling, a swing down")
+    up = judge(771.0, CLOSES[:4], 1.5, 5, 3.0, 2.0, 4.0)            # +2.2% on the day
+    assert up.swing == 1 and up.closes == "short"
+    week = judge(709.72, CLOSES, 1.5, 5, 3.0, 2.0, 4.0)             # -0.9% on the day, -5.9% over five
+    assert week.swing == -1
+
+    bounce = judge(731.0, CLOSES, 1.5, 5, 3.0, 2.0, 4.0)            # +2.1% on the day against -3.1% over five
+    assert bounce.day_pct > 2.0 and bounce.direction == 0 and bounce.swing == 0
+    assert judge(771.0, CLOSES[:4], 1.5, 5, 3.0).swing == 0         # the swing limits off
+
+
+def _held_desk(tmp_path, monkeypatch, tape):
+    from tradingagents.dataflows.vendors.alpaca.trading import Holding
+    from tradingagents.worker import market
+
+    monkeypatch.setattr(market, "read_tape", lambda config, now=None: tape)
+    account = Account(100_000, 50_000, True, (
+        Holding("GD", 16, 16 * 380.0, 364.87, "us_equity"),          # a long, +4.1%
+        Holding("FIS", -156, -156 * 28.0, 29.76, "us_equity"),       # a short in profit, +5.9%
+        Holding("T", -216, -216 * 21.5, 21.0, "us_equity"),          # a short at a loss, -2.4%
+        Holding("SPY261127P00710000", 1, 810.0, 8.1, "us_option"),   # the hedge is not the Watcher's
+    ))
+    cfg = _cfg(tmp_path)
+    return market, WorkerContext(account, datetime(2026, 11, 6, 16, 0, tzinfo=UTC), cfg, WorkerState.load(cfg["worker_state_path"]))
+
+
+@pytest.mark.unit
+def test_a_swing_up_closes_the_shorts_at_a_profit_or_a_loss_and_a_swing_down_the_longs(tmp_path, monkeypatch):
+    market, ctx = _held_desk(tmp_path, monkeypatch, Tape(790.0, 2.4, 3.4, 5, 1, 1))
+    fis, t = market.MarketDuty().run(ctx)
+    assert (fis.action.symbol, fis.action.kind, fis.action.side, fis.action.qty) == ("FIS", "exit", "buy", 156)
+    assert "swung up" in fis.detail and "taking +5.9%" in fis.detail
+    assert (t.action.symbol, t.action.side, t.action.qty) == ("T", "buy", 216) and "cutting -2.4%" in t.detail
+    assert not fis.action.at_stop and fis.severity == "urgent"       # a choice: it waits for the trading window
+
+    market, ctx = _held_desk(tmp_path / "down", monkeypatch, Tape(700.0, -2.2, -5.9, 5, -1, -1))
+    (gd,) = market.MarketDuty().run(ctx)
+    assert (gd.action.symbol, gd.action.side, gd.action.qty) == ("GD", "sell", 16) and "taking +4.1%" in gd.detail
+
+
+@pytest.mark.unit
+def test_a_market_that_only_runs_or_cannot_be_read_closes_nothing_and_a_stopped_position_is_not_closed_twice(tmp_path, monkeypatch):
+    market, ctx = _held_desk(tmp_path, monkeypatch, RISING)          # rising, no swing: the shorts keep their stops
+    assert market.MarketDuty().run(ctx) == []
+    market, ctx = _held_desk(tmp_path / "unread", monkeypatch, None)
+    assert market.MarketDuty().run(ctx) == []
+
+    market, ctx = _held_desk(tmp_path / "stopped", monkeypatch, Tape(790.0, 2.4, 3.4, 5, 1, 1))
+    ctx.state.record_order("T", "exit", "buy", 216, "ord-stop", ctx.now, "stop hit")   # the stop guard, this pass
+    assert [f.symbol for f in market.MarketDuty().run(ctx)] == ["FIS"]
+
+
+@pytest.mark.unit
+def test_the_watcher_runs_the_market_guard_after_the_stops_and_targets_and_before_the_news():
+    from tradingagents.worker import runner
+
+    assert [d.name for d in runner.default_duties()] == ["stops", "targets", "market", "watcher", "replace"]
+
+
+@pytest.mark.unit
+def test_the_book_opens_nothing_past_its_number_of_positions_counting_what_is_held(tmp_path, monkeypatch):
+    from tradingagents.dataflows.vendors.alpaca.trading import Holding
+
+    _book(tmp_path)
+    runner, sent = _placing(monkeypatch, None)
+    held = (Holding("JPM", 10, 3_000.0, 300.0, "us_equity"), Holding("SPY261127P00710000", 1, 810.0, 8.1, "us_option"))
+    monkeypatch.setattr(runner.trading, "get_account", lambda: Account(100_000, 90_000, True, held))
+    assert runner.place_book(_cfg(tmp_path, max_positions=2)) == ["GD"]      # JPM and GD; the option is no position of the book
+    log = "\n".join(p.read_text() for p in Path(tmp_path).rglob("*.log"))
+    assert "not placed: FIS: the book is at its 2 positions with what is still held" in log

@@ -36,12 +36,13 @@ ET = ZoneInfo("America/New_York")
 
 
 def default_duties() -> list[Duty]:
-    """The Watcher's guards, in order: stop and target (arithmetic, no model), news, then replacements."""
+    """The Watcher's guards, in order: stop, target and market swing (arithmetic, no model), news, then replacements."""
+    from tradingagents.worker.market import MarketDuty
     from tradingagents.worker.news import WatcherDuty
     from tradingagents.worker.replace import ReplacementDuty
     from tradingagents.worker.stops import StopDuty, TargetDuty
 
-    return [StopDuty(), TargetDuty(), WatcherDuty(), ReplacementDuty()]
+    return [StopDuty(), TargetDuty(), MarketDuty(), WatcherDuty(), ReplacementDuty()]
 
 
 def follow_mirror(config: dict, dry_run: bool, market_open: bool) -> None:
@@ -251,7 +252,8 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
     side is closed. Then the book's orders (the one the daily job built this
     morning, or the newest saved, with a note) are opened, skipping names held,
     and only while the gross exposure, counting what is still held, stays within
-    ``gross_pct`` of equity.
+    ``gross_pct`` of equity and the positions, counting those too, within
+    ``max_positions``.
     """
     from tradingagents.book import load_rows
     from tradingagents.hedge import held_from_row, is_hedge_row, kind_of, open_hedges, record_held
@@ -314,6 +316,8 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
         gross = sum(abs(h.market_value) for h in account.holdings
                     if h.symbol.upper() in held and h.asset_class == "us_equity")
         gross_cap = account.equity * float(config["gross_pct"]) / 100
+        positions = sum(1 for h in account.holdings if h.symbol.upper() in held and h.asset_class == "us_equity")
+        most = int(config.get("max_positions") or 0)
         placed = []
         waiting = set(open_now.values()) - closed
         rows = load_rows(book_path)
@@ -363,6 +367,9 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             if against:
                 _log(config, now, f"  not placed: {o['ticker']}: {against}")
                 continue
+            if most and positions >= most:
+                _log(config, now, f"  not placed: {o['ticker']}: the book is at its {most} positions with what is still held")
+                continue
             if gross + float(o["value"]) > gross_cap:
                 _log(config, now, f"  not placed: {o['ticker']}: the book is at its {config['gross_pct']:g}% gross "
                                   f"({gross:,.0f} of {gross_cap:,.0f}) with what is still held")
@@ -396,6 +403,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
                 _log(config, now, f"  dry run: would open {o['side']} {qty} {o['ticker']}")
                 placed.append(o["ticker"])
                 gross += value
+                positions += 1
                 continue
             try:
                 order_id = trading.submit_market_order(o["ticker"], qty, action.side)
@@ -405,6 +413,7 @@ def place_book(config: dict, dry_run: bool = False) -> list[str]:
             state.record_order(o["ticker"], "open", action.side, qty, order_id, now, action.reason, stop=stop, decided=decided)
             state.book[o["ticker"].upper()] = {"placed_on": today, "side": o["side"], "value": value}
             gross += value
+            positions += 1
             placed.append(o["ticker"])
             _log(config, now, f"  opened {o['side']} {qty} {o['ticker']} at about {live:,.2f} (order {order_id})")
         day["placed"] = placed
@@ -439,7 +448,8 @@ def build_book_job(config: dict) -> None:
                        f"{len(built.book.orders)} orders and a bench of {len(built.bench)} on {built.date}'s close.\n"
                        f"Hedge: {describe_hedge(built.hedge)}\n"
                        + (f"Market: {tape.describe()}"
-                          + (f"; no new {tape.barred}s are opened while it runs" if tape.barred else "") + "\n" if tape else "")
+                          + (f"; no new {tape.barred}s are opened while it runs" if tape.barred else "")
+                          + (f"; the {tape.closes}s held are closed" if tape.closes else "") + "\n" if tape else "")
                        + f"{describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)

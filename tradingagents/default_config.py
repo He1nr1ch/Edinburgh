@@ -48,7 +48,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_ANALYST_BRIEFING":        "analyst_briefing",
     "TRADINGAGENTS_HEDGE_MONTHLY_RATIO":     "hedge_monthly_ratio",
     "TRADINGAGENTS_MIN_TARGET_PCT":          "min_target_pct",
-    "TRADINGAGENTS_NAMES_PER_SIDE":          "names_per_side",
+    "TRADINGAGENTS_MAX_POSITIONS":           "max_positions",
     "TRADINGAGENTS_DEFAULT_STOP_PCT":        "default_stop_pct",
     "TRADINGAGENTS_GROSS_PCT":               "gross_pct",
     "TRADINGAGENTS_POSITION_CAP_PCT":        "position_cap_pct",
@@ -72,6 +72,8 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MARKET_GUARD_DAY_PCT":    "market_guard_day_pct",
     "TRADINGAGENTS_MARKET_GUARD_DAYS":       "market_guard_days",
     "TRADINGAGENTS_MARKET_GUARD_PERIOD_PCT": "market_guard_period_pct",
+    "TRADINGAGENTS_MARKET_SWING_DAY_PCT":    "market_swing_day_pct",
+    "TRADINGAGENTS_MARKET_SWING_PERIOD_PCT": "market_swing_period_pct",
     "TRADINGAGENTS_ENTRY_MIN_STOP_PCT":      "entry_min_stop_pct",
     "TRADINGAGENTS_ENTRY_MAX_RUN_PCT":       "entry_max_run_pct",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -317,9 +319,12 @@ def build_default_config() -> dict:
         # A call is sized only when its target is more than this far from the close
         # in its own direction (a long's above, a short's below); 0 takes every call.
         "min_target_pct": 5.0,
-        # Of the calls that clear the floor, only this many longs and this many
-        # shorts, those with the largest expected move, are sized; 0 sizes them all.
-        "names_per_side": 10,
+        # The book holds at most this many positions, long and short together:
+        # of the calls that clear the floor, those with the largest expected move
+        # are sized, whichever side they are on, and the morning placement opens
+        # no name past this count of what is held. Neither side has a number of
+        # its own. 0 sets no limit.
+        "max_positions": 25,
         # When the Risk Manager and the Trader give no usable stop, the stop is this
         # far from the close against the position: below for a long, above for a short.
         "default_stop_pct": 2.0,
@@ -392,6 +397,14 @@ def build_default_config() -> dict:
         "market_guard_day_pct": 1.5,
         "market_guard_days": 5,
         "market_guard_period_pct": 3.0,
+        # The market swing (worker/market.py): SPY this far from its last close, or
+        # this far from its close market_guard_days sessions back, is a market that
+        # has turned on one side of the book, and the Watcher closes what is held
+        # against it, at a profit or a loss: the shorts in a swing up, the longs in
+        # a swing down. Larger than the guard's limits, so a market that is merely
+        # running stops new positions before it closes old ones. 0 turns a reading off.
+        "market_swing_day_pct": 2.0,
+        "market_swing_period_pct": 4.0,
         # What a call must still clear at the live price when it is opened, from the
         # book or the bench, besides not being through its stop and having more
         # than min_target_pct left: its stop at least this far away (nearer, and

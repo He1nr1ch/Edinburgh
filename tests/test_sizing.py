@@ -123,21 +123,28 @@ def test_calls_carry_the_portfolio_managers_target(tmp_path):
 
 
 @pytest.mark.unit
-def test_the_book_is_the_top_n_longs_and_shorts_by_expected_move():
-    from tradingagents.sizing import top_per_side
+def test_the_book_is_the_best_n_calls_by_expected_move_whichever_side_they_are_on():
+    from tradingagents.sizing import best_calls
 
     longs = [Call(f"L{i}", "Overweight", 5, target=100 + 6 + i) for i in range(4)]     # +6% .. +9%
     shorts = [Call(f"S{i}", "Underweight", 5, target=100 - 6 - i) for i in range(4)]  # -6% .. -9%
     prices = {c.ticker: 100.0 for c in longs + shorts}
 
-    kept = top_per_side(longs + shorts, prices, 2)
-    assert [c.ticker for c in kept] == ["L3", "L2", "S3", "S2"]
-    assert top_per_side(longs + shorts, prices, 0) == longs + shorts
+    kept = best_calls(longs + shorts, prices, 4)
+    assert [c.ticker for c in kept] == ["L3", "S3", "L2", "S2"]
+    assert best_calls(longs + shorts, prices, 0) == longs + shorts
 
     book = size_book(longs + shorts, prices, equity=100_000, gross_pct=40, cap_pct=10,
-                     min_target_pct=5, names_per_side=2)
+                     min_target_pct=5, max_positions=4)
     assert sorted(o.ticker for o in book.orders) == ["L2", "L3", "S2", "S3"]
-    assert ("L0", "outside the top 2 on its side (+6.0% to target)") in book.skipped
+    assert ("L0", "outside the book's best 4 (+6.0% to target)") in book.skipped
+
+    # Neither side has a number of its own: five better shorts leave room for one long.
+    strong = [Call(f"T{i}", "Sell", 5, target=80 - i) for i in range(5)]               # -20% .. -24%
+    prices |= {c.ticker: 100.0 for c in strong}
+    lopsided = size_book(longs + strong, prices, equity=100_000, gross_pct=40, cap_pct=10,
+                         min_target_pct=5, max_positions=6)
+    assert sorted(o.ticker for o in lopsided.orders) == ["L3", "T0", "T1", "T2", "T3", "T4"]
 
 
 @pytest.mark.unit
@@ -146,11 +153,11 @@ def test_a_top_name_too_dear_for_one_share_gives_its_place_to_the_next():
     shorts = [Call("NVR", "Underweight", 2, target=4_864.0)] + \
              [Call(f"S{i}", "Underweight", 2, target=100 - 8 + i * 0.5) for i in range(4)]   # -8%, -7.5%, -7%, -6.5%
     prices = {"NVR": 6_376.82, "S0": 100.0, "S1": 100.0, "S2": 100.0, "S3": 100.0}
-    book = size_book(shorts, prices, equity=100_000, gross_pct=6, cap_pct=10, min_target_pct=5, names_per_side=3)
+    book = size_book(shorts, prices, equity=100_000, gross_pct=6, cap_pct=10, min_target_pct=5, max_positions=3)
 
     assert sorted(o.ticker for o in book.orders) == ["S0", "S1", "S2"]
     assert any(t == "NVR" and "less than one share" in why for t, why in book.skipped)
-    assert ("S3", "outside the top 3 on its side (+6.5% to target)") in book.skipped   # a short's profit, in its own direction
+    assert ("S3", "outside the book's best 3 (+6.5% to target)") in book.skipped   # a short's profit, in its own direction
 
 
 @pytest.mark.unit

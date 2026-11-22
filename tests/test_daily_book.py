@@ -60,10 +60,10 @@ def test_build_and_save_the_book_with_its_bench(tmp_path, monkeypatch):
                                     ("D", "Underweight", 103, 90), ("E", "Overweight", 96, 101)):
         _decision(tmp_path, "run_a", t, "2026-11-05", rating, stop, target)
     monkeypatch.setattr(bk, "last_closes", lambda tickers, date: {t: 100.0 for t in tickers})
-    cfg = _cfg(tmp_path, names_per_side=1, bench_size=10)
+    cfg = _cfg(tmp_path, max_positions=2, bench_size=10)
 
     built = bk.save_book(bk.build_book(["run_a"], "2026-11-05", cfg, 100_000), cfg)
-    assert sorted(o.ticker for o in built.book.orders) == ["A", "C"]          # the top long and the top short
+    assert sorted(o.ticker for o in built.book.orders) == ["A", "C"]          # the two largest moves: +30% and -20%
     # The bench is best score first: D is a short balancing a book that is net long after A
     # (its ×1.15 lifts 10%/3% = 3.33 to 3.83), B is +12% over 5% = 2.4; E's +1% is under the floor.
     assert [b["ticker"] for b in built.bench] == ["D", "B"]
