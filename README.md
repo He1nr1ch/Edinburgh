@@ -279,8 +279,10 @@ pre-market, so while the market is shut the worker also reads the E-mini S&P 500
 put on SPY's last close and judged by the same limits. That is a reading and no more: it is on the
 status page and in `/api/status`, in the morning's book email, and emailed when what it implies
 changes (a market that has begun to run or to swing overnight, or stopped); the desk still acts
-on SPY, from the open. The quotes are Yahoo's public, delayed chart; `futures_watch` off stops
-the look. A close or trim first cancels the symbol's
+on SPY, from the open. The desk does not trade futures. The ten-year Treasury yield (`^TNX`) and
+oil (`CL=F`, the front-month WTI future, the nearest live price to spot) are read with it and
+shown beside it, judged by nothing. All three are background. The quotes are Yahoo's public,
+delayed chart; `futures_watch` off stops the look. A close or trim first cancels the symbol's
 waiting orders. It trades a paper account only,
 unless `worker_allow_live` is on; `--dry-run` sends nothing, `--once` makes one
 pass. Alerts go by email when `TRADINGAGENTS_SMTP_USER` and

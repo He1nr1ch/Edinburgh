@@ -281,7 +281,11 @@ def _status_section() -> str:
     f = futures.last_reading(get_config())
     if f:
         cards.append(('Futures', f'{f["pct"]:+.1f}%', html.escape(f'{f["symbol"]} {f["price"]:,.2f} since the close of {f["close_day"]}; '
-                                                                 f'SPY implied {f["implied_spy"]:,.2f}')))
+                                                                 f'SPY implied {f["implied_spy"]:,.2f}; background only')))
+        for b in f.get("background") or []:
+            level = f'{b["value"]:.2f}%' if b["unit"] == "bp" else f'{b["value"]:,.2f}'
+            moved = "" if b.get("change") is None else (f'{b["change"]:+.0f} bp' if b["unit"] == "bp" else f'{b["change"]:+.1f}%') + " since the close; "
+            cards.append((html.escape(b["name"]), level, moved + "background only"))
     u = _usage_today()
     if u and u["total"]["calls"]:
         t = u["total"]

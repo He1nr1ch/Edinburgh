@@ -451,7 +451,9 @@ def build_book_job(config: dict) -> None:
                        + (f"Market: {tape.describe()}"
                           + (f"; no new {tape.barred}s are opened while it runs" if tape.barred else "")
                           + (f"; the {tape.closes}s held are closed" if tape.closes else "") + "\n" if tape else "")
-                       + (f"Futures: {overnight.describe()}\n" if overnight else "")
+                       + (f"Background, not traded on: {overnight.describe()}\n"
+                          + "".join(f"Background: {b['text']}\n" for b in futures.background(config, overnight.close_day))
+                          if overnight else "")
                        + f"{describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)

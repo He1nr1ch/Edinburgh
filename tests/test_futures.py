@@ -24,6 +24,7 @@ def bars(last: float, at: datetime) -> list[tuple[datetime, float]]:
 def cfg(tmp_path, monkeypatch):
     monkeypatch.setattr(market_guard, "closes", lambda config, today: CLOSES)
     monkeypatch.setattr(futures, "_looked_at", -1e9)
+    monkeypatch.setattr(futures, "background", lambda config, close_day: [])
     return {**DEFAULT_CONFIG, "futures_state_path": str(tmp_path / "futures.json")}
 
 
@@ -75,8 +76,8 @@ def test_the_worker_emails_when_what_the_futures_imply_changes_and_only_then(cfg
     price[0] = 6790.0
     monkeypatch.setattr(futures, "_looked_at", -1e9)
     futures.watch(cfg, now)
-    assert len(sent) == 1 and sent[0][0] == "Edinburgh: the futures say the market is falling, a swing down"
-    assert "Nothing is traded on this reading" in sent[0][1]
+    assert len(sent) == 1 and sent[0][0] == "Edinburgh, background: the futures say the market is falling, a swing down"
+    assert "does not trade futures" in sent[0][1]
     monkeypatch.setattr(futures, "_looked_at", -1e9)
     futures.watch(cfg, now)
     assert len(sent) == 1                                                 # the same reading is not sent twice
@@ -95,3 +96,19 @@ def test_a_source_that_fails_is_never_the_loops_failure(cfg, monkeypatch):
     monkeypatch.setattr(futures, "fetch", down)
     assert futures.watch(cfg, datetime(2026, 11, 22, 20, 0, tzinfo=ET)) is None
     assert futures.last_reading(cfg) == {}
+
+
+@pytest.mark.unit
+def test_the_yield_and_oil_are_stated_as_background_and_judged_by_nothing(monkeypatch):
+    close = datetime(2026, 11, 20, 16, 0, tzinfo=ET)
+    quotes = {"^TNX": [(close - timedelta(minutes=65), 4.91), (close + timedelta(hours=40), 4.96)],     # trades again on Monday
+              "CL=F": [(close - timedelta(minutes=5), 84.0), (close, 84.0), (close + timedelta(hours=28), 82.32)]}
+    monkeypatch.setattr(futures, "fetch", lambda symbol: quotes[symbol])
+    ten, oil = futures.background(DEFAULT_CONFIG, "2026-11-20")
+    assert ten["text"] == "10-year Treasury yield 4.96% at Sun 08:00 ET, +5 bp since Friday's close"
+    assert oil["text"] == "WTI crude oil 82.32 at Sat 20:00 ET, -2.0% since Friday's close"
+    quotes["^TNX"] = quotes["^TNX"][:1]                                   # the weekend: nothing since the close
+    del quotes["CL=F"]                                                    # and oil does not answer
+    (ten,) = futures.background(DEFAULT_CONFIG, "2026-11-20")
+    assert ten["text"] == "10-year Treasury yield 4.91% at Fri 14:55 ET" and ten["change"] is None
+    assert futures.background({**DEFAULT_CONFIG, "futures_watch": False}, "2026-11-20") == []

@@ -1,5 +1,9 @@
 """The overnight market: what the S&P 500 futures say of the open, while SPY does not trade.
 
+The desk does not trade futures, and nothing here is traded on. The S&P
+future, the ten-year Treasury yield and the price of oil are background: what
+the market did while the desk was not looking, for whoever reads the book.
+
 The market guard (market_guard.py) reads SPY, and SPY is silent from Friday's
 close until the pre-market on Monday: a market that falls three percent on a
 Sunday night was first seen by the desk at nine the next morning. The E-mini
@@ -20,6 +24,12 @@ The quotes are Yahoo's public chart of ``ES=F``, delayed by some minutes and
 asked for without a key; Alpaca has no index futures. A source that does not
 answer leaves the desk as it was before it had this: the reading is missing
 and the log says so.
+
+Beside the future stand the two other things a desk looks at before the open
+(:func:`background`): the ten-year Treasury yield (``^TNX``, quoted only in
+the American day) and oil (``CL=F``, the front-month WTI future, the nearest
+live price to spot). They are stated and judged by nothing: no limit, no
+email, no order.
 """
 
 from __future__ import annotations
@@ -43,6 +53,8 @@ ET = ZoneInfo("America/New_York")
 CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 CASH_CLOSE = (16, 0)        # New York; a half day closes at 13:00, and its reading is from 16:00 all the same
 LIVE_MINUTES = 30           # a last trade older than this is a market that is shut, not one that is still
+# symbol, what it is called, and how its move is said: a yield in basis points, a price in percent.
+BACKGROUND = (("^TNX", "10-year Treasury yield", "yield"), ("CL=F", "WTI crude oil", "price"))
 
 
 @dataclass(frozen=True)
@@ -100,12 +112,45 @@ def fetch(symbol: str) -> list[tuple[datetime, float]]:
 
 def measure(bars: list[tuple[datetime, float]], close_day: str) -> tuple[float, float, datetime] | None:
     """The future at the cash close of ``close_day``, its last price and when; None when the bars do not reach."""
-    close_at = datetime.combine(date.fromisoformat(close_day), datetime.min.time(), ET).replace(
-        hour=CASH_CLOSE[0], minute=CASH_CLOSE[1])
+    close_at = _close_at(close_day)
     before = [(t, p) for t, p in bars if close_at - timedelta(hours=1) <= t <= close_at]
     if not before or not bars or bars[-1][0] <= close_at:
         return None
     return before[-1][1], bars[-1][1], bars[-1][0]
+
+
+def _close_at(close_day: str) -> datetime:
+    return datetime.combine(date.fromisoformat(close_day), datetime.min.time(), ET).replace(
+        hour=CASH_CLOSE[0], minute=CASH_CLOSE[1])
+
+
+def background(config: dict, close_day: str) -> list[dict]:
+    """The ten-year yield and oil as they stand, and their move since the cash close when they have traded since.
+
+    Background only. One that cannot be read is left out.
+    """
+    if not config.get("futures_watch", True):
+        return []
+    close_at, day, out = _close_at(close_day), date.fromisoformat(close_day).strftime("%A"), []
+    for symbol, name, kind in BACKGROUND:
+        try:
+            bars = fetch(symbol)
+        except Exception as exc:
+            logger.warning("%s could not be read (%s)", name, exc)
+            continue
+        if not bars:
+            continue
+        at, value = bars[-1]
+        before = [p for t, p in bars if t <= close_at and t.date() == close_at.date()]
+        change = None
+        if before and at > close_at:
+            change = (value - before[-1]) * 100 if kind == "yield" else (value / before[-1] - 1) * 100
+        level = f"{value:.2f}%" if kind == "yield" else f"{value:,.2f}"
+        moved = "" if change is None else (f", {change:+.0f} bp" if kind == "yield" else f", {change:+.1f}%") + f" since {day}'s close"
+        out.append({"symbol": symbol, "name": name, "value": round(value, 3), "at": at.isoformat(timespec="seconds"),
+                    "change": None if change is None else round(change, 2), "unit": "bp" if kind == "yield" else "%",
+                    "text": f"{name} {level} at {at.strftime('%a %H:%M ET')}{moved}"})
+    return out
 
 
 def read_overnight(config: dict, now: datetime | None = None) -> Overnight | None:
@@ -169,16 +214,18 @@ def watch(config: dict, now: datetime | None = None) -> Overnight | None:
         # What the desk last told its owner of this close; at first, what the
         # guard read at the close itself, so an unchanged market sends nothing.
         told = before.get("told") if before.get("close_day") == reading.close_day else at_close(config, now)
+        also = background(config, reading.close_day)
         if reading.live and reading.state != told:
-            logger.info("Futures: %s", reading.describe())
+            logger.info("Futures (background): %s", reading.describe())
             way = {-1: "falling", 1: "rising", 0: "neither falling nor rising"}[reading.tape.direction]
             swing = {-1: ", a swing down", 1: ", a swing up", 0: ""}[reading.tape.swing]
-            if send_email(f"Edinburgh: the futures say the market is {way}{swing}",
-                          f"{reading.describe()}\n\n{reading.means()}\n\nNothing is traded on this reading: "
-                          f"the desk acts on {market_guard.BENCHMARK} itself, from the open.", config):
+            body = (f"{reading.describe()}\n" + "".join(f"{b['text']}\n" for b in also)
+                    + f"\n{reading.means()}\n\nBackground only. The desk does not trade futures, and nothing is "
+                    f"traded on this reading: it acts on {market_guard.BENCHMARK} itself, from the open.")
+            if send_email(f"Edinburgh, background: the futures say the market is {way}{swing}", body, config):
                 told = reading.state
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({**reading.to_dict(), "told": told}, indent=2) + "\n", encoding="utf-8")
+        path.write_text(json.dumps({**reading.to_dict(), "told": told, "background": also}, indent=2) + "\n", encoding="utf-8")
         return reading
     except Exception as exc:
         logger.warning("The futures could not be watched: %s", exc)
