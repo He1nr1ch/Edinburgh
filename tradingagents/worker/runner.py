@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from tradingagents import build
+from tradingagents import build, futures
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.alpaca import trading
 from tradingagents.market_guard import read_tape
@@ -443,6 +443,7 @@ def build_book_job(config: dict) -> None:
             equity = trading.get_account().equity
             built = build_morning_book(config, equity)
             tape = read_tape(config)
+            overnight = futures.read_overnight(config)
             day.update(analysis=f"book built {datetime.now(ET).strftime('%H:%M')}", book_path=str(built.book_path))
             send_email(f"Edinburgh: the book for {today}",
                        f"{len(built.book.orders)} orders and a bench of {len(built.bench)} on {built.date}'s close.\n"
@@ -450,6 +451,7 @@ def build_book_job(config: dict) -> None:
                        + (f"Market: {tape.describe()}"
                           + (f"; no new {tape.barred}s are opened while it runs" if tape.barred else "")
                           + (f"; the {tape.closes}s held are closed" if tape.closes else "") + "\n" if tape else "")
+                       + (f"Futures: {overnight.describe()}\n" if overnight else "")
                        + f"{describe_timing(built.timing or {})}\n"
                        + "\n".join(f"- {o.side} {abs(o.shares)} {o.ticker} @ {o.price:,.2f}, stop {o.stop}, target {o.target}"
                                    for o in built.book.orders), config)
@@ -641,6 +643,8 @@ def run_forever(config: dict, llm, duties: list[Duty], interval_minutes: int, dr
                 logger.info("The market is open; watching until the close.")
                 run_day(config, llm, duties, interval_minutes, dry_run, sweep)
                 continue
+            with run_config(config):
+                futures.watch(config)
             # Closed: sleep a short while so the sweep's pool stays full and
             # the book is built on the minute.
             time.sleep(min(SWEEP_LOOK_SECONDS, max(1.0, (clock.next_open - clock.now).total_seconds())))

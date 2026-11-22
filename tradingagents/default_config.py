@@ -74,6 +74,9 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_MARKET_GUARD_PERIOD_PCT": "market_guard_period_pct",
     "TRADINGAGENTS_MARKET_SWING_DAY_PCT":    "market_swing_day_pct",
     "TRADINGAGENTS_MARKET_SWING_PERIOD_PCT": "market_swing_period_pct",
+    "TRADINGAGENTS_FUTURES_WATCH":           "futures_watch",
+    "TRADINGAGENTS_FUTURES_SYMBOL":          "futures_symbol",
+    "TRADINGAGENTS_FUTURES_LOOK_MINUTES":    "futures_look_minutes",
     "TRADINGAGENTS_ENTRY_MIN_STOP_PCT":      "entry_min_stop_pct",
     "TRADINGAGENTS_ENTRY_MAX_RUN_PCT":       "entry_max_run_pct",
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
@@ -146,6 +149,8 @@ def build_default_config() -> dict:
         "hedge_ledger_path": os.getenv("TRADINGAGENTS_HEDGE_LEDGER_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "hedges.json"),
         "worker_state_path": os.getenv("TRADINGAGENTS_WORKER_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "worker_state.json"),
         "sweep_state_path": os.getenv("TRADINGAGENTS_SWEEP_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "sweep_state.json"),
+        # The last reading of the overnight futures (futures.py), for the status page.
+        "futures_state_path": os.getenv("TRADINGAGENTS_FUTURES_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "futures.json"),
         # The mirror account's ledger: the orders sent to keep it the exact opposite of
         # the main account (mirror.py), and the names it could not mirror.
         "mirror_state_path": os.getenv("TRADINGAGENTS_MIRROR_STATE_PATH") or os.path.join(_TRADINGAGENTS_HOME, "memory", "mirror_state.json"),
@@ -406,6 +411,14 @@ def build_default_config() -> dict:
         # running stops new positions before it closes old ones. 0 turns a reading off.
         "market_swing_day_pct": 2.0,
         "market_swing_period_pct": 4.0,
+        # The overnight futures (futures.py): while the market is shut the worker
+        # reads the E-mini S&P 500 every futures_look_minutes, puts its move since
+        # the cash close on SPY's last close, and judges that by the limits above.
+        # A reading only: it is shown, said in the book email, and emailed when
+        # what it implies changes; no order follows from it.
+        "futures_watch": True,
+        "futures_symbol": "ES=F",
+        "futures_look_minutes": 15,
         # What a call must still clear at the live price when it is opened, from the
         # book or the bench, besides not being through its stop and having more
         # than min_target_pct left: its stop at least this far away (nearer, and

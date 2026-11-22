@@ -273,7 +273,14 @@ swing up and the longs in a swing down, at a profit or a loss, and a slot the be
 the next book. A falling market is also when a net-long book is hedged, with
 SPY puts priced into the book as the calls of a net-short one are. A day past
 its limit against a week past its own (a bounce in a sell-off) holds nothing
-back, and neither does a SPY that cannot be read. A close or trim first cancels the symbol's
+back, and neither does a SPY that cannot be read. SPY is silent from Friday's close to Monday's
+pre-market, so while the market is shut the worker also reads the E-mini S&P 500 future
+(`futures.py`, `futures_symbol`, every `futures_look_minutes`): its move since the cash close is
+put on SPY's last close and judged by the same limits. That is a reading and no more: it is on the
+status page and in `/api/status`, in the morning's book email, and emailed when what it implies
+changes (a market that has begun to run or to swing overnight, or stopped); the desk still acts
+on SPY, from the open. The quotes are Yahoo's public, delayed chart; `futures_watch` off stops
+the look. A close or trim first cancels the symbol's
 waiting orders. It trades a paper account only,
 unless `worker_allow_live` is on; `--dry-run` sends nothing, `--once` makes one
 pass. Alerts go by email when `TRADINGAGENTS_SMTP_USER` and

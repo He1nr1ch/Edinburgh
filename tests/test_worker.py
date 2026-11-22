@@ -151,6 +151,7 @@ def test_the_forever_loop_sleeps_through_the_close_and_survives_errors(monkeypat
 
     monkeypatch.setattr(runner.trading, "get_clock", clock)
     monkeypatch.setattr(runner.time, "sleep", sleep)
+    monkeypatch.setattr(runner.futures, "watch", lambda config: None)
     with pytest.raises(Stop):
         runner.run_forever(CONFIG, None, [], 5)
     assert slept == [30, 60]           # a half-minute nap (the sweep's pool is looked in on), then the retry wait

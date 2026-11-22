@@ -101,6 +101,22 @@ def judge(price: float, closes: list[float], day_limit_pct: float, days: int, pe
     return Tape(price, day, period, days, direction, swing)
 
 
+def closes(config: dict, today):
+    """The benchmark's closes of the sessions before ``today``, oldest first, far enough back for the guard."""
+    from tradingagents.dataflows.vendors.alpaca import get_closes
+
+    days = int(config.get("market_guard_days") or 0)
+    # Up to, not including, today: the sessions that have closed.
+    return get_closes(BENCHMARK, (today - timedelta(days=2 * days + 14)).isoformat(), today.isoformat())
+
+
+def judged(config: dict, price: float, history: list[float]) -> Tape:
+    """``price`` read against ``history`` by the desk's own limits."""
+    return judge(float(price), history, float(config.get("market_guard_day_pct") or 0),
+                 int(config.get("market_guard_days") or 0), float(config.get("market_guard_period_pct") or 0),
+                 float(config.get("market_swing_day_pct") or 0), float(config.get("market_swing_period_pct") or 0))
+
+
 def read_tape(config: dict, now: datetime | None = None) -> Tape | None:
     """The market as it stands, or None when the guard is off or SPY cannot be read.
 
@@ -109,20 +125,16 @@ def read_tape(config: dict, now: datetime | None = None) -> Tape | None:
     """
     if not config.get("market_guard", True):
         return None
-    from tradingagents.dataflows.vendors.alpaca import get_closes, latest_price
+    from tradingagents.dataflows.vendors.alpaca import latest_price
 
     today = (now or datetime.now(ET)).astimezone(ET).date()
-    days = int(config.get("market_guard_days") or 0)
     try:
-        # Up to, not including, today: the sessions that have closed.
-        closes = get_closes(BENCHMARK, (today - timedelta(days=2 * days + 14)).isoformat(), today.isoformat())
+        history = closes(config, today)
         price = latest_price(BENCHMARK)
     except Exception as exc:
         logger.warning("The market guard could not read %s (%s); nothing is held back", BENCHMARK, exc)
         return None
-    if not price or closes.empty:
+    if not price or history.empty:
         logger.warning("The market guard has no %s price or closes; nothing is held back", BENCHMARK)
         return None
-    return judge(float(price), [float(c) for c in closes], float(config.get("market_guard_day_pct") or 0),
-                 days, float(config.get("market_guard_period_pct") or 0),
-                 float(config.get("market_swing_day_pct") or 0), float(config.get("market_swing_period_pct") or 0))
+    return judged(config, price, [float(c) for c in history])

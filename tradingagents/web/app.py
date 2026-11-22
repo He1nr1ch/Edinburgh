@@ -276,6 +276,12 @@ def _status_section() -> str:
             cards.append(('Cycle ends in', html.escape(sw.describe_eta(p)), 'at the recent pace'))
     else:
         cards.append(('Sweep', '—', 'no sweep state yet'))
+    from tradingagents import futures
+
+    f = futures.last_reading(get_config())
+    if f:
+        cards.append(('Futures', f'{f["pct"]:+.1f}%', html.escape(f'{f["symbol"]} {f["price"]:,.2f} since the close of {f["close_day"]}; '
+                                                                 f'SPY implied {f["implied_spy"]:,.2f}')))
     u = _usage_today()
     if u and u["total"]["calls"]:
         t = u["total"]
@@ -324,8 +330,10 @@ def api_status():
     from tradingagents import sweep as sw
 
     p = _sweep_progress()
+    from tradingagents import futures
+
     return {"as_of": data.now_text(), "sweep": p, "sweep_text": sw.describe(p), "usage_today": _usage_today(),
-            "nodes": _nodes()}
+            "nodes": _nodes(), "futures": futures.last_reading(get_config())}
 
 
 @app.get("/api/positions")
