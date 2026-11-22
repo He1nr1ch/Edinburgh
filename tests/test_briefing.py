@@ -22,6 +22,10 @@ def routed(tmp_path, monkeypatch):
         return f"<{method} {' '.join(str(a) for a in args)}>"
 
     monkeypatch.setattr(briefing, "route_to_vendor", route)
+
+    def unreachable(name, day):                 # these tests are of what FRED is asked; the fresher source has its own
+        raise OSError("no answer")
+    monkeypatch.setattr(briefing.market_series, "get_market_series", unreachable)
     with run_config({**DEFAULT_CONFIG, "analyst_briefing": True, "data_cache_dir": str(tmp_path)}):
         yield calls
 
@@ -177,3 +181,30 @@ def test_the_market_around_the_stock_is_fetched_once_for_both_analysts(routed):
     asked = [c[1] for c in routed if c[0] == "get_macro_indicators"]
     assert sorted(asked) == sorted(briefing.MACRO)                    # each series once, whoever asked first
     assert set(briefing.MARKET_CONTEXT) <= set(briefing.MACRO)
+
+
+@pytest.mark.unit
+def test_the_index_the_yield_and_oil_are_read_to_the_close_and_from_fred_only_when_that_fails(routed, monkeypatch):
+    monkeypatch.setattr(briefing.market_series, "get_market_series", lambda name, day: f"<fresh {name} to {day}>")
+    text = briefing.market("FDX", "2026-11-20")
+    assert "[get_macro_indicators(sp500) returned]\n<fresh sp500 to 2026-11-20>" in text
+    assert not [c for c in routed if c[0] == "get_macro_indicators"]                      # FRED was not asked
+    news = briefing.news("FDX", "2026-11-20")
+    assert "<fresh wti_crude to 2026-11-20>" in news and "<get_macro_indicators cpi 2026-11-20 None>" in news
+    assert [c[1] for c in routed if c[0] == "get_macro_indicators"] == ["fed_funds_rate", "yield_curve", "cpi", "unemployment", "vix"]
+
+
+@pytest.mark.unit
+def test_a_series_is_reported_to_its_last_close_with_the_move_on_the_day(monkeypatch):
+    from tradingagents.dataflows.vendors import market_series as ms
+
+    closes = {"^GSPC": [("2026-11-18", 7323.63), ("2026-11-19", 7175.83), ("2026-11-20", 6910.39)],
+              "^TNX": [("2026-11-19", 5.05), ("2026-11-20", 4.91)]}
+    monkeypatch.setattr(ms, "daily_closes", lambda symbol, start, end: [p for p in closes.get(symbol, []) if p[0] <= end])
+    text = ms.get_market_series("sp500", "2026-11-20")
+    assert "## S&P 500 index (^GSPC)" in text and "**Latest:** 6910.39 (2026-11-20)" in text
+    assert "**On the day (2026-11-20 against 2026-11-19):** -3.70%" in text and text.rstrip().endswith("| 2026-11-20 | 6910.39 |")
+    assert "6910.39" not in ms.get_market_series("sp500", "2026-11-19")                   # nothing after the run's date
+    assert "**On the day (2026-11-20 against 2026-11-19):** -14 bp" in ms.get_market_series("10y_treasury", "2026-11-20")
+    with pytest.raises(ValueError):
+        ms.get_market_series("wti_crude", "2026-11-20")                                   # nothing to report: the caller falls back

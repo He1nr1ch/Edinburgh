@@ -211,9 +211,11 @@ would differ and the book would be built from whichever answer came last. Each a
 handed its data in one message and writes its report in one model call (`analyst_briefing`,
 `agents/analysts/briefing.py`), where it used to ask for it a tool call at a time; the
 market-wide news and the macro series, the same for every ticker, are fetched once a day. The
-S&P 500 index, the ten-year Treasury yield and the spot price of WTI crude (FRED's `SP500`,
-`DGS10`, `DCOILWTICO`, as of the run's date and published a day or more behind it) go to both the
-News Analyst and the Market Analyst, who reads the stock's chart against them.
+S&P 500 index, the ten-year Treasury yield and WTI crude, each to the close of the run's date
+(`vendors/market_series.py`: Yahoo's daily `^GSPC`, `^TNX` and `CL=F`, the front-month future;
+FRED's `SP500`, `DGS10` and `DCOILWTICO`, which run a day to several behind, only when that does
+not answer), go to both the News Analyst and the Market Analyst, who reads the stock's chart
+against them.
 PAIR has no setting for a node's speed and
 assigns a call as it arrives, so the fastest machine, a desktop, stood idle while the others
 queued. The direct lane (`lane.py`) sends it calls straight, but only while nobody is at it: a

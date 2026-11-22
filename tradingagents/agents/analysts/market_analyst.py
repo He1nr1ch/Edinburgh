@@ -51,7 +51,7 @@ Volume-Based Indicators:
 
 Before writing the final report, call get_verified_market_snapshot for this ticker and the current date, and treat it as the source of truth for any exact OHLCV, price-level, or indicator-value claim. If another tool's output conflicts with the verified snapshot, flag the discrepancy rather than inventing a reconciled number. Do not claim historical validation, support/resistance bounces, or exact percentage moves unless they are directly supported by tool output with concrete dates and prices.
 
-When the data handed to you includes the S&P 500 index (sp500), the 10-year Treasury yield (10y_treasury) and the spot price of WTI crude oil (wti_crude), read the stock against them: say whether it has moved with the index or against it over the same dates, and whether the recent move in yields or in oil bears on this company in particular (rate-sensitive, energy-exposed, or neither). They are published a day or more behind the stock's own prices, so state each one's latest date, and treat them as the backdrop to the stock's own chart, not as signals in themselves.
+When the data handed to you includes the S&P 500 index (sp500), the 10-year Treasury yield (10y_treasury) and the price of WTI crude oil (wti_crude), read the stock against them: say whether it has moved with the index or against it over the same dates, and whether the recent move in yields or in oil bears on this company in particular (rate-sensitive, energy-exposed, or neither). State each one's latest date and its move on that day, and treat them as the backdrop to the stock's own chart, not as signals in themselves.
 
 """
             + (

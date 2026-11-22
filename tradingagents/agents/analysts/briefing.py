@@ -28,6 +28,7 @@ from pathlib import Path
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.files import replace_file
 from tradingagents.dataflows.router import route_to_vendor
+from tradingagents.dataflows.vendors import market_series
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,10 @@ INDICATORS = ("close_50_sma", "close_200_sma", "close_10_ema", "macd", "macds", 
 # The macro series a news report on a US equity draws on.
 MACRO = ("fed_funds_rate", "10y_treasury", "yield_curve", "cpi", "unemployment", "vix", "sp500", "wti_crude")
 # What the whole market is doing, for the Market Analyst to read the stock against:
-# the index, the ten-year Treasury yield and the spot price of oil, as of the
-# run's date like everything else. The same series the News Analyst is handed,
-# so the day's copy is fetched once for both.
+# the index, the ten-year Treasury yield and oil, to the close of the run's date
+# (vendors/market_series.py; FRED, days behind, only when that does not answer).
+# The same series the News Analyst is handed, so the day's copy is fetched once
+# for both.
 MARKET_CONTEXT = ("sp500", "10y_treasury", "wti_crude")
 PRICE_HISTORY_DAYS = 120
 INDICATOR_DAYS = 30
@@ -109,8 +111,15 @@ def market(symbol: str, day: str) -> str | None:
 
 def _macro(name: str, day: str) -> tuple[str, Callable[[], str]]:
     """A macro series as a section, the day's copy shared by every ticker and both analysts."""
-    return (f"get_macro_indicators({name})",
-            lambda: _shared(f"macro_{name}", day, lambda: route_to_vendor("get_macro_indicators", name, day, None)))
+    def fetch() -> str:
+        if name in market_series.SERIES:
+            try:
+                return market_series.get_market_series(name, day)
+            except Exception as exc:
+                logger.warning("Briefing: %s to %s's close could not be had (%s); FRED's, which is older, is used", name, day, exc)
+        return route_to_vendor("get_macro_indicators", name, day, None)
+
+    return f"get_macro_indicators({name})", lambda: _shared(f"macro_{name}", day, fetch)
 
 
 def news(symbol: str, day: str) -> str | None:
