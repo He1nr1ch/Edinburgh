@@ -35,7 +35,12 @@ logger = logging.getLogger(__name__)
 INDICATORS = ("close_50_sma", "close_200_sma", "close_10_ema", "macd", "macds", "macdh", "rsi",
               "boll", "boll_ub", "boll_lb", "atr", "vwma", "mfi")
 # The macro series a news report on a US equity draws on.
-MACRO = ("fed_funds_rate", "10y_treasury", "yield_curve", "cpi", "unemployment", "vix")
+MACRO = ("fed_funds_rate", "10y_treasury", "yield_curve", "cpi", "unemployment", "vix", "sp500", "wti_crude")
+# What the whole market is doing, for the Market Analyst to read the stock against:
+# the index, the ten-year Treasury yield and the spot price of oil, as of the
+# run's date like everything else. The same series the News Analyst is handed,
+# so the day's copy is fetched once for both.
+MARKET_CONTEXT = ("sp500", "10y_treasury", "wti_crude")
 PRICE_HISTORY_DAYS = 120
 INDICATOR_DAYS = 30
 NEWS_DAYS = 7
@@ -89,7 +94,7 @@ def _compose(sections: list[tuple[str, Callable[[], str]]], day: str) -> str | N
 
 
 def market(symbol: str, day: str) -> str | None:
-    """Price history, the verified snapshot and every indicator the analyst may choose from."""
+    """Price history, the verified snapshot, every indicator the analyst may choose from, and the market around it."""
     sections = [
         (f"get_stock_data({_back(day, PRICE_HISTORY_DAYS)} to {day})",
          lambda: route_to_vendor("get_stock_data", symbol, _back(day, PRICE_HISTORY_DAYS), day)),
@@ -98,7 +103,14 @@ def market(symbol: str, day: str) -> str | None:
     sections += [(f"get_indicators({name}, {INDICATOR_DAYS} days)",
                   lambda name=name: route_to_vendor("get_indicators", symbol, name, day, INDICATOR_DAYS))
                  for name in INDICATORS]
+    sections += [_macro(name, day) for name in MARKET_CONTEXT]
     return _compose(sections, day)
+
+
+def _macro(name: str, day: str) -> tuple[str, Callable[[], str]]:
+    """A macro series as a section, the day's copy shared by every ticker and both analysts."""
+    return (f"get_macro_indicators({name})",
+            lambda: _shared(f"macro_{name}", day, lambda: route_to_vendor("get_macro_indicators", name, day, None)))
 
 
 def news(symbol: str, day: str) -> str | None:
@@ -108,10 +120,7 @@ def news(symbol: str, day: str) -> str | None:
          lambda: route_to_vendor("get_news", symbol, _back(day, NEWS_DAYS), day)),
         ("get_global_news", lambda: _shared("global_news", day, lambda: route_to_vendor("get_global_news", day, None, None))),
     ]
-    sections += [(f"get_macro_indicators({name})",
-                  lambda name=name: _shared(f"macro_{name}", day,
-                                            lambda: route_to_vendor("get_macro_indicators", name, day, None)))
-                 for name in MACRO]
+    sections += [_macro(name, day) for name in MACRO]
     return _compose(sections, day)
 
 

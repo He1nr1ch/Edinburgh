@@ -32,7 +32,12 @@ def test_the_market_analyst_is_handed_its_prices_its_snapshot_and_every_indicato
 
     assert routed[0] == ("get_stock_data", "FDX", "2026-07-16", "2026-11-13")           # 120 days back, never past the run's date
     assert routed[1] == ("get_market_snapshot", "FDX", "2026-11-13", 30)
-    assert [c[2] for c in routed[2:]] == list(briefing.INDICATORS) and all(c[3] == "2026-11-13" for c in routed[2:])
+    indicators = routed[2:2 + len(briefing.INDICATORS)]
+    assert [c[2] for c in indicators] == list(briefing.INDICATORS) and all(c[3] == "2026-11-13" for c in indicators)
+    # And the market around the stock: the index, the ten-year yield and oil, as of the same date.
+    assert routed[2 + len(briefing.INDICATORS):] == [("get_macro_indicators", name, "2026-11-13", None)
+                                                      for name in ("sp500", "10y_treasury", "wti_crude")]
+    assert "[get_macro_indicators(wti_crude) returned]" in text
     assert "[get_verified_market_snapshot returned]\n<get_market_snapshot FDX 2026-11-13 30>" in text
     assert "[get_indicators(rsi, 30 days) returned]" in text
     assert text.rstrip().endswith("than fill the gap.") and "No tool is available in this turn" in text
@@ -161,3 +166,14 @@ def test_an_answer_that_does_not_fit_its_form_still_leaves_a_report(monkeypatch)
         monkeypatch.setattr(st, "analyst_verdict", lambda *a, **k: {})
         _, report, update = turn.report_and_verdict(_prompt(), llm, [HumanMessage("FDX")], "x", "News Analyst", "news_analyst")
     assert report == "The report, in prose." and update == {}
+
+
+@pytest.mark.unit
+def test_the_market_around_the_stock_is_fetched_once_for_both_analysts(routed):
+    briefing.market("FDX", "2026-11-13")
+    briefing.news("FDX", "2026-11-13")
+    briefing.market("PSX", "2026-11-13")
+
+    asked = [c[1] for c in routed if c[0] == "get_macro_indicators"]
+    assert sorted(asked) == sorted(briefing.MACRO)                    # each series once, whoever asked first
+    assert set(briefing.MARKET_CONTEXT) <= set(briefing.MACRO)

@@ -71,6 +71,9 @@ MACRO_SERIES = {
     "m2": "M2SL",
     "money_supply": "M2SL",
     "vix": "VIXCLS",
+    "sp500": "SP500",
+    "wti_crude": "DCOILWTICO",
+    "oil": "DCOILWTICO",
     "dollar_index": "DTWEXBGS",
     # Sentiment & housing
     "consumer_sentiment": "UMCSENT",
@@ -164,6 +167,22 @@ def _request(path: str, params: dict) -> dict:
     return response.json()
 
 
+def _as_known(path: str, params: dict, realtime: dict) -> dict:
+    """``_request`` at the pinned vintage, or without the pin for a series that has no vintages.
+
+    FRED keeps no revision history (ALFRED) for market prices such as the
+    S&P 500 or the spot price of oil, and refuses a vintage date for them.
+    They are not revised, so the window's end date alone keeps them
+    point-in-time.
+    """
+    try:
+        return _request(path, {**params, **realtime})
+    except ValueError as exc:
+        if "ALFRED" not in str(exc):
+            raise
+        return _request(path, params)
+
+
 def get_macro_data(
     indicator: str,
     as_of_date: str,
@@ -211,7 +230,7 @@ def get_macro_data(
     except ValueError as e:
         return f"FRED: {e}"
 
-    meta = _request("series", {"series_id": series_id, **realtime}).get("seriess") or []
+    meta = _as_known("series", {"series_id": series_id}, realtime).get("seriess") or []
     if not meta:
         return (
             f"FRED series '{series_id}' not found. Pass a known alias "
@@ -223,15 +242,15 @@ def get_macro_data(
     frequency = info.get("frequency", "")
     seasonal = info.get("seasonal_adjustment_short", "")
 
-    observations = _request(
+    observations = _as_known(
         "series/observations",
         {
             "series_id": series_id,
             "observation_start": start_date,
             "observation_end": as_of_date,
             "sort_order": "asc",
-            **realtime,
         },
+        realtime,
     ).get("observations", [])
 
     # FRED encodes a missing observation as ".".

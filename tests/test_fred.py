@@ -306,3 +306,35 @@ def test_error_without_the_key_in_its_message_still_drops_the_request():
          pytest.raises(rq.Timeout) as caught:
         fred._request("series", {"series_id": "DGS10"})
     assert caught.value.request is None
+
+
+def test_a_market_series_with_no_vintages_is_read_without_the_pin(monkeypatch):
+    """FRED keeps no revision history for the S&P 500 or the spot price of oil, and refuses a vintage date for them."""
+    from tradingagents.dataflows.vendors import fred
+
+    asked = []
+
+    def request(path, params):
+        asked.append((path, "realtime_start" in params))
+        if "realtime_start" in params:
+            raise ValueError("FRED request failed: Bad Request.  The series does not exist in ALFRED but may exist in FRED.")
+        if path == "series":
+            return {"seriess": [{"title": "Crude Oil Prices: West Texas Intermediate (WTI)", "units_short": "$ per Barrel",
+                                 "frequency": "Daily"}]}
+        assert params["observation_end"] == "2026-11-20"              # the window's end still keeps it point-in-time
+        return {"observations": [{"date": "2026-11-16", "value": "89.24"}, {"date": "2026-11-17", "value": "89.53"}]}
+
+    monkeypatch.setattr(fred, "_request", request)
+    text = fred.get_macro_data("wti_crude", "2026-11-20")
+    assert "(DCOILWTICO)" in text and "**Latest:** 89.53 (2026-11-17)" in text
+    assert asked == [("series", True), ("series", False), ("series/observations", True), ("series/observations", False)]
+
+    def refused(path, params):
+        raise ValueError("FRED request failed: Bad Request.  The series does not exist.")
+    monkeypatch.setattr(fred, "_request", refused)
+    try:
+        fred.get_macro_data("sp500", "2026-11-20")
+    except ValueError as exc:
+        assert "does not exist." in str(exc)                           # any other refusal is still an error
+    else:
+        raise AssertionError("an unknown series was not refused")

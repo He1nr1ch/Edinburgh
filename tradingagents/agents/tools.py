@@ -196,7 +196,7 @@ def get_macro_indicators(
         str,
         "Macro indicator: a friendly alias such as 'cpi', 'core_pce', "
         "'unemployment', 'fed_funds_rate', '10y_treasury', 'yield_curve', "
-        "'real_gdp', 'vix', euro-area aliases such as 'ecb_deposit_rate', "
+        "'real_gdp', 'vix', 'sp500', 'wti_crude', euro-area aliases such as 'ecb_deposit_rate', "
         "'euro_hicp', 'euro_core_hicp', 'euro_real_gdp', 'germany_10y', "
         "'france_10y', 'eur_usd', or a raw FRED series ID such as 'CPIAUCSL'.",
     ],
