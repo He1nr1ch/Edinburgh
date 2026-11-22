@@ -8,10 +8,11 @@ held against it is closed on the pass that sees it: the shorts in a swing up,
 the longs in a swing down, whether that takes a profit or cuts a loss. No
 model is asked: it is arithmetic on SPY.
 
-It is an order the desk chooses to make, so it waits for the trading window
-(``worker_trade_from``); a position through its own stop before then still
-goes at the open. What it closes the replacement guard refills from the
-bench, from the side the market is not running against.
+Like a stop, it acts from the open and is not held for the trading window
+(``worker_trade_from``): a market that has gapped two percent against a side
+of the book is not waited out for the clock. What it closes the replacement
+guard refills from the bench, once the window has opened, from the side the
+market is not running against.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from tradingagents.worker.duty import Action, Finding, WorkerContext
 
 class MarketDuty:
     name = "market"
+    from_the_open = True        # runs before ``worker_trade_from`` too; see runner.run_day
 
     def run(self, context: WorkerContext) -> list[Finding]:
         tape = read_tape(context.config, context.now)
@@ -42,6 +44,6 @@ class MarketDuty:
                       f"{'taking' if gain >= 0 else 'cutting'} {gain:+.1f}% on the position")
             findings.append(Finding(
                 self.name, h.symbol, "urgent", f"{h.side} {h.symbol}: closed against a market swinging {way}", reason,
-                Action(h.symbol, "exit", "sell" if h.qty > 0 else "buy", abs(int(h.qty)), reason),
+                Action(h.symbol, "exit", "sell" if h.qty > 0 else "buy", abs(int(h.qty)), reason, at_stop=True),
             ))
         return findings

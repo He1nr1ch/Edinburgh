@@ -382,7 +382,8 @@ def build_default_config() -> dict:
         # are the dearest of the day to trade in: the desk's first week paid 0.32% a
         # side in the first five and 0.07% after 10:30. A stop is not held for it: a
         # position through its stop is closed from the first minute, and the mirror
-        # follows that close. "" trades everything from the open.
+        # follows that close; nor is the side closed against a market swing.
+        # "" trades everything from the open.
         "worker_trade_from": "10:30",
         # Every watched position's stop is also left at Alpaca as a day stop order,
         # so it acts between passes and when the worker is down (worker/protect.py).

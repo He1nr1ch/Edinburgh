@@ -316,7 +316,10 @@ def test_a_swing_up_closes_the_shorts_at_a_profit_or_a_loss_and_a_swing_down_the
     assert (fis.action.symbol, fis.action.kind, fis.action.side, fis.action.qty) == ("FIS", "exit", "buy", 156)
     assert "swung up" in fis.detail and "taking +5.9%" in fis.detail
     assert (t.action.symbol, t.action.side, t.action.qty) == ("T", "buy", 216) and "cutting -2.4%" in t.detail
-    assert not fis.action.at_stop and fis.severity == "urgent"       # a choice: it waits for the trading window
+    assert fis.action.at_stop and fis.severity == "urgent" and market.MarketDuty.from_the_open   # from the open, like a stop
+    from tradingagents.worker.policy import refusal
+    early = datetime(2026, 11, 6, 14, 35, tzinfo=UTC)               # 09:35 in New York
+    assert refusal(fis.action, market_open=True, paper=True, pending=set(), config=ctx.config, now=early) is None
 
     market, ctx = _held_desk(tmp_path / "down", monkeypatch, Tape(700.0, -2.2, -5.9, 5, -1, -1))
     (gd,) = market.MarketDuty().run(ctx)

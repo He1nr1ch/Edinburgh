@@ -25,7 +25,7 @@ class Action:
     value: float | None = None      # what the order is worth at the price it was sized at
     stop: float | None = None       # the stop an opening order carries, kept with the order for its R
     decided: str | None = None      # the analysis date of the decision an opening order comes from
-    at_stop: bool = False           # a stop acting: sent from the open, not held for ``worker_trade_from``
+    at_stop: bool = False           # a stop or a market swing acting: sent from the open, not held for ``worker_trade_from``
 
 
 @dataclass

@@ -155,6 +155,7 @@ def refusal(action: Action, *, market_open: bool, paper: bool, pending: set[str]
     # the stop allowed, and each minute it is held for the clock can add to
     # that: on 2026-11-20 APH, GEV and KKR waited the hour and went out 1.2% to
     # 1.4% below their stops, against the 0.3% a side the first minutes cost.
+    # The same holds for a side closed against a market swing (worker/market.py).
     early = None if action.at_stop else too_early(config, now)
     if early:
         return early
