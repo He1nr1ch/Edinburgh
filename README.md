@@ -205,9 +205,9 @@ undecided tickers queued once more, so a hung process cannot hold up the cycle. 
 with an error before deciding anything (the feedback database out of reach) is not counted as
 analysed: its tickers return to the front of the queue and the sweep starts no run for
 `sweep_failure_pause_minutes` (five, doubling up to thirty while runs keep failing). A cycle that
-ends on a weeknight begins again on the same close; one that ends over a weekend (a Saturday, or two
-days and more after the close, the market shut) waits for the next close, since nothing it reads
-would differ and the book would be built from whichever answer came last. Each analyst is
+ends is not begun again on the same close: the sweep waits for the next close, on a weeknight,
+over a weekend or through a session, since the bars it reads end at that close and the book
+would be built from whichever answer came last. Each analyst is
 handed its data in one message and writes its report in one model call (`analyst_briefing`,
 `agents/analysts/briefing.py`), where it used to ask for it a tool call at a time; the
 market-wide news and the macro series, the same for every ticker, are fetched once a day. The

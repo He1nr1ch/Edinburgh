@@ -2,10 +2,11 @@
 
 The worker drives it with :meth:`Sweep.tick` on every turn of its loop. A
 cycle analyses the held positions first, then the watchlist least recently
-analysed first; when a cycle ends the next begins, and when the session's
-close arrives (the last trading day changes) the cycle restarts on the
-holdings against the new close, which is when a fresh review matters most.
-Over a weekend a cycle that ends is not begun again: see :func:`weekend`.
+analysed first, and when the session's close arrives (the last trading day
+changes) the cycle restarts on the holdings against the new close, which is
+when a fresh review matters most. A cycle that ends has analysed every name
+on its close, and the sweep then waits for the next close: it never goes
+round a second time on the same one (see :meth:`Sweep.tick`).
 
 The work is done by a pool of processes, each taking a few tickers from the
 front of the queue (``sweep_round_size``) and, the moment it is done, the
@@ -39,9 +40,8 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import date as Date, datetime
+from datetime import datetime
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from tradingagents.daily import ensure_watchlist, order_tickers, watchlist_tickers
 
@@ -49,25 +49,6 @@ logger = logging.getLogger(__name__)
 
 NICE = 10       # the sweep's processes yield the CPU to the worker
 PACE_ROUNDS = 10  # how many finished runs the pace (and the finish estimate) is taken from
-ET = ZoneInfo("America/New_York")
-
-
-def weekend(close: str, today: str, market_open: bool) -> bool:
-    """Whether the market is shut for more than a night: a Saturday, or two days and more since ``close``.
-
-    A cycle that ends then has analysed every name on the last close, and
-    nothing it reads will change before the next one: the bars end at that
-    close and the news at its evening. Going round again would ask the model
-    the same questions and trade on whichever answer came last (on the weekend
-    of 2026-11-21 the list was due to finish at 1 AM on Sunday and be most of
-    the way through a second time when Monday's book was built). So the sweep
-    waits for the next close. On a weeknight it goes round again as before.
-    Monday before the open is still the weekend, and so is a holiday.
-    """
-    if market_open or not close:
-        return False
-    day = Date.fromisoformat(today)
-    return day.weekday() == 5 or (day - Date.fromisoformat(close)).days >= 2
 
 
 @dataclass
@@ -99,7 +80,7 @@ class Sweep:
         self.retried: list[str] = []     # tickers whose failed run was queued again this cycle (once each)
         self.hold_until = 0.0            # time.monotonic() before which no run starts (see _hold)
         self.broken_runs = 0             # runs in a row that could not begin their work
-        self.waiting = False             # the cycle is complete and the weekend is not over (see weekend)
+        self.waiting = False             # the cycle is complete and the next close has not come (see tick)
         self._load()
 
     # --- state -----------------------------------------------------------
@@ -126,6 +107,15 @@ class Sweep:
         if interrupted:
             self.queue = [t for t in dict.fromkeys(interrupted) if t not in self.queue] + self.queue
             logger.info("A restart interrupted the sweep's runs; %d tickers are queued again.", len(interrupted))
+        # A cycle begun on a close the cycle before it had already finished: the
+        # sweep used to go round again when a session opened on a close it had
+        # completed (on Monday 2026-11-23 it began Friday's list a second time,
+        # two days from done, to be dropped at that day's close). It is ended.
+        if self.queue and self.last_cycle.get("date") == self.date and not self.last_cycle.get("queued"):
+            logger.info("Sweep cycle %d repeats %s's close, which cycle %s finished; it is dropped, and the sweep "
+                        "waits for the next close.", self.cycle, self.date, self.last_cycle.get("cycle"))
+            self.queue, self.waiting = [], True
+            self._save()
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,7 +131,7 @@ class Sweep:
     def due(self, market_open: bool) -> bool:
         """Whether a tick has work to do now: a run has ended, or the pool has a place free and the sweep is not held.
 
-        A sweep waiting out the weekend has none: the look every five minutes
+        A sweep waiting for the next close has none: the look every five minutes
         (``runner.tick_sweep``) is enough to see the next close arrive.
         """
         return any(r.proc.poll() is not None for r in self.runs) or (
@@ -150,33 +140,34 @@ class Sweep:
     def held(self) -> bool:
         return time.monotonic() < self.hold_until
 
-    def tick(self, date: str, market_open: bool, holdings: list[str], last_analysed: dict[str, str],
-             today: str | None = None) -> None:
+    def tick(self, date: str, market_open: bool, holdings: list[str], last_analysed: dict[str, str]) -> None:
         """Advance the sweep: take in the runs that have ended, start a cycle if one is due, fill the pool.
 
         ``date`` is the last close (the cycle restarts when it changes),
         ``holdings`` the held symbols (first in a new cycle), ``last_analysed``
-        each ticker's newest decision date (least recent first after them),
-        ``today`` the calendar date in New York (now, when not given).
+        each ticker's newest decision date (least recent first after them).
+
+        A cycle that ends is not begun again on the same close. Every name
+        has been analysed on it, the bars end at that close, and going round
+        again asks the model the same questions and trades on whichever
+        answer came last; a second pass begun in a session is also dropped,
+        a small part done, when that session closes. So the sweep waits, on a
+        weeknight, over a weekend or through a session, for the next close.
         """
         self._stop_overdue()
         for run in [r for r in self.runs if r.proc.poll() is not None]:
             self._finish_run(run)
         # A new close starts the next cycle at once; the runs still at work on
-        # the old one finish on their own. A queue that has run out starts the
-        # list again once the last run is in (a failure may yet queue a ticker),
-        # except over a weekend, when it waits for the next close.
+        # the old one finish on their own. A queue that has run out, once the
+        # last run is in (a failure may yet queue a ticker), ends the cycle,
+        # and the sweep waits for the next close.
         if date != self.date:
             self._start_cycle(date, holdings, last_analysed)
-        elif not self.queue and not self.runs:
-            if not weekend(date, today or datetime.now(ET).strftime("%Y-%m-%d"), market_open):
-                self._start_cycle(date, holdings, last_analysed)
-            elif not self.waiting:
-                self.waiting = True
-                logger.info("Sweep cycle %d on %s's close is complete: %d analysed. It is the weekend, and nothing the "
-                            "desk reads changes before the next close, so the sweep waits for it.",
-                            self.cycle, self.date, self.analysed_this_cycle)
-                self._save()
+        elif not self.queue and not self.runs and not self.waiting:
+            self.waiting = True
+            logger.info("Sweep cycle %d on %s's close is complete: %d analysed. The sweep waits for the next close.",
+                        self.cycle, self.date, self.analysed_this_cycle)
+            self._save()
         if self.held():
             return
         while self.queue and len(self.runs) < self.parts_now(market_open):

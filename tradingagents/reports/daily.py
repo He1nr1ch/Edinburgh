@@ -201,8 +201,8 @@ def _sweep_lines(s: dict) -> list[str]:
                  + (f"; pace {s['progress']['minutes_per_ticker']:.1f} min per ticker" if (s.get('progress') or {}).get('minutes_per_ticker') else "")
                  + ".")
     if (s.get("progress") or {}).get("waiting"):
-        lines.append("The sweep is idle by design: this cycle analysed the whole list on the last close, and over a weekend "
-                     "nothing it reads changes, so it waits for the next close. Idle nodes until then are not a fault.")
+        lines.append("The sweep is idle by design: this cycle analysed the whole list on the last close, and it does "
+                     "not go round again on the same one, so it waits for the next close. Idle nodes until then are not a fault.")
     return lines
 
 
