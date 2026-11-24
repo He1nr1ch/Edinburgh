@@ -221,8 +221,7 @@ def test_a_tiers_own_machine_is_called_directly_never_down_the_lane_and_named_in
 
     from tradingagents.dataflows.config import run_config
     from tradingagents.default_config import DEFAULT_CONFIG
-    from tradingagents.llm_clients import factory
-    from tradingagents.llm_clients import ollama_client as oc
+    from tradingagents.llm_clients import factory, ollama_client as oc
 
     url, _ = gateway
     sent, recorded = [], []
