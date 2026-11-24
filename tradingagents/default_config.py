@@ -192,7 +192,10 @@ def build_default_config() -> dict:
         "backend_url": None,
         # A tier may name its own provider and endpoint (#1440): the quick tier serves
         # the analysts, researchers, debaters and trader, the deep tier the managers.
-        # None means the tier uses llm_provider and backend_url.
+        # None means the tier uses llm_provider and backend_url. An Ollama tier's own
+        # endpoint on another host is a machine called directly, outside PAIR and never
+        # down the lane: the managers' large model on the PGX, say
+        # (deep_think_llm "qwen3.5:122b", deep_think_backend_url "http://192.168.0.95:11434").
         "quick_think_provider": None,
         "deep_think_provider": None,
         "quick_think_backend_url": None,

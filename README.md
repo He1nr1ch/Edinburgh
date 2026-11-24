@@ -223,7 +223,14 @@ gateway on the desktop (`tradingagents lane`, `scripts/lane/edinburgh-lane.servi
 calls to its own Ollama once it has seen no key or mouse for ten minutes or its screen is
 locked, and answers 503 otherwise; the worker (`TRADINGAGENTS_OLLAMA_LANE_URL`) sends a call
 down the lane when a place is free and the gateway is open, and through PAIR as ever when
-not. A call in flight when its owner returns finishes; nothing new is taken.
+not. A call in flight when its owner returns finishes; nothing new is taken. A model the
+desktop does not have (an agent with a model of its own) is refused there once and goes
+through PAIR; the lane stays open to the rest.
+A tier can also have a machine of its own, outside the cluster: an Ollama tier whose endpoint
+(`TRADINGAGENTS_DEEP_THINK_BACKEND_URL`) is on another host is called there directly, never
+through PAIR or the lane, and the usage log names the host. That is how the three managers
+(and the daily and weekly reports, which use the deep tier) can run a large model on a
+machine too slow for the analysts' many calls.
 When the session closes the cycle restarts on the holdings against the new
 close. At `daily_book_time` (9 AM ET) on a day the market opens it builds the book. Size the book from every decision under
 `decision_max_age_days` old and write a bench of the `bench_size` best-scored calls after it, long or short together

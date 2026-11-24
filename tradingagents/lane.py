@@ -188,7 +188,7 @@ SHUT_AFTER_REFUSAL = 30.0
 SHUT_AFTER_FAULT = 600.0
 
 _asked: dict[str, tuple[float, dict]] = {}
-_shut_until: dict[str, float] = {}
+_shut_until: dict[str | tuple[str, str], float] = {}     # by lane, and by (lane, model) for a model it lacks
 
 
 def ask(url: str, now: float | None = None) -> dict:
@@ -214,24 +214,30 @@ def ask(url: str, now: float | None = None) -> dict:
     return state
 
 
-def shut(url: str, seconds: float, why: str = "") -> None:
-    """Leave the lane alone for ``seconds``: it refused a call, or failed one."""
-    _shut_until[url] = time.monotonic() + seconds
-    _asked.pop(url, None)
+def shut(url: str, seconds: float, why: str = "", model: str = "") -> None:
+    """Leave the lane alone for ``seconds``: it refused a call, or failed one.
+
+    With ``model``, only that model's calls leave it alone: the machine at its
+    end does not have the model, and serves the others as before.
+    """
+    _shut_until[(url, model) if model else url] = time.monotonic() + seconds
+    if not model:
+        _asked.pop(url, None)
     if why:
         logger.info("The lane at %s is left alone for %d s: %s", url, seconds, why)
 
 
 @contextmanager
-def claim(config: dict):
+def claim(config: dict, model: str = ""):
     """A place in the lane for one call: ``(url, node)`` while it is held, or None when the call goes through PAIR.
 
-    None when no lane is configured, it was shut a moment ago, every place is
-    taken (by this process or another: the lock is a file), or the gateway
-    says the desktop is in use.
+    None when no lane is configured, it was shut a moment ago (to every call,
+    or to this ``model``), every place is taken (by this process or another:
+    the lock is a file), or the gateway says the desktop is in use.
     """
     url = (config.get("ollama_lane_url") or "").strip().rstrip("/")
-    if not url or time.monotonic() < _shut_until.get(url, 0.0):
+    now = time.monotonic()
+    if not url or now < _shut_until.get(url, 0.0) or now < _shut_until.get((url, model), 0.0):
         yield None
         return
     folder = Path(config.get("data_cache_dir") or ".") / "lane"

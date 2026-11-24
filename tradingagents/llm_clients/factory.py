@@ -138,14 +138,19 @@ def create_tier_client(config: dict, tier: str, **extra) -> BaseLLMClient:
 
     A tier on its own provider gets that provider's settings (reasoning effort,
     effort level) and its own endpoint, else the provider's default:
-    ``backend_url`` belongs to ``llm_provider``.
+    ``backend_url`` belongs to ``llm_provider``. An Ollama tier with an endpoint
+    of its own is told so: on another host it is a machine called directly,
+    past PAIR and the lane (see ``ollama_client``).
     """
     provider = tier_provider(config, tier)
+    own_url = config.get(f"{tier}_think_backend_url")
     if provider == config["llm_provider"].lower():
-        base_url = config.get(f"{tier}_think_backend_url") or config.get("backend_url")
+        base_url = own_url or config.get("backend_url")
     else:
-        base_url = config.get(f"{tier}_think_backend_url")
+        base_url = own_url
     kwargs = build_llm_kwargs({**config, "llm_provider": provider})
+    if provider == "ollama" and own_url:
+        kwargs["own_endpoint"] = True
     return create_llm_client(provider=provider, model=config[f"{tier}_think_llm"], base_url=base_url,
                              **kwargs, **extra)
 

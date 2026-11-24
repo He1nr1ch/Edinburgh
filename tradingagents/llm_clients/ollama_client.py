@@ -31,6 +31,12 @@ router's own history does, a few seconds later, so each answered call is
 looked up there once the history has caught up and its usage record is given
 the node (see ``usage.resolve_nodes`` and ``pair.served_by``). :func:`check_endpoint`
 refuses a PAIR machine pointed at anything but its own loopback.
+
+**A machine of its own.** A tier that names its own endpoint on another host
+(``deep_think_backend_url``: the managers' large model on a machine outside the
+cluster) is called there directly. That is the one address a PAIR machine may
+name besides its loopback; its calls never try the lane, and their usage
+records name the host.
 """
 
 from __future__ import annotations
@@ -103,20 +109,27 @@ def is_loopback(url: str) -> bool:
     return (urlparse(url).hostname or "") in LOOPBACK_HOSTS
 
 
-def check_endpoint(url: str, config: dict | None = None) -> None:
+def check_endpoint(url: str, config: dict | None = None, own: bool = False) -> None:
     """Refuse a PAIR machine whose client points anywhere but its own loopback.
 
     PAIR's proxy takes plaintext only from the machine it runs on; another
     node's address refuses the call, and plain Ollama on another host would
     bypass the router. Where there is no PAIR (no router folder), any Ollama
-    address is fine.
+    address is fine. So is a tier's own endpoint (``own``): a machine named for
+    that tier alone is meant to be called past the router.
     """
-    if pair.available(pair.pair_dir(config)) and not is_loopback(url):
+    if not own and pair.available(pair.pair_dir(config)) and not is_loopback(url):
         raise ValueError(
             f"This machine runs PAIR, but the model endpoint is {url}. PAIR answers only on its own "
             "loopback: set OLLAMA_BASE_URL to http://127.0.0.1:<port of this machine's nvpair-proxy> "
-            "(find it with: ss -ltnp | grep nvpair-proxy)."
+            "(find it with: ss -ltnp | grep nvpair-proxy). A machine outside the cluster is named "
+            "per tier instead (TRADINGAGENTS_DEEP_THINK_BACKEND_URL)."
         )
+
+
+def direct_node(url: str) -> str:
+    """The name a directly called machine has in the usage log."""
+    return f"{urlparse(url).hostname} (direct)"
 
 
 class NormalizedChatOllama(ChatOllama):
@@ -131,6 +144,7 @@ class NormalizedChatOllama(ChatOllama):
 
     idle_timeout: float | None = None     # seconds of silence allowed between chunks (the queue wait included)
     call_timeout: float | None = None     # seconds allowed for the whole call
+    direct_node: str = ""                 # set when the endpoint is a machine of the tier's own, outside PAIR: its name
     _lane_node: str = PrivateAttr(default="")   # set on the copy that sends down the direct lane: the machine at its end
 
     def _down_the_lane(self, url: str, node: str):
@@ -169,22 +183,26 @@ class NormalizedChatOllama(ChatOllama):
             stream.close()      # a dropped call must leave the server too, so PAIR frees the node
 
     def invoke(self, input, config=None, **kwargs):
-        if not self._lane_node:
+        if not self._lane_node and not self.direct_node:
             from tradingagents.dataflows.config import get_config
 
-            with lane.claim(get_config()) as place:
+            with lane.claim(get_config(), self.model) as place:
                 if place:
                     url, node = place
                     try:
                         return self._down_the_lane(url, node).invoke(input, config, **kwargs)
                     except Exception as exc:
                         # The lane's fault is never the call's: it goes through PAIR.
-                        # A 503 is the gateway saying its owner is back; anything
-                        # else it answers (the model is not on that machine) or
-                        # fails to answer keeps the lane out of use for longer.
+                        # A 503 is the gateway saying its owner is back. A 404 is
+                        # that machine not having this model (an agent with a
+                        # model of its own): the lane stays open to the others.
+                        # Anything else it answers or fails to answer keeps the
+                        # lane out of use for longer.
                         status = getattr(exc, "status_code", None)
                         if status == 503:
                             lane.shut(url, lane.SHUT_AFTER_REFUSAL)
+                        elif status == 404:
+                            lane.shut(url, lane.SHUT_AFTER_FAULT, f"{self.model} is not on that machine", model=self.model)
                         elif status is not None or isinstance(exc, InferenceUnavailable):
                             lane.shut(url, lane.SHUT_AFTER_FAULT, f"{type(exc).__name__}: {exc}")
                         else:
@@ -206,7 +224,7 @@ class NormalizedChatOllama(ChatOllama):
             if isinstance(exc, InferenceError):
                 errors.record("timeout" if isinstance(exc, InferenceTimeout) else "unavailable", exc, agent, self.model)
             raise
-        usage.record_response(response, self.model, config, started=started, ended=time.time(), node=self._lane_node)
+        usage.record_response(response, self.model, config, started=started, ended=time.time(), node=self._lane_node or self.direct_node)
         used = (getattr(response, "usage_metadata", None) or {}).get("input_tokens")
         if used and self.num_ctx and used > 0.8 * self.num_ctx:
             logger.warning("Prompt used %d of the %d-token context window on %s", used, self.num_ctx, self.model)
@@ -231,7 +249,11 @@ class OllamaClient(BaseLLMClient):
         for key, renamed in _RENAMED_KWARGS.items():
             if key in self.kwargs:
                 llm_kwargs[renamed] = self.kwargs[key]
-        check_endpoint(llm_kwargs["base_url"])
+        # A tier's own endpoint on another host is a machine called directly, past PAIR and the lane.
+        own = bool(self.kwargs.get("own_endpoint")) and not is_loopback(llm_kwargs["base_url"])
+        check_endpoint(llm_kwargs["base_url"], own=own)
+        if own:
+            llm_kwargs["direct_node"] = direct_node(llm_kwargs["base_url"])
         # The read limit is the idle limit: the stream's longest allowed silence.
         llm_kwargs["client_kwargs"] = {"timeout": httpx.Timeout(
             connect=CONNECT_SECONDS, read=llm_kwargs.get("idle_timeout"), write=60.0, pool=CONNECT_SECONDS)}

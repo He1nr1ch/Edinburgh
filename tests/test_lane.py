@@ -178,3 +178,71 @@ def test_the_model_client_sends_a_call_down_an_open_lane_and_through_pair_when_i
     with run_config({**DEFAULT_CONFIG, "data_cache_dir": str(tmp_path)}):             # no lane: nothing changes
         llm.invoke("hi")
         assert sent[-1] == "http://127.0.0.1:11434"
+
+
+@pytest.mark.unit
+def test_a_model_the_desktop_lacks_goes_through_pair_and_leaves_the_lane_open_to_the_others(gateway, tmp_path, monkeypatch):
+    from langchain_ollama import ChatOllama
+
+    from tradingagents.dataflows.config import run_config
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.llm_clients import ollama_client as oc
+
+    url, _ = gateway
+    sent = []
+
+    class NotFound(Exception):
+        status_code = 404
+
+    def fake_invoke(self, input, config=None, **kwargs):
+        sent.append((self.model, self.base_url))
+        if self.base_url == url and self.model == "qwen3.5:122b":
+            raise NotFound("model 'qwen3.5:122b' not found")
+        return _Reply()
+
+    monkeypatch.setattr(ChatOllama, "invoke", fake_invoke)
+    monkeypatch.setattr(oc.usage, "record_response", lambda *a, **k: None)
+    monkeypatch.setattr(oc, "normalize_content", lambda r: r)
+    pair_url = "http://127.0.0.1:11434"
+    small = oc.NormalizedChatOllama(model="qwen3.8:27b", base_url=pair_url)
+    large = small.with_call(model="qwen3.5:122b")
+    with run_config({**DEFAULT_CONFIG, "ollama_lane_url": url, "data_cache_dir": str(tmp_path)}):
+        large.invoke("hi")
+        assert sent == [("qwen3.5:122b", url), ("qwen3.5:122b", pair_url)]          # tried once, then through PAIR
+        large.invoke("hi")
+        assert sent[2:] == [("qwen3.5:122b", pair_url)]                             # not tried again
+        small.invoke("hi")
+        assert sent[3:] == [("qwen3.8:27b", url)]                                   # the lane still carries the model it has
+
+
+@pytest.mark.unit
+def test_a_tiers_own_machine_is_called_directly_never_down_the_lane_and_named_in_the_usage_log(gateway, tmp_path, monkeypatch):
+    from langchain_ollama import ChatOllama
+
+    from tradingagents.dataflows.config import run_config
+    from tradingagents.default_config import DEFAULT_CONFIG
+    from tradingagents.llm_clients import factory
+    from tradingagents.llm_clients import ollama_client as oc
+
+    url, _ = gateway
+    sent, recorded = [], []
+    monkeypatch.setattr(ChatOllama, "invoke", lambda self, input, config=None, **kw: sent.append(self.base_url) or _Reply())
+    monkeypatch.setattr(oc.usage, "record_response", lambda response, model, config, started, ended, node="": recorded.append(node))
+    monkeypatch.setattr(oc, "normalize_content", lambda r: r)
+    monkeypatch.setattr(oc.pair, "available", lambda folder=None: True)             # this machine runs PAIR
+    config = {**DEFAULT_CONFIG, "llm_provider": "ollama", "backend_url": "http://127.0.0.1:11434",
+              "quick_think_llm": "qwen3.8:27b", "deep_think_llm": "qwen3.5:122b",
+              "deep_think_backend_url": "http://192.168.0.95:11434",
+              "ollama_lane_url": url, "data_cache_dir": str(tmp_path)}
+
+    deep = factory.create_tier_client(config, "deep").get_llm()                      # allowed, though it is not loopback
+    quick = factory.create_tier_client(config, "quick").get_llm()
+    manager = factory.for_agent(deep, {**config, "agent_calls": {"deep": {"timeout": 1200}}}, "Portfolio Manager", "deep")
+    with run_config(config):
+        manager.invoke("hi")
+        quick.invoke("hi")
+    assert sent == ["http://192.168.0.95:11434", url]                               # the manager direct, the rest down the lane
+    assert recorded == ["192.168.0.95 (direct)", recorded[1]] and recorded[1].endswith("(lane)")
+
+    with pytest.raises(ValueError, match="PAIR"):                                    # any other address is still refused
+        factory.create_llm_client("ollama", "qwen3.8:27b", "http://192.168.0.95:11434").get_llm()
