@@ -57,8 +57,10 @@ class DailyReview(Envelope):
 
 def _cause(reason: str) -> str:
     r = reason.lower()
-    if "through the stop" in r:
+    if "through the stop" in r or r.startswith("the stop "):     # the Watcher's stop, or the one left at Alpaca filling
         return "stop"
+    if r.startswith("the market has swung"):                     # worker/market.py: the desk's own rule, named as such
+        return "market swing"
     if "through the target" in r:
         return "target"
     if r.startswith("review on"):
@@ -70,6 +72,68 @@ def _cause(reason: str) -> str:
     if "not accounted for" in r or "accounted for" in r:
         return "news"
     return "other"
+
+
+def _unrealised(positions: list[dict]) -> float:
+    """What the open positions stand to make or lose against their entries, in dollars."""
+    total = 0.0
+    for p in positions:
+        if p.get("avg_entry_price") and p.get("qty") and p.get("market_value") is not None:
+            per = 100 if p.get("asset_class") == "us_option" else 1          # an option's entry is quoted per share
+            total += p["market_value"] - p["avg_entry_price"] * p["qty"] * per
+    return total
+
+
+def _reconcile(snap: dict, prior: dict, txns: list[dict], realised: float | None, unrealised: float) -> dict | None:
+    """The day's equity change set against realised P/L and the change in unrealised P/L, with what is left over named.
+
+    Realised P/L is measured from each position's entry, so a gain taken today
+    on a position opened earlier was already in yesterday's equity as
+    unrealised. The equity change therefore equals realised plus the *change*
+    in unrealised, not realised plus unrealised; what remains after that is
+    the gap, and its possible causes are stated rather than left to guess.
+    """
+    if not snap.get("equity") or not prior.get("equity"):
+        return None
+    change = snap["equity"] - prior["equity"]
+    before = _unrealised(prior.get("positions", []))
+    explained = (realised or 0.0) + unrealised - before
+    gap = change - explained
+    unpriced = [t["ticker"] for t in txns if t["flow"] == "out" and t["pnl"] is None]
+    causes = []
+    if abs(gap) >= max(1.0, abs(snap["equity"]) * 0.0001):
+        if unpriced:
+            causes.append(f"{len(unpriced)} exit(s) with no P/L on record ({', '.join(unpriced)}): a data issue, their result is missing from realised")
+        causes.append(f"the snapshots were written at {snap.get('as_of') or 'an unrecorded time'} and {prior.get('as_of') or 'an unrecorded time'}, "
+                      "not at the closing print")
+        causes.append("fees, borrow, interest and dividends, none of which the desk records")
+    return {"equity_change": round(change, 2), "realised": realised, "unrealised": round(unrealised, 2),
+            "unrealised_prior": round(before, 2), "unrealised_change": round(unrealised - before, 2),
+            "explained": round(explained, 2), "gap": round(gap, 2), "reconciles": not causes,
+            "unpriced_exits": unpriced, "gap_causes": causes}
+
+
+def _reconcile_line(rec: dict) -> str:
+    realised = f"{rec['realised']:+,.2f}" if rec["realised"] is not None else "0.00"
+    line = (f"Reconciliation: equity change {rec['equity_change']:+,.2f} = realised {realised} "
+            f"+ change in unrealised {rec['unrealised_change']:+,.2f} (from {rec['unrealised_prior']:+,.2f} at the prior close "
+            f"to {rec['unrealised']:+,.2f} at this one) + a gap of {rec['gap']:+,.2f}")
+    if rec["reconciles"]:
+        return line + ". It reconciles: the gap is rounding"
+    return line + ". The gap is not explained by the desk's records; it can only be: " + "; ".join(rec["gap_causes"])
+
+
+def _held_line(f: dict) -> str:
+    """The book's count set beside the open positions list, so the two are never read as one figure."""
+    held = len(f["positions"])
+    line = f"Book this morning: {len(f['book'])} orders, {f['book_held']} of them still held at the close"
+    if not held:
+        return line
+    outside = f.get("held_outside_book") or []
+    line += f"; open positions at the close: {held}"
+    if outside:
+        line += f" ({f['book_held']} from the book and {len(outside)} not in it, carried over or opened as replacements: {', '.join(outside)})"
+    return line
 
 
 def gather(config: dict, day: str) -> dict:
@@ -102,7 +166,7 @@ def gather(config: dict, day: str) -> dict:
         t["cause"] = _cause(t["reason"])
     exits = [t for t in txns if t["flow"] == "out"]
     positions = snap.get("positions", [])
-    unrealised = sum((p["pnl_pct"] or 0) / 100 * abs(p["market_value"]) for p in positions if p.get("pnl_pct") is not None)
+    unrealised = _unrealised(positions)
 
     log = results / "worker" / f"{day}.log"
     findings = []
@@ -113,6 +177,7 @@ def gather(config: dict, day: str) -> dict:
     day_rec = state.days.get(day, {})
     book_rows = load_rows(Path(day_rec["book_path"])) if day_rec.get("book_path") and Path(day_rec["book_path"]).is_file() else []
     held = {p["ticker"] for p in positions}
+    booked = {r["ticker"] for r in book_rows}
 
     sweep_path = Path(config.get("sweep_state_path", ""))
     sweep = json.loads(sweep_path.read_text(encoding="utf-8")) if sweep_path.is_file() else {}
@@ -173,7 +238,10 @@ def gather(config: dict, day: str) -> dict:
         "exits_by_cause": dict(Counter(t["cause"] for t in exits)),
         "entries": sum(1 for t in txns if t["flow"] == "in"),
         "findings": findings,
-        "book": book_rows, "book_held": sum(1 for r in book_rows if r["ticker"] in held),
+        "book": book_rows, "book_held": len(held & booked),
+        # What is held that the morning's book did not order: with book_held it sums to the open positions list.
+        "held_outside_book": sorted(held - booked),
+        "reconciliation": _reconcile(snap, prior, txns, realised(txns), unrealised),
         "sweep": {"cycle": sweep.get("cycle"), "date": sweep.get("date"), "queued": len(sweep.get("queue", [])),
                   "analysed_this_cycle": sweep.get("analysed_this_cycle"), "decided_today": decided_today, "decided_on": decided_on,
                   "last_cycle": last, "progress": sweep_progress(sweep)},
@@ -215,6 +283,8 @@ def _facts_text(f: dict) -> str:
                      f"Equity {f['equity']:,.0f}{change}; cash {f['cash']:,.0f}; nothing realised today")
         if f["unrealised"] is not None:
             lines.append(f"Unrealised across {len(f['positions'])} open positions: {f['unrealised']:+,.0f}")
+        if f.get("reconciliation"):
+            lines.append(_reconcile_line(f["reconciliation"]))
     if f.get("r"):
         lines.append(_r_line(f) + ". R is an exit's result over the risk it was opened with (entry to stop): "
                      "a stop-out is about -1R, and the mean R per exit is the desk's edge")
@@ -222,7 +292,7 @@ def _facts_text(f: dict) -> str:
     if f.get("entry_ages"):
         lines.append(_ages_line(f) + ". A decision is dated by the close it analysed, so one day old is the freshest there can be")
     if f["book"]:
-        lines.append(f"Book this morning: {len(f['book'])} orders, {f['book_held']} held at the close")
+        lines.append(_held_line(f))
     if f["transactions"]:
         lines.append("Transactions:")
         for t in f["transactions"]:
@@ -304,7 +374,12 @@ def _prompt(facts: dict, prior_lessons: str) -> str:
         "stop defaults to 2%; the sweep analyses the index around the clock and the book is rebuilt each "
         "morning from decisions under five days old. Every position's stop is also left at the broker as a stop "
         "order, on purpose: an exit recorded as filled or closed by Alpaca is the stop working as designed, at "
-        "the broker's speed, and is not a Watcher that failed to act. A sweep cycle restarts at each close, so "
+        "the broker's speed, and is not a Watcher that failed to act. An exit whose cause reads 'market swing' is that "
+        "rule closing the side held against the market, not a judgement on the position. The record's reconciliation "
+        "line sets the equity change against realised P/L plus the change in unrealised P/L (realised is measured "
+        "from entry, so a gain taken today on an older position was already in yesterday's equity); work from that "
+        "line and do not add realised to unrealised yourself. The open positions list counts everything held; the "
+        "book's count is only the morning's orders still held, and the two differ by what was carried or replaced. A sweep cycle restarts at each close, so "
         "its counters are at nought when this review is written; judge the sweep by the cycle that ended.\n\n"
         f"Today's record:\n{_facts_text(facts)}\n\n"
         + (f"Lessons already on record (do not repeat them; refine or contradict them if today's evidence warrants):\n{prior_lessons}\n\n" if prior_lessons else "")
@@ -347,6 +422,8 @@ def render(facts: dict, rev: DailyReview | None) -> str:
                    f"**Equity** {f['equity']:,.0f}{change} · **cash** {f['cash']:,.0f} · nothing realised")
         if f["unrealised"] is not None:
             out.append(f"**Unrealised** {f['unrealised']:+,.0f} across {len(f['positions'])} positions")
+        if f.get("reconciliation"):
+            out.append("  \n" + _reconcile_line(f["reconciliation"]).replace("Reconciliation:", "**Reconciliation**", 1))
     if f.get("r"):
         out.append("  \n**" + _r_line(f).replace("In R today:", "In R today**", 1)
                    + " · *R is an exit's result over the risk to the stop it was opened with*")
@@ -377,6 +454,8 @@ def render(facts: dict, rev: DailyReview | None) -> str:
         out.append("No orders were sent.")
     out.append("")
     out.append("## Open positions at the close")
+    if f["book"] and f["positions"]:
+        out += [_held_line(f) + ".", ""]
     if f["positions"]:
         out += ["| Ticker | Side | P/L % | To stop | To target | Rating | Stop from |", "|---|---|---:|---:|---:|---|---|"]
         for p in sorted(f["positions"], key=lambda p: p.get("pnl_pct") or 0):

@@ -126,6 +126,17 @@ def test_the_daily_report_gathers_the_day_and_the_review_teaches(tmp_path, monke
     assert facts["r"] == {"n": 1, "total": -1.06, "mean": -1.06} and facts["r_by_side"] == {"short": facts["r"]}
     assert facts["decisions_r"] == {}                                    # nothing settled yet
 
+    # The count of the book's orders still held is said beside the open positions list, and sums to it.
+    assert facts["held_outside_book"] == ["ACGL"] and facts["book_held"] + len(facts["held_outside_book"]) == len(facts["positions"])
+    assert ("Book this morning: 2 orders, 1 of them still held at the close; open positions at the close: 2 "
+            "(1 from the book and 1 not in it, carried over or opened as replacements: ACGL)") in daily._facts_text(facts)
+    # The equity change is set against realised and the change in unrealised, and what is left is named.
+    rec = facts["reconciliation"]
+    assert facts["unrealised"] == 90.72 and (rec["unrealised_prior"], rec["unrealised_change"], rec["explained"]) == (0.0, 90.72, 47.52)
+    assert rec["gap"] == -247.52 and rec["equity_change"] == rec["explained"] + rec["gap"] and not rec["reconciles"]
+    assert "a gap of -247.52. The gap is not explained by the desk's records" in daily._facts_text(facts)
+    assert "fees, borrow, interest and dividends" in daily._facts_text(facts) and "2026-11-06T16:05:00" in daily._facts_text(facts)
+
     rev = daily.DailyReview(what_happened="TROW stopped out for -43.20.", what_worked="The stop guard fired within 5 s of the breach.",
                             what_did_not="TROW's stop sat 2.1% above entry, inside one day's range.",
                             lessons=[daily.Lesson(agent="Risk Manager", lesson="Place a short's stop beyond one ATR above entry.", evidence="TROW stop 111.36 hit at 10:50")],
@@ -335,3 +346,29 @@ def test_a_sweep_waiting_out_the_weekend_is_reported_as_idle_by_design():
     lines = daily._sweep_lines({"cycle": 55, "date": "2026-11-20", "queued": 0, "analysed_this_cycle": 503, "decided_today": 503,
                                 "decided_on": "2026-11-20", "progress": {"minutes_per_ticker": 4.2, "waiting": True}})
     assert "idle by design" in lines[-1] and "not a fault" in lines[-1]
+
+
+@pytest.mark.unit
+def test_an_exit_is_logged_under_the_rule_that_caused_it():
+    assert daily._cause("the market has swung down (SPY -2.3% on the day); the long is closed at 101.20, cutting -1.4% on the position") == "market swing"
+    assert daily._cause("the stop 111.36 held at Alpaca filled at 111.40") == "stop"
+    assert daily._cause("price 111.41 is through the stop 111.36 (Risk Manager); -2.1% on the position") == "stop"
+    assert daily._cause("review on 2026-11-09: rated Hold, no longer short") == "review"
+    assert daily._cause("closed by hand") == "other"
+
+
+@pytest.mark.unit
+def test_the_equity_change_reconciles_to_realised_and_the_change_in_unrealised():
+    held = lambda t, qty, entry, price: {"ticker": t, "qty": qty, "avg_entry_price": entry, "market_value": qty * price, "asset_class": "us_equity"}  # noqa: E731
+    # Yesterday: long A up 500 and short B up 300, both unrealised. Today A is sold for +600 from entry and B gives back 250.
+    prior = {"equity": 100_000, "as_of": "d1", "positions": [held("A", 100, 50, 55), held("B", -100, 40, 37)]}
+    snap = {"equity": 99_850, "as_of": "d2", "positions": [held("B", -100, 40, 39.5)]}
+    txns = [{"flow": "out", "pnl": 600.0, "ticker": "A"}]
+    rec = daily._reconcile(snap, prior, txns, 600.0, daily._unrealised(snap["positions"]))
+    assert (rec["unrealised_prior"], rec["unrealised"], rec["unrealised_change"]) == (800.0, 50.0, -750.0)
+    assert (rec["equity_change"], rec["explained"], rec["gap"]) == (-150.0, -150.0, 0.0) and rec["reconciles"]
+    assert "It reconciles" in daily._reconcile_line(rec)
+    # An exit whose fill never came back is named as the data issue behind the gap.
+    rec = daily._reconcile(snap, prior, [{"flow": "out", "pnl": None, "ticker": "A"}], None, 50.0)
+    assert rec["gap"] == 600.0 and rec["unpriced_exits"] == ["A"] and "1 exit(s) with no P/L on record (A): a data issue" in daily._reconcile_line(rec)
+    assert daily._reconcile(snap, {}, txns, 600.0, 50.0) is None                 # no prior snapshot: nothing to set it against
