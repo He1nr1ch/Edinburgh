@@ -123,6 +123,41 @@ def test_a_close_cancels_the_symbols_waiting_orders_and_only_the_workers_own_ord
 
 
 @pytest.mark.unit
+def test_a_close_refused_for_shares_a_cancelled_stop_still_holds_is_sent_again(monkeypatch, tmp_path):
+    """Alpaca frees a cancelled stop's shares a moment after it reports the cancel."""
+    from tradingagents.dataflows.errors import VendorNotConfiguredError
+    from tradingagents.worker import runner
+    from tradingagents.worker.duty import Finding
+
+    held = VendorNotConfiguredError('Alpaca refused the request (403) while fetching a sell order for 40 JPM: '
+                                    '{"code":40310000,"message":"insufficient qty available for order"}')
+    answers = [held, held, "ord-9"]
+
+    def submit(s, q, side):
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(runner.trading, "submit_market_order", submit)
+    monkeypatch.setattr(runner.trading, "cancel_orders_for", lambda s, open_now: sum(v == s for v in open_now.values()))
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    state = WorkerState.load(tmp_path / "s.json")
+    ctx = WorkerContext(Account(100_000, 0, True, (LONG,)), datetime.now(UTC), CONFIG, state)
+
+    f = Finding("market", "JPM", "urgent", "h", "d", Action("JPM", "exit", "sell", 40, "why"))
+    runner._act(f, ctx, market_open=True, pending=set(), open_now={"stop": "JPM"}, dry_run=False)
+    assert f.outcome.startswith("sent, order ord-9") and not answers
+
+    # With nothing cancelled there is nothing to wait for; any other refusal is not tried again.
+    for open_now, error in (({}, held), ({"stop": "JPM"}, VendorNotConfiguredError("Alpaca refused the request (403): forbidden"))):
+        answers[:] = [error, "ord-10"]
+        f = Finding("market", "JPM", "urgent", "h", "d", Action("JPM", "exit", "sell", 40, "why"))
+        runner._act(f, ctx, market_open=True, pending=set(), open_now=open_now, dry_run=False)
+        assert f.outcome.startswith("failed:") and answers == ["ord-10"]
+
+
+@pytest.mark.unit
 def test_the_forever_loop_sleeps_through_the_close_and_survives_errors(monkeypatch):
     """Closed: nap half a minute at a time so the sweep's pool stays full. An error: log it, wait a minute, carry on."""
     from datetime import timedelta

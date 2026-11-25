@@ -72,6 +72,35 @@ def _closable(a: Action, live: dict[str, float]) -> int:
     return min(a.qty, int(abs(have)))
 
 
+# How long a close waits for Alpaca to free the shares of an order just cancelled.
+HELD_WAIT_SECONDS = 15.0
+
+
+def _held_for_orders(exc: Exception) -> bool:
+    """Alpaca's refusal of an order for shares a waiting order still claims (code 40310000)."""
+    text = str(exc)
+    return "40310000" in text or "insufficient qty available" in text
+
+
+def _submit(a: Action, wait: float = 0) -> str:
+    """Send the market order; one refused for shares still held by an order just cancelled is sent again.
+
+    Alpaca reports a stop cancelled before it has freed the shares the stop
+    claimed: in the first minutes after the open that took longer than the
+    cancel itself, and every close of a position with a stop behind it was
+    refused. The cancel is through by then, so the order is sent again, each
+    second, for up to ``wait`` seconds; any other refusal is raised at once.
+    """
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            return trading.submit_market_order(a.symbol, a.qty, a.side)
+        except Exception as exc:
+            if not _held_for_orders(exc) or time.monotonic() >= deadline:
+                raise
+        time.sleep(1.0)
+
+
 def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str],
          open_now: dict[str, str], dry_run: bool, live: dict[str, float] | None = None) -> None:
     """Send the finding's order if the guardrails allow it.
@@ -103,7 +132,7 @@ def _act(f: Finding, context: WorkerContext, market_open: bool, pending: set[str
     else:
         try:
             cancelled = trading.cancel_orders_for(a.symbol, open_now) if a.kind in ("exit", "trim") else 0
-            order_id = trading.submit_market_order(a.symbol, a.qty, a.side)
+            order_id = _submit(a, wait=HELD_WAIT_SECONDS if cancelled else 0)
             held = next((h for h in context.account.holdings if h.symbol.upper() == a.symbol.upper()), None)
             context.state.record_order(a.symbol, a.kind, a.side, a.qty, order_id, context.now, a.reason,
                                        entry_price=held.avg_entry_price if held and a.kind in ("exit", "trim") else None,
