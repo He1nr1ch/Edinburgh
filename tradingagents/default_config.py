@@ -247,6 +247,10 @@ def build_default_config() -> dict:
         # managers on the PGX held the sweep to a third of its pace, one does not.
         # {"Portfolio Manager": {"url": "http://192.168.0.95:11434", "model": "qwen3.5:122b",
         #                        "num_ctx": 65536, "temperature": 0.6, "idle_timeout": 1800}}
+        # An agent can have its thinking off ("thinking": false) while the desk's
+        # stays on (ollama_thinking), or the other way round: the debaters write
+        # a third of a symbol's tokens, most of it reasoning, e.g.
+        # {"Bull Researcher": {"thinking": false}, "Bear Researcher": {"thinking": false}}.
         # From the environment, TRADINGAGENTS_AGENT_CALLS takes the same as JSON.
         "agent_calls": {},
         # The Shadow Portfolio Manager (see shadow.py): every symbol's Portfolio

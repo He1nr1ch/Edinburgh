@@ -160,12 +160,15 @@ class NormalizedChatOllama(ChatOllama):
         return twin
 
     def with_call(self, model: str | None = None, num_ctx: int | None = None, timeout: float | None = None,
-                  temperature: float | None = None, url: str | None = None, idle_timeout: float | None = None):
-        """A copy for calls with their own model, context window, total time limit or temperature, on the same connection.
+                  temperature: float | None = None, url: str | None = None, idle_timeout: float | None = None,
+                  thinking: bool | None = None):
+        """A copy for calls with their own model, context window, total time limit, temperature or thinking, on the same connection.
 
         The temperature is the one setting where zero is a value: a model that
         loops in its thinking at 0 (qwen3.5:122b does) is given one above it
-        here, while the rest of the desk stays at the run's.
+        here, while the rest of the desk stays at the run's. ``thinking`` is the
+        other: False turns a thinking model's reasoning off for this agent alone
+        (a debater, say, whose argument the managers check anyway), True on.
 
         ``url`` and ``idle_timeout`` give the copy a connection of its own: a
         machine of the agent's own (on another host it is called directly, past
@@ -175,6 +178,8 @@ class NormalizedChatOllama(ChatOllama):
         update = {k: v for k, v in (("model", model), ("num_ctx", num_ctx), ("call_timeout", timeout)) if v}
         if temperature is not None:
             update["temperature"] = float(temperature)
+        if thinking is not None:
+            update["reasoning"] = bool(thinking)
         if url or idle_timeout:
             return self._connected(host_url(url) if url else self.base_url, idle_timeout or self.idle_timeout, update)
         return self.model_copy(update=update) if update else self

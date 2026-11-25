@@ -234,6 +234,17 @@ def test_a_tier_or_an_agent_can_have_a_temperature_of_its_own_and_zero_is_one():
 
 
 @pytest.mark.unit
+def test_an_agent_can_have_its_thinking_off_while_the_desk_keeps_its_own():
+    # The debaters write a third of a symbol's tokens, most of it reasoning the managers check anyway.
+    llm = _llm(reasoning=True)
+    config = {"agent_calls": {"Bull Researcher": {"thinking": False}}}
+    bull = for_agent(llm, config, "Bull Researcher", "quick")
+    assert bull.reasoning is False and bull._chat_params([], None)["think"] is False
+    assert for_agent(llm, config, "Bear Researcher", "quick") is llm and llm.reasoning is True
+    assert _llm(reasoning=False).with_call(thinking=True).reasoning is True       # and on, where the desk's is off
+
+
+@pytest.mark.unit
 def test_an_agent_can_have_a_machine_of_its_own_with_a_longer_wait_allowed():
     # The Portfolio Manager alone on the large model on the PGX; the other managers stay with the tier.
     llm = _llm(idle_timeout=600, call_timeout=900, temperature=0.0)
