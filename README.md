@@ -94,8 +94,11 @@ a test fails if any other module builds a client or posts to the server itself.
   unread for its next pass, and opens no replacement until the model has
   chosen one.
 - **Per-call settings.** `agent_calls` gives a tier or a single agent its own
-  model, context window or call limit, e.g.
+  model, context window, call limit or temperature, e.g.
   `TRADINGAGENTS_AGENT_CALLS={"Portfolio Manager": {"timeout": 1200}}`.
+  The temperature is for a model that cannot run at the desk's 0:
+  qwen3.5:122b loops in its thinking there and never answers, so its calls
+  take one above it (`{"deep": {"temperature": 0.6}}`).
 - **PAIR.** On a machine that runs PAIR the endpoint must be its own loopback
   proxy, and the client refuses anything else. Each call's usage record is
   given the node that served it, read from the router's history a few seconds

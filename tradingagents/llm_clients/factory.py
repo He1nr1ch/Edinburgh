@@ -155,11 +155,11 @@ def create_tier_client(config: dict, tier: str, **extra) -> BaseLLMClient:
                              **kwargs, **extra)
 
 
-CALL_SETTINGS = ("model", "num_ctx", "timeout")
+CALL_SETTINGS = ("model", "num_ctx", "timeout", "temperature")
 
 
 def for_agent(llm: Any, config: dict, agent: str, tier: str) -> Any:
-    """The client an agent calls with: the tier's, with the agent's own model, window or limit if it has any.
+    """The client an agent calls with: the tier's, with the agent's own model, window, limit or temperature if it has any.
 
     ``agent_calls`` in the config names them, by tier and by agent, the agent
     winning. A client that cannot vary its calls (another provider's) is
@@ -174,4 +174,5 @@ def for_agent(llm: Any, config: dict, agent: str, tier: str) -> Any:
         return llm
     if not hasattr(llm, "with_call"):
         raise ValueError(f"agent_calls is set for {agent!r}, but the {tier} tier's provider cannot vary its calls; it is an Ollama setting")
-    return llm.with_call(model=settings.get("model"), num_ctx=settings.get("num_ctx"), timeout=settings.get("timeout"))
+    return llm.with_call(model=settings.get("model"), num_ctx=settings.get("num_ctx"), timeout=settings.get("timeout"),
+                         temperature=settings.get("temperature"))

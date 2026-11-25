@@ -209,6 +209,18 @@ def test_a_call_can_have_its_own_model_window_and_limit_on_the_same_connection()
 
 
 @pytest.mark.unit
+def test_a_tier_or_an_agent_can_have_a_temperature_of_its_own_and_zero_is_one():
+    # qwen3.5:122b loops in its thinking at the run's temperature of 0, so its calls are given one above it.
+    llm = _llm(temperature=0.0)
+    config = {"agent_calls": {"deep": {"temperature": 0.6}, "Risk Manager": {"temperature": 0}}}
+    pm = for_agent(llm, config, "Portfolio Manager", "deep")
+    assert pm.temperature == 0.6 and pm._chat_params([], None)["options"]["temperature"] == 0.6
+    assert for_agent(llm, config, "Risk Manager", "deep").temperature == 0.0       # zero is a setting, not "unset"
+    assert for_agent(llm, config, "Trader", "quick") is llm and llm.temperature == 0.0   # the rest of the desk is untouched
+    assert _llm(temperature=0.6).with_call(temperature=0).temperature == 0.0
+
+
+@pytest.mark.unit
 def test_an_agents_settings_are_its_tiers_with_its_own_on_top():
     llm = _llm(call_timeout=900)
     config = {"agent_calls": {"deep": {"timeout": 1200}, "Portfolio Manager": {"model": "qwen3.5:122b"}}}
@@ -217,7 +229,7 @@ def test_an_agents_settings_are_its_tiers_with_its_own_on_top():
     assert for_agent(llm, config, "Risk Manager", "deep").call_timeout == 1200
     assert for_agent(llm, config, "Trader", "quick") is llm and for_agent(llm, {}, "Trader", "quick") is llm
     with pytest.raises(ValueError, match="unknown setting"):
-        for_agent(llm, {"agent_calls": {"Trader": {"temperature": 0}}}, "Trader", "quick")
+        for_agent(llm, {"agent_calls": {"Trader": {"top_p": 0.9}}}, "Trader", "quick")
     with pytest.raises(ValueError, match="cannot vary its calls"):
         for_agent(object(), config, "Portfolio Manager", "deep")
 

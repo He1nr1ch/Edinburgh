@@ -156,9 +156,17 @@ class NormalizedChatOllama(ChatOllama):
         twin._lane_node = node
         return twin
 
-    def with_call(self, model: str | None = None, num_ctx: int | None = None, timeout: float | None = None):
-        """A copy for calls with their own model, context window or total time limit, on the same connection."""
+    def with_call(self, model: str | None = None, num_ctx: int | None = None, timeout: float | None = None,
+                  temperature: float | None = None):
+        """A copy for calls with their own model, context window, total time limit or temperature, on the same connection.
+
+        The temperature is the one setting where zero is a value: a model that
+        loops in its thinking at 0 (qwen3.5:122b does) is given one above it
+        here, while the rest of the desk stays at the run's.
+        """
         update = {k: v for k, v in (("model", model), ("num_ctx", num_ctx), ("call_timeout", timeout)) if v}
+        if temperature is not None:
+            update["temperature"] = float(temperature)
         return self.model_copy(update=update) if update else self
 
     def _create_chat_stream(self, messages, stop=None, **kwargs):

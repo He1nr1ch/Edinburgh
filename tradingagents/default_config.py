@@ -232,9 +232,14 @@ def build_default_config() -> dict:
         "ollama_lane_url": None,
         "ollama_lane_slots": 1,
         # Per-tier and per-agent call settings on top of the above: a model, a
-        # context window or a call limit of its own, by tier ("quick", "deep")
-        # or by agent name as the graph names it, the agent winning. For example
+        # context window, a call limit or a temperature of its own, by tier
+        # ("quick", "deep") or by agent name as the graph names it, the agent
+        # winning. For example
         # {"deep": {"timeout": 1200}, "Portfolio Manager": {"model": "qwen3.5:122b", "num_ctx": 65536}}.
+        # The temperature is there for qwen3.5:122b: at the run's 0 it loops in
+        # its thinking on some prompts and never answers (7 manager calls in 16
+        # on 2026-11-24, each cut off after 20 minutes; none in 11 at its own
+        # default), so its calls need one above 0, e.g. {"deep": {"temperature": 0.6}}.
         # From the environment, TRADINGAGENTS_AGENT_CALLS takes the same as JSON.
         "agent_calls": {},
         # Minutes without an answer from the model (at least two calls, none
