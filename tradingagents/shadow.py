@@ -96,8 +96,9 @@ def record(ticker: str, trade_date: str, primary: dict, shadow: dict, config: di
         both = primary.get("ok") and shadow.get("ok")
         rec = {"ts": datetime.now().astimezone().isoformat(timespec="seconds"), "ticker": ticker, "trade_date": trade_date,
                "run_id": usage.context()["run_id"], "portfolio_manager": primary, "shadow": shadow,
-               "same_rating": bool(both and primary.get("rating") == shadow.get("rating")),
-               "same_side": bool(both and side(primary.get("rating")) == side(shadow.get("rating")))}
+               # None, not False, when either gave no answer: there is nothing to compare.
+               "same_rating": primary.get("rating") == shadow.get("rating") if both else None,
+               "same_side": side(primary.get("rating")) == side(shadow.get("rating")) if both else None}
         folder = shadow_dir(config)
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / f"{rec['ts'][:10]}.jsonl").open("a", encoding="utf-8") as fh:

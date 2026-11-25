@@ -72,7 +72,7 @@ def test_a_shadow_that_fails_costs_the_run_nothing_and_says_so_in_the_record(tmp
         (row,) = shadow.read_day(next((tmp_path / "shadow").iterdir()).stem)
     assert out["final_rating"] == "Overweight"
     assert row["shadow"]["ok"] is False and "PAIR is down" in row["shadow"]["error"]
-    assert row["portfolio_manager"]["ok"] is True and row["same_side"] is False
+    assert row["portfolio_manager"]["ok"] is True and row["same_side"] is None       # nothing to compare
 
 
 @pytest.mark.unit

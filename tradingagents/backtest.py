@@ -156,7 +156,8 @@ def run_backtest(
     run_config = {**config, "results_dir": str(run_dir),
                   "memory_log_path": str(run_dir / "trading_memory.md"),
                   "usage_dir": config.get("usage_dir") or str(Path(config["results_dir"]) / "usage"),
-                  "errors_dir": config.get("errors_dir") or str(Path(config["results_dir"]) / "errors")}
+                  "errors_dir": config.get("errors_dir") or str(Path(config["results_dir"]) / "errors"),
+                  "shadow_dir": config.get("shadow_dir") or str(Path(config["results_dir"]) / "shadow")}
 
     graph = TradingAgentsGraph(selected_analysts, config=run_config)
     result = BacktestResult(run_id=run_id, log_path=Path(run_config["memory_log_path"]))
