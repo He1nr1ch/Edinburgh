@@ -98,7 +98,11 @@ a test fails if any other module builds a client or posts to the server itself.
   `TRADINGAGENTS_AGENT_CALLS={"Portfolio Manager": {"timeout": 1200}}`.
   The temperature is for a model that cannot run at the desk's 0:
   qwen3.5:122b loops in its thinking there and never answers, so its calls
-  take one above it (`{"deep": {"temperature": 0.6}}`).
+  take one above it (`{"deep": {"temperature": 0.6}}`). An agent can also be
+  given a machine of its own (`url`) and a longer wait before its first chunk
+  (`idle_timeout`): the Portfolio Manager alone on the PGX's large model, say,
+  since three managers there held the sweep to a third of its pace. On such a
+  machine the whole-call limit runs from the first chunk, not from the wait in line.
 - **PAIR.** On a machine that runs PAIR the endpoint must be its own loopback
   proxy, and the client refuses anything else. Each call's usage record is
   given the node that served it, read from the router's history a few seconds

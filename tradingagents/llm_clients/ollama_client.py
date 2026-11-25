@@ -34,9 +34,12 @@ refuses a PAIR machine pointed at anything but its own loopback.
 
 **A machine of its own.** A tier that names its own endpoint on another host
 (``deep_think_backend_url``: the managers' large model on a machine outside the
-cluster) is called there directly. That is the one address a PAIR machine may
-name besides its loopback; its calls never try the lane, and their usage
-records name the host.
+cluster), or a single agent that does (``url`` in ``agent_calls``: the Portfolio
+Manager alone on it), is called there directly. Those are the only addresses a
+PAIR machine may name besides its loopback; such calls never try the lane, and
+their usage records name the host. That machine answers one call at a time, so
+a call may wait in line: the wait has the idle limit, and the whole-call limit
+runs from the first chunk.
 """
 
 from __future__ import annotations
@@ -157,23 +160,50 @@ class NormalizedChatOllama(ChatOllama):
         return twin
 
     def with_call(self, model: str | None = None, num_ctx: int | None = None, timeout: float | None = None,
-                  temperature: float | None = None):
+                  temperature: float | None = None, url: str | None = None, idle_timeout: float | None = None):
         """A copy for calls with their own model, context window, total time limit or temperature, on the same connection.
 
         The temperature is the one setting where zero is a value: a model that
         loops in its thinking at 0 (qwen3.5:122b does) is given one above it
         here, while the rest of the desk stays at the run's.
+
+        ``url`` and ``idle_timeout`` give the copy a connection of its own: a
+        machine of the agent's own (on another host it is called directly, past
+        PAIR and the lane, as a tier's own endpoint is), or a longer silence
+        allowed before the first chunk, for a machine whose calls wait in line.
         """
         update = {k: v for k, v in (("model", model), ("num_ctx", num_ctx), ("call_timeout", timeout)) if v}
         if temperature is not None:
             update["temperature"] = float(temperature)
+        if url or idle_timeout:
+            return self._connected(host_url(url) if url else self.base_url, idle_timeout or self.idle_timeout, update)
         return self.model_copy(update=update) if update else self
 
+    def _connected(self, url: str, idle_timeout: float | None, update: dict):
+        """A copy on a connection of its own: to ``url``, with ``idle_timeout`` as the longest silence allowed."""
+        from ollama import Client
+
+        client_kwargs = {**(self.client_kwargs or {}), "timeout": httpx.Timeout(
+            connect=CONNECT_SECONDS, read=idle_timeout, write=60.0, pool=CONNECT_SECONDS)}
+        update = {**update, "base_url": url, "idle_timeout": idle_timeout, "client_kwargs": client_kwargs}
+        if url != self.base_url:
+            update["direct_node"] = "" if is_loopback(url) else direct_node(url)
+        twin = self.model_copy(update=update)
+        twin._client = Client(host=url, **{**client_kwargs, **(self.sync_client_kwargs or {})})
+        return twin
+
     def _create_chat_stream(self, messages, stop=None, **kwargs):
-        deadline = time.monotonic() + self.call_timeout if self.call_timeout else None
+        # Through PAIR the whole-call limit runs from the request, the queue included, as it was
+        # measured. A machine called directly answers one call at a time and the rest wait in
+        # line: there the silence before the first chunk is the queue, which has the idle limit,
+        # and the whole-call limit runs from the first chunk, so a call is not cut off for waiting.
+        waits_in_line = bool(self.direct_node)
+        deadline = time.monotonic() + self.call_timeout if self.call_timeout and not waits_in_line else None
         stream = super()._create_chat_stream(messages, stop, **kwargs)
         try:
             for part in stream:
+                if deadline is None and self.call_timeout:
+                    deadline = time.monotonic() + self.call_timeout
                 yield part
                 if deadline is not None and time.monotonic() > deadline:
                     raise InferenceTimeout(
@@ -183,7 +213,9 @@ class NormalizedChatOllama(ChatOllama):
         except httpx.TimeoutException as exc:
             raise InferenceTimeout(
                 f"{self.model} sent nothing for {self.idle_timeout:g} s ({type(exc).__name__}); the call was dropped. "
-                "Either the server hangs or PAIR's queue is longer than ollama_idle_timeout."
+                + ("Either the server hangs or the calls ahead of it on that machine took longer than its idle_timeout."
+                   if self.direct_node else
+                   "Either the server hangs or PAIR's queue is longer than ollama_idle_timeout.")
             ) from exc
         except (httpx.TransportError, ConnectionError) as exc:
             raise InferenceUnavailable(f"The model server at {self.base_url} could not be reached: {exc}") from exc

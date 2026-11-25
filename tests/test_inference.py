@@ -66,6 +66,19 @@ def test_a_call_past_its_total_limit_is_dropped_and_raised(monkeypatch):
 
 
 @pytest.mark.unit
+def test_on_a_machine_called_directly_the_total_limit_runs_from_the_first_chunk_not_from_the_wait_in_line(monkeypatch):
+    closed: list = []
+    _stream(monkeypatch, ["a", "b", "c"], closed)
+    clock = iter([500.0, 501.0, 505.0, 999.0])   # "a" arrives at 500 after the wait in line: the deadline is set there
+    monkeypatch.setattr(ollama_client.time, "monotonic", lambda: next(clock))
+    got = []
+    with pytest.raises(InferenceTimeout, match="after 3 s"):
+        for part in _llm(call_timeout=3, direct_node="192.168.0.95 (direct)")._create_chat_stream([]):
+            got.append(part)
+    assert got == ["a", "b"] and closed == [True]      # cut off 5 s into its answer, however long it waited
+
+
+@pytest.mark.unit
 def test_silence_past_the_idle_limit_is_a_timeout_and_a_dead_server_is_unavailable(monkeypatch):
     _stream(monkeypatch, ["a", httpx.ReadTimeout("timed out")], [])
     with pytest.raises(InferenceTimeout, match="sent nothing for 600 s"):
@@ -218,6 +231,25 @@ def test_a_tier_or_an_agent_can_have_a_temperature_of_its_own_and_zero_is_one():
     assert for_agent(llm, config, "Risk Manager", "deep").temperature == 0.0       # zero is a setting, not "unset"
     assert for_agent(llm, config, "Trader", "quick") is llm and llm.temperature == 0.0   # the rest of the desk is untouched
     assert _llm(temperature=0.6).with_call(temperature=0).temperature == 0.0
+
+
+@pytest.mark.unit
+def test_an_agent_can_have_a_machine_of_its_own_with_a_longer_wait_allowed():
+    # The Portfolio Manager alone on the large model on the PGX; the other managers stay with the tier.
+    llm = _llm(idle_timeout=600, call_timeout=900, temperature=0.0)
+    config = {"agent_calls": {"Portfolio Manager": {"url": "http://192.168.0.95:11434/", "model": "qwen3.5:122b",
+                                                    "temperature": 0.6, "idle_timeout": 1800}}}
+    pm = for_agent(llm, config, "Portfolio Manager", "deep")
+    assert (pm.base_url, pm.model, pm.temperature, pm.idle_timeout, pm.call_timeout) == (
+        "http://192.168.0.95:11434", "qwen3.5:122b", 0.6, 1800, 900)
+    assert pm.direct_node == "192.168.0.95 (direct)"                    # past PAIR and the lane, named in the usage log
+    assert str(pm._client._client.base_url).rstrip("/") == "http://192.168.0.95:11434"
+    assert pm._client._client.timeout.read == 1800
+    assert pm._client is not llm._client and (llm.base_url, llm.direct_node, llm.idle_timeout) == (URL, "", 600)
+    assert for_agent(llm, config, "Risk Manager", "deep") is llm
+
+    waits = llm.with_call(idle_timeout=1200)                             # a longer wait alone: same machine, not "direct"
+    assert (waits.base_url, waits.direct_node, waits._client._client.timeout.read) == (URL, "", 1200)
 
 
 @pytest.mark.unit

@@ -240,6 +240,12 @@ def build_default_config() -> dict:
         # its thinking on some prompts and never answers (7 manager calls in 16
         # on 2026-11-24, each cut off after 20 minutes; none in 11 at its own
         # default), so its calls need one above 0, e.g. {"deep": {"temperature": 0.6}}.
+        # An agent can also have a machine of its own ("url"), called directly as
+        # a tier's own endpoint is, and a longer silence allowed before its first
+        # chunk ("idle_timeout"), for a machine whose calls wait in line: three
+        # managers on the PGX held the sweep to a third of its pace, one does not.
+        # {"Portfolio Manager": {"url": "http://192.168.0.95:11434", "model": "qwen3.5:122b",
+        #                        "num_ctx": 65536, "temperature": 0.6, "idle_timeout": 1800}}
         # From the environment, TRADINGAGENTS_AGENT_CALLS takes the same as JSON.
         "agent_calls": {},
         # Minutes without an answer from the model (at least two calls, none
