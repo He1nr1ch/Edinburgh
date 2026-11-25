@@ -82,6 +82,7 @@ _ENV_OVERRIDES = {
     "TRADINGAGENTS_WORKER_SYMBOLS":          "worker_symbols",
     "TRADINGAGENTS_WORKER_ALERT_EMAIL":      "worker_alert_email",
     "TRADINGAGENTS_MIRROR_ENABLED":          "mirror_enabled",
+    "TRADINGAGENTS_SHADOW_PORTFOLIO_MANAGER": "shadow_portfolio_manager",
     "TRADINGAGENTS_MIRROR_NAME":             "mirror_name",
 }
 
@@ -248,6 +249,16 @@ def build_default_config() -> dict:
         #                        "num_ctx": 65536, "temperature": 0.6, "idle_timeout": 1800}}
         # From the environment, TRADINGAGENTS_AGENT_CALLS takes the same as JSON.
         "agent_calls": {},
+        # The Shadow Portfolio Manager (see shadow.py): every symbol's Portfolio
+        # Manager prompt is also put to the deep tier's own model, at the same
+        # moment, and both decisions are written side by side in
+        # <results_dir>/shadow/<date>.jsonl. The desk acts on the Portfolio
+        # Manager's alone. It is how a Portfolio Manager on a model of its own
+        # (agent_calls) is compared with the one it replaced; "Shadow Portfolio
+        # Manager" in agent_calls gives the shadow settings of its own. One more
+        # deep-tier call a symbol. "" keeps the record in results_dir/shadow.
+        "shadow_portfolio_manager": False,
+        "shadow_dir": os.getenv("TRADINGAGENTS_SHADOW_DIR") or "",
         # Minutes without an answer from the model (at least two calls, none
         # answered since) before the worker emails that it is down. One more
         # email says when it is back.

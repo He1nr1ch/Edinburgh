@@ -193,7 +193,9 @@ class GraphSetup:
         neutral_analyst = create_neutral_debator(quick("Neutral Analyst"))
         conservative_analyst = create_conservative_debator(quick("Conservative Analyst"))
         risk_manager_node = create_risk_manager(deep("Risk Manager"))
-        portfolio_manager_node = create_portfolio_manager(deep("Portfolio Manager"))
+        # The shadow is the deep tier's own model, with any settings of its own, never the Portfolio Manager's.
+        shadow_llm = deep("Shadow Portfolio Manager") if self.config.get("shadow_portfolio_manager") else None
+        portfolio_manager_node = create_portfolio_manager(deep("Portfolio Manager"), shadow_llm)
 
         workflow = StateGraph(AgentState)
 

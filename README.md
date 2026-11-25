@@ -103,6 +103,14 @@ a test fails if any other module builds a client or posts to the server itself.
   (`idle_timeout`): the Portfolio Manager alone on the PGX's large model, say,
   since three managers there held the sweep to a third of its pace. On such a
   machine the whole-call limit runs from the first chunk, not from the wait in line.
+- **The Shadow Portfolio Manager.** With `TRADINGAGENTS_SHADOW_PORTFOLIO_MANAGER=true`
+  every symbol's Portfolio Manager prompt is also put, word for word and at the
+  same moment, to the deep tier's own model (`shadow.py`). Both decisions are
+  written side by side in `<results>/shadow/<date>.jsonl`, with whether they
+  agree on the rating and on the side. The desk acts on the Portfolio Manager's
+  alone: the shadow's answer is never traded and never reaches another agent,
+  and a shadow call that fails costs the run nothing. It is how a Portfolio
+  Manager on a larger model is compared with the one it replaced.
 - **PAIR.** On a machine that runs PAIR the endpoint must be its own loopback
   proxy, and the client refuses anything else. Each call's usage record is
   given the node that served it, read from the router's history a few seconds

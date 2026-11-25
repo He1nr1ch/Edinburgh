@@ -20,11 +20,19 @@ from tradingagents.agents.context import (
 from tradingagents.agents.rating import RATING_REVIEW, parse_rating, parse_risk_level
 from tradingagents.agents.schemas import PortfolioDecision, render_pm_decision
 from tradingagents.lessons import desk_lessons
-from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, failed_upstream, settle
+from tradingagents import shadow as shadow_log
+from tradingagents.agents.structured import NO_EXTERNAL_TOOLS, bind_structured, decide, failed_upstream, settle
 
 
-def create_portfolio_manager(llm):
+def create_portfolio_manager(llm, shadow_llm=None):
+    """The Portfolio Manager's node. ``shadow_llm``, when given, is asked the same decision beside it.
+
+    The shadow (see ``tradingagents.shadow``) gets the same prompt at the same
+    moment; its answer is recorded next to the Portfolio Manager's and is
+    never used: not for the rating, not for the size, not in the state.
+    """
     structured_llm = bind_structured(llm, PortfolioDecision, "Portfolio Manager")
+    shadow_structured = bind_structured(shadow_llm, PortfolioDecision, shadow_log.AGENT) if shadow_llm is not None else None
 
     def portfolio_manager_node(state) -> dict:
         instrument_context = get_instrument_context_from_state(state)
@@ -101,7 +109,19 @@ Write these sections, in this order, starting with the rating on its own line:
 
         # The typed rating is the decision; the rendered text only carries it.
         # Read back from text, a rating the thesis quotes could replace it.
-        outcome = settle(structured_llm, llm, prompt, "Portfolio Manager")
+        shadow = (shadow_log.Shadow(lambda: decide(shadow_structured, prompt, shadow_log.AGENT))
+                  if shadow_structured is not None else None)
+        try:
+            outcome = settle(structured_llm, llm, prompt, "Portfolio Manager")
+        except BaseException as exc:
+            if shadow is not None:          # the Portfolio Manager gave no answer: the shadow's is kept all the same
+                shadow_log.record(state["company_of_interest"], str(state.get("trade_date") or ""),
+                                  {"ok": False, "error": f"{type(exc).__name__}: {' '.join(str(exc).split())[:300]}"},
+                                  shadow.verdict())
+            raise
+        if shadow is not None:
+            shadow_log.record(state["company_of_interest"], str(state.get("trade_date") or ""),
+                              shadow_log.entry(outcome.verdict), shadow.verdict())
         decision = outcome.result
         if outcome.closed:
             return {**_closed(state, f"{outcome.verdict.agent}: {outcome.verdict.error}"), **outcome.update("portfolio_manager")}
