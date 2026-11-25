@@ -25,6 +25,7 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from pathlib import Path
 
+from tradingagents.agents.analysts import figures
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.files import replace_file
 from tradingagents.dataflows.router import route_to_vendor
@@ -76,8 +77,13 @@ def _shared(name: str, day: str, fetch: Callable[[], str]) -> str:
     return text
 
 
-def _compose(sections: list[tuple[str, Callable[[], str]]], day: str) -> str | None:
-    """The sections fetched and laid out, each under the tool call it stands for; None when none could be had."""
+def _compose(sections: list[tuple[str, Callable[[], str]]], day: str,
+             after: list[tuple[str, Callable[[], str]]] | None = None) -> str | None:
+    """The sections fetched and laid out, each under the tool call it stands for; None when none could be had.
+
+    ``after`` are sections made from the fetched ones: they are added only when
+    something was fetched, and one that cannot be made is left out, not reported.
+    """
     limit = int(get_config().get("max_tool_output_chars") or 16_000)
     parts, got = [], 0
     for title, fetch in sections:
@@ -92,6 +98,11 @@ def _compose(sections: list[tuple[str, Callable[[], str]]], day: str) -> str | N
         parts.append(f"[{title} returned]\n{text}")
     if not got:
         return None
+    for title, make in after or []:
+        try:
+            parts.append(f"[{title}]\n{make()}")
+        except Exception as exc:
+            logger.warning("Briefing: %s could not be worked out: %s", title, exc)
     return "\n\n".join(parts) + "\n\n" + CLOSING.format(date=day)
 
 
@@ -134,11 +145,28 @@ def news(symbol: str, day: str) -> str | None:
 
 
 def fundamentals(symbol: str, day: str) -> str | None:
-    """The three statements as filed, quarterly and annual."""
-    sections = [(f"{method}({freq})", lambda method=method, freq=freq: route_to_vendor(method, symbol, freq, day))
+    """The three statements as filed, quarterly and annual, cut to their recent periods, and the ratios they imply.
+
+    The ratios are computed from the statements in full (see ``figures.py``):
+    left to the analyst they were most of what it wrote, in its thinking.
+    """
+    fetched: dict[tuple[str, str], str] = {}
+
+    def statement(method: str, freq: str) -> str:
+        text = str(route_to_vendor(method, symbol, freq, day))
+        fetched[(method, freq)] = text
+        return figures.recent(text, figures.QUARTERS_KEPT if freq == "quarterly" else figures.YEARS_KEPT)
+
+    def computed() -> str:
+        text = figures.key_figures(fetched)
+        if text is None:
+            raise ValueError("no statement to compute them from")
+        return text
+
+    sections = [(f"{method}({freq})", lambda method=method, freq=freq: statement(method, freq))
                 for freq in ("quarterly", "annual")
                 for method in ("get_balance_sheet", "get_cashflow", "get_income_statement")]
-    return _compose(sections, day)
+    return _compose(sections, day, after=[("key figures", computed)])
 
 
 def brief(build: Callable[[str, str], str | None], state: dict) -> str | None:
